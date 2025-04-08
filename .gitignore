@@ -1,0 +1,61 @@
+# Node modules (backend y frontend)
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Builds
+client/build/
+server/build/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+
+# .env files
+.env
+client/.env
+server/.env
+
+# === GENERAL ===
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+*.zip
+
+# === NODE / BACKEND ===
+/backend-rifa/node_modules/
+backend-rifa/.env
+backend-rifa/logs/
+backend-rifa/tmp/
+backend-rifa/*.log
+
+# === FRONTEND (React) ===
+/frontend-rifa/node_modules/
+frontend-rifa/build/
+frontend-rifa/dist/
+frontend-rifa/.env
+frontend-rifa/.env.local
+frontend-rifa/.env.development.local
+frontend-rifa/.env.test.local
+frontend-rifa/.env.production.local
+
+# === COMMON ENVS ===
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# === TESTING ===
+/coverage
+
+# === PACKAGE MANAGER LOGS ===
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# === VSCODE ===
+.vscode/
