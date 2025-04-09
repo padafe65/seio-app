@@ -7,9 +7,6 @@ import multer from 'multer';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { dirname } from 'path';
-import dotenv from 'dotenv';
-dotenv.config(); // esto carga tu archivo .env
-
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,13 +19,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Conexión a MySQL
 const db = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD || '',
-
-    database: process.env.DB_NAME
+    host: 'localhost',
+    user: 'root',
+    password: '',
+    database: 'rifa_db'
 });
-
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -109,7 +104,7 @@ app.post('/api/auth/register', async (req, res) => {
         const { nombre, telefono, email,  password, rol } = req.body;
 
         // Verificar si el usuario ya existe
-        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [nombre]);
+        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
         if (userExists.length > 0) {
             return res.status(400).json({ error: "El usuario ya existe" });
         }
@@ -258,7 +253,6 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
   
 
 // Servidor corriendo en el puerto 5000
-app.listen(process.env.PORT || 5000, () => {
-    console.log(`🚀 Servidor corriendo en http://localhost:${process.env.PORT || 5000}`);
-  });
-  
+app.listen(5000, () => {
+    console.log("🚀 Servidor corriendo en http://localhost:5000");
+});
