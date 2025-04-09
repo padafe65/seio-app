@@ -7,6 +7,7 @@ const API_URL = process.env.REACT_APP_API_URL;
 
 const login = async (datos) => {
   try {
+    console.log("API_URL:", API_URL);
     const res = await axios.post(`${API_URL}/api/auth/login`, datos, { withCredentials: true });
     // ...
   } catch (error) {
