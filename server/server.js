@@ -230,6 +230,31 @@ app.get('/api/rifa/listar/:usuario_id', async (req, res) => {
         res.status(500).json({ error: "Error en el servidor" });
     }
 });
+
+app.post('/api/auth/reestablecer-password', async (req, res) => {
+    const { email, nuevaPassword } = req.body;
+
+    try {
+        // Verifica si el usuario existe
+        const [rows] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
+        if (rows.length === 0) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        // Hashear la nueva contraseña
+        const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
+
+        // Actualiza la contraseña
+        await db.query("UPDATE usuarios SET password = ? WHERE email = ?", [hashedPassword, email]);
+
+        res.json({ message: "Contraseña actualizada correctamente" });
+    } catch (error) {
+        console.error("❌ Error al reestablecer la contraseña:", error);
+        res.status(500).json({ error: "Error en el servidor" });
+    }
+});
+
+
 // Servidor corriendo en el puerto 5000
 app.listen(5000, () => {
     console.log("🚀 Servidor corriendo en http://localhost:5000");

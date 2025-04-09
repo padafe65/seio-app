@@ -5,6 +5,15 @@ import axios from 'axios';
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const AuthContext = createContext();
 
+const login = async (datos) => {
+  try {
+    console.log("API_URL:", API_URL);
+    const res = await axios.post(`${API_URL}/api/auth/login`, datos, { withCredentials: true });
+    // ...
+  } catch (error) {
+    console.error("Error en login:", error);
+  }
+};
 
 
 export const AuthProvider = ({ children }) => {
