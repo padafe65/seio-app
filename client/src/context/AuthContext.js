@@ -2,7 +2,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const AuthContext = createContext();
+
+
 
 export const AuthProvider = ({ children }) => {
   const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
@@ -35,7 +38,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (credentials) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', credentials);
+      const response = await axios.post(`${API_URL}/api/auth/login`, credentials);
       setAuthToken(response.data.token);
       setUserRole(response.data.role);
       setUsuario(response.data.usuario); // Guardamos el usuario

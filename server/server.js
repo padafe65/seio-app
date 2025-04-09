@@ -7,6 +7,9 @@ import multer from 'multer';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { dirname } from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,11 +22,11 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Conexión a MySQL
 const db = mysql.createPool({
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'rifa_db'
-});
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME
+  });
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -78,7 +81,7 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(401).json({ error: "Contraseña incorrecta" });
         }
 
-        const token = jwt.sign({ id: user.id, rol: user.rol }, 'tu_secreto', { expiresIn: '2h' });
+        const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '2h' });
 
         res.json({
             message: "Inicio de sesión exitoso",
@@ -104,7 +107,7 @@ app.post('/api/auth/register', async (req, res) => {
         const { nombre, telefono, email,  password, rol } = req.body;
 
         // Verificar si el usuario ya existe
-        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
+        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [nombre]);
         if (userExists.length > 0) {
             return res.status(400).json({ error: "El usuario ya existe" });
         }
@@ -227,31 +230,6 @@ app.get('/api/rifa/listar/:usuario_id', async (req, res) => {
         res.status(500).json({ error: "Error en el servidor" });
     }
 });
-
-app.post('/api/auth/reestablecer-password', async (req, res) => {
-    try {
-      const { email, nuevaPassword } = req.body;
-  
-      // Verificar si el usuario existe
-      const [rows] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
-      if (rows.length === 0) {
-        return res.status(404).json({ error: "Correo no registrado" });
-      }
-  
-      // Encriptar la nueva contraseña
-      const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
-  
-      // Actualizar la contraseña en la base de datos
-      await db.query("UPDATE usuarios SET password = ? WHERE email = ?", [hashedPassword, email]);
-  
-      res.json({ message: "Contraseña actualizada con éxito" });
-    } catch (error) {
-      console.error("Error al reestablecer contraseña:", error);
-      res.status(500).json({ error: "Error en el servidor" });
-    }
-  });
-  
-
 // Servidor corriendo en el puerto 5000
 app.listen(5000, () => {
     console.log("🚀 Servidor corriendo en http://localhost:5000");
