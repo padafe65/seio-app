@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
+// Usa la variable de entorno
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
 const ResetPassword = () => {
   const [email, setEmail] = useState('');
   const [nuevaPassword, setNuevaPassword] = useState('');
@@ -9,7 +12,7 @@ const ResetPassword = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/reestablecer-password', {
+      const res = await axios.post(`${API_URL}/api/auth/reestablecer-password`, {
         email,
         nuevaPassword
       });
@@ -23,8 +26,22 @@ const ResetPassword = () => {
     <div className="container mt-5">
       <h3>Reestablecer Contraseña</h3>
       <form onSubmit={handleSubmit}>
-        <input type="email" placeholder="Correo registrado" className="form-control mb-2" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        <input type="password" placeholder="Nueva contraseña" className="form-control mb-2" value={nuevaPassword} onChange={(e) => setNuevaPassword(e.target.value)} required />
+        <input
+          type="email"
+          placeholder="Correo registrado"
+          className="form-control mb-2"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <input
+          type="password"
+          placeholder="Nueva contraseña"
+          className="form-control mb-2"
+          value={nuevaPassword}
+          onChange={(e) => setNuevaPassword(e.target.value)}
+          required
+        />
         <button className="btn btn-warning">Reestablecer</button>
       </form>
       {mensaje && <div className="mt-3 alert alert-info">{mensaje}</div>}
