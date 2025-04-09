@@ -3,9 +3,7 @@ node_modules/
 client/node_modules/
 server/node_modules/
 
-# Builds
-client/build/
-server/build/
+
 
 # Logs
 npm-debug.log*

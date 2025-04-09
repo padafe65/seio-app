@@ -11,6 +11,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Verifica que las variables de entorno estén siendo cargadas correctamente
+console.log("🔍 Verificando variables de entorno:");
+console.log("DB_HOST:", process.env.DB_HOST);
+console.log("DB_USER:", process.env.DB_USER);
+console.log("DB_PASSWORD:", process.env.DB_PASSWORD === '' ? '(vacío)' : process.env.DB_PASSWORD === 'empty' ? '(interpreta como vacío)' : '(oculta)');
+console.log("DB_NAME:", process.env.DB_NAME);
+console.log("JWT_SECRET:", process.env.JWT_SECRET ? '(cargado)' : '(no cargado)');
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -28,7 +37,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    password: process.env.DB_PASSWORD === 'empty' ? '' : process.env.DB_PASSWORD,
     database: process.env.DB_NAME
   });
 
