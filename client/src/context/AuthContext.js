@@ -3,6 +3,16 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
 const AuthContext = createContext();
+const API_URL = process.env.REACT_APP_API_URL;
+
+const login = async (datos) => {
+  try {
+    const res = await axios.post(`${API_URL}/api/auth/login`, datos, { withCredentials: true });
+    // ...
+  } catch (error) {
+    console.error("Error en login:", error);
+  }
+};
 
 export const AuthProvider = ({ children }) => {
   const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
