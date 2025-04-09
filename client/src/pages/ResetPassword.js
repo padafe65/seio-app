@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+
+import Swal from 'sweetalert2';
+  import withReactContent from 'sweetalert2-react-content';
+  
+      const notiMySwal = withReactContent(Swal);
 
 // Usa la variable de entorno
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
@@ -8,6 +14,7 @@ const ResetPassword = () => {
   const [email, setEmail] = useState('');
   const [nuevaPassword, setNuevaPassword] = useState('');
   const [mensaje, setMensaje] = useState('');
+  const navigate = useNavigate(); 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -16,7 +23,20 @@ const ResetPassword = () => {
         email,
         nuevaPassword
       });
-      setMensaje(res.data.message);
+      if(res){
+        notiMySwal.fire({
+          icon: 'success',
+          title: res.data.message,
+          html: <i>El usuario con email:<strong> {email} </strong>fue validado y la contraseña actualizda</i>,
+          //text: 'Usuario registrado con éxito',
+          confirmButtonColor: '#198754' // color btn-success
+        }).then(() => {
+          navigate('/');
+        });
+        setMensaje(res.data.message);
+      }
+      
+
     } catch (error) {
       setMensaje(error.response?.data?.error || 'Error al cambiar contraseña');
     }

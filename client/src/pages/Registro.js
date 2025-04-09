@@ -2,6 +2,11 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
+import Swal from 'sweetalert2';
+import withReactContent from 'sweetalert2-react-content';
+
+    const notiMySwal = withReactContent(Swal);
+
 const Registro = () => {
   const [user, setUser] = useState({ nombre: '', telefono:'', email: '', password: '', rol: 'usuario' });
   const navigate = useNavigate();
@@ -26,11 +31,27 @@ const Registro = () => {
     e.preventDefault();
     try {
       await axios.post('http://localhost:5000/api/auth/register', user);
-      alert('Usuario registrado con éxito');
-      navigate('/');
+      notiMySwal.fire({
+        icon: 'success',
+        title: 'Registro exitoso',
+        text: 'Usuario registrado con éxito',
+        confirmButtonColor: '#198754' // color btn-success
+      }).then(() => {
+        navigate('/');
+      });
+  
     } catch (error) {
-      console.error('Error en el registro:', error);
-    }
+      notiMySwal.fire({
+        icon: 'error',
+        title: 'Error en el registro',
+        text: error.response?.data?.message || 'No se pudo registrar el usuario',
+        confirmButtonColor: '#dc3545' // color btn-danger
+      });
+      //alert('Usuario registrado con éxito');
+      //navigate('/');
+    } //catch (error) {
+      //console.error('Error en el registro:', error);
+   // }
   };
 
   return (

@@ -2,7 +2,14 @@
     import axios from 'axios';
     import { useCallback } from "react";
     import { useAuth } from '../context/AuthContext';
+    import 'bootstrap/dist/css/bootstrap.min.css';
+    //import Swal from 'sweetalert2';
+    //import withReactContent from 'sweetalert2-react-content';
 
+    //const notiMySwal = withReactContent(Swal);
+    const formatearPesos = (monto) =>
+      monto.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    
     const Rifa = () => {
       //const { usuario } = useAuth();
       const [numeros, setNumeros] = useState([]);
@@ -66,11 +73,11 @@
           if (usuario?.rol === "admin") { 
           
               response = await axios.get("http://localhost:5000/api/rifas");
-              cargarRifas();
+              
           } else {
           
               response = await axios.get(`http://localhost:5000/api/rifa/listar/${usuario.id}`);
-              cargarRifas();
+              
           }
 
           setRifas(response.data);
@@ -84,18 +91,7 @@
         cargarRifas();
         setCargando(false);
       }
-    }, [usuario, cargarRifas]);
-
-
-    useEffect(() => {
-      console.log("🔍 Estado actual de usuario en Rifa.js:", usuario);
-      if (usuario) {
-          setCargando(false);
-      }
-    }, [usuario]);
-
-      
-
+    }, [usuario, cargarRifas]);    
     
 
       const generarNumero = () => {
@@ -159,19 +155,19 @@
             ))}
           </div>
 
-            <h3>Total a pagar: ${totalPago}</h3>
+            <h3>Total a pagar: ${formatearPesos(totalPago)}</h3>
             {totalPago < 1000 && <p className="text-danger">Por favor jugar almennos un o unos números más  hasta alcanzar una suma de los números juagados igual o mayor a  $1000 pesos si lo desea</p>}
             
-            <h3>Rol Usuario: {usuario.rol}</h3>
+            <h3>Rol detectado: {usuario.rol}</h3>
             <h3>Usuario en la sesión: {usuario.nombre}</h3>
             <h3>Id Usuario: {usuario.id}</h3>
             
           <h2 className="mt-5">Historial de Rifas</h2>
-          <td>{usuario.id}</td>
-          <td>{usuario.nombre}</td>
-          <table className="table table-bordered">
+
+          <table className="table table-bordered table-striped table-hover text-center align-middle">
+
             <thead>
-              <tr>
+            <tr style={{ backgroundColor: '#198754', color: 'white', textAlign: 'center' }}>
                 <th>Id rifa</th>
                 <th>Usuario</th>
                 <th>Usuario Id</th>
@@ -180,11 +176,12 @@
                 <th>Estado</th>
                 <th>Fecha</th>              
                 <th>Acciones</th>
+                <th>Imagen</th>
               </tr>
             </thead>
             <tbody>
               {rifas.map((rifa) => (
-                <tr key={rifa.id}>
+                <tr key={rifa.id} style={{ backgroundColor: 'red', color: 'white', fontSize: 16, textAlign: 'center', verticalAlign: 'middle' }}>
                   <td>{rifa.id}</td>
                   <td>{rifa.nombre_usuario || usuario.nombre}</td>
                   <td>{rifa.usuario_id || "No disponible"}</td>
@@ -215,10 +212,23 @@
                       <a href={`http://localhost:5000/uploads/${rifa.imagen_pago}`} 
                         target="_blank" rel="noopener noreferrer"
                         className="btn btn-info btn-sm">
-                        Ver Comprobante
-                      </a>
+                        Ver Comprobante                        
+                      </a>                      
                     )}
-                  </td>                  
+                  </td> 
+                  <td style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                    {rifa.imagen_pago ? (
+                      <img
+                        src={`http://localhost:5000/uploads/${rifa.imagen_pago}`}
+                        alt="Comprobante"
+                        width={60}
+                        height={55}
+                        style={{ alignItems: 'center', paddingLeft: 3 }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: '0.8rem', color: 'gray' }}>Sin comprobante</span>
+                    )}
+                  </td>                 
                 </tr>
               ))}
             </tbody>

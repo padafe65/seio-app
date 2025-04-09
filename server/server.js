@@ -48,21 +48,23 @@ const upload = multer({ storage });
 
 
 // 🚨 ESTA ES LA RUTA QUE DEBES TENER
-app.post('/api/subir-comprobante/:id', upload.single('imagen'), (req, res) => {
-  const rifaId = req.params.id;
-  const imagenNombre = req.file.filename;
-
-
-
-  const sql = 'UPDATE numeros_jugados SET estado = "Cancelado", imagen_pago = ? WHERE id = ?';
-  db.query(sql, [imagenNombre, rifaId], (err, result) => {
-    if (err) {
+app.post('/api/subir-comprobante/:id', upload.single('imagen'), async (req, res) => {
+    try {
+      const rifaId = req.params.id;
+      const imagenNombre = req.file.filename;
+  
+      const [result] = await db.query(
+        'UPDATE numeros_jugados SET estado = "Cancelado", imagen_pago = ? WHERE id = ?',
+        [imagenNombre, rifaId]
+      );
+  
+      res.json({ mensaje: '✔️ Comprobante subido y estado actualizado', imagen: imagenNombre });
+    } catch (err) {
       console.error('❌ Error actualizando comprobante:', err);
-      return res.status(500).json({ error: 'Error en el servidor' });
+      res.status(500).json({ error: 'Error en el servidor' });
     }
-    res.json({ mensaje: '✔️ Comprobante subido y estado actualizado', imagen: imagenNombre });
   });
-});
+  
 
 // Servir la carpeta "uploads" como pública
 app.use('/uploads', express.static('uploads'));
@@ -111,7 +113,7 @@ app.post('/api/auth/register', async (req, res) => {
         const { nombre, telefono, email,  password, rol } = req.body;
 
         // Verificar si el usuario ya existe
-        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [nombre]);
+        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
         if (userExists.length > 0) {
             return res.status(400).json({ error: "El usuario ya existe" });
         }
@@ -137,7 +139,7 @@ const verificarToken = (req, res, next) => {
         return res.status(401).json({ error: "Acceso denegado: No autenticado" });
     }
 
-    jwt.verify(token, 'tu_secreto', (err, decoded) => {
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
         if (err) {
             return res.status(403).json({ error: "Token inválido" });
         }
@@ -173,9 +175,7 @@ app.put('/api/rifa/pagar/:id', async (req, res) => {
         const { id } = req.params;
         
         const result = await db.query(
-            "UPDATE numeros_jugados SET estado = 'Cancelado' WHERE id = ?",
-            [id]
-        );
+            "UPDATE numeros_jugados SET estado = 'Cancelado' WHERE id = ?", [id]);
 
         if (result.affectedRows === 0) {
             return res.status(404).json({ error: "Registro no encontrado" });
@@ -219,21 +219,6 @@ app.get('/api/rifas', async (req, res) => {
     }
   });
 
-app.get('/api/rifa/listar/:usuario_id', async (req, res) => {
-    try {
-        const { usuario_id } = req.params;
-
-        const [rows] = await db.query(
-            "SELECT * FROM numeros_jugados WHERE usuario_id = ?",
-            [usuario_id]
-        );
-
-        res.json(rows);
-    } catch (error) {
-        console.error("Error al obtener rifas:", error);
-        res.status(500).json({ error: "Error en el servidor" });
-    }
-});
 
 app.post('/api/auth/reestablecer-password', async (req, res) => {
     const { email, nuevaPassword } = req.body;
@@ -260,6 +245,8 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
 
 
 // Servidor corriendo en el puerto 5000
-app.listen(5000, () => {
-    console.log("🚀 Servidor corriendo en http://localhost:5000");
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
+
