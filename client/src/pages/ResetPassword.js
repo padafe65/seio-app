@@ -37,8 +37,13 @@ const ResetPassword = () => {
       }
       
 
-    } catch (error) {
-      setMensaje(error.response?.data?.error || 'Error al cambiar contraseña');
+    }  catch (error) {
+      console.error("❌ Error al reestablecer la contraseña:", error);
+      const msg =
+        error.response?.data?.message || // <-- verifica si tu backend manda `message`
+        error.response?.data?.error ||   // <-- o si manda `error`
+        'Ocurrió un error inesperado al intentar cambiar la contraseña.';
+      setMensaje(msg);
     }
   };
 
