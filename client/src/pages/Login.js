@@ -70,7 +70,7 @@ const handleForgotPassword = () => {
         >
           {/* Imagen en la parte superior */}
           <img
-            src="/img/Jesus.jpg" //Asegúrate de que esta imagen esté en public/img
+            src="/img/jesus.jpg" //Asegúrate de que esta imagen esté en public/img
             alt="Imagen de Jesus mi salvador"
             style={{
               width: '10%',
