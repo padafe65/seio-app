@@ -11,6 +11,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const PORT = process.env.PORT;
+
 // Verifica que las variables de entorno estén siendo cargadas correctamente
 console.log("🔍 Verificando variables de entorno:");
 console.log("DB_HOST:", process.env.DB_HOST);
@@ -254,7 +256,7 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
 
 
 // Servidor corriendo en el puerto 5000
-const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => {
     console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });
