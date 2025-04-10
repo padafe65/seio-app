@@ -5,7 +5,9 @@ import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
-    const notiMySwal = withReactContent(Swal);
+const notiMySwal = withReactContent(Swal);
+
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const Registro = () => {
   const [user, setUser] = useState({ nombre: '', telefono:'', email: '', password: '', rol: 'usuario' });
@@ -30,7 +32,7 @@ const Registro = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/auth/register', user);
+      await axios.post(`${API_URL}/api/auth/register`, user);
       notiMySwal.fire({
         icon: 'success',
         title: 'Registro exitoso',

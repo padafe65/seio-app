@@ -7,6 +7,9 @@
     //import withReactContent from 'sweetalert2-react-content';
 
     //const notiMySwal = withReactContent(Swal);
+
+    const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
     const formatearPesos = (monto) =>
       monto.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
     
@@ -48,7 +51,7 @@
         formData.append("imagen", imagen);
       
         try {
-          const respuesta = await axios.post(`http://localhost:5000/api/subir-comprobante/${rifaId}`, formData);
+          const respuesta = await axios.post(`${API_URL}/api/subir-comprobante/${rifaId}`, formData);
           
           setMensajesPorRifa((prev) => ({ ...prev, [rifaId]: "✅ Comprobante subido con éxito." }));
           setVerComprobantePorRifa((prev) => ({ ...prev, [rifaId]: true }));
@@ -72,11 +75,11 @@
 
           if (usuario?.rol === "admin") { 
           
-              response = await axios.get("http://localhost:5000/api/rifas");
+              response = await axios.get(`${API_URL}/api/rifas`);
               
           } else {
           
-              response = await axios.get(`http://localhost:5000/api/rifa/listar/${usuario.id}`);
+              response = await axios.get(`${API_URL}/api/rifa/listar/${usuario.id}`);
               
           }
 
@@ -115,7 +118,7 @@
             totalPago
         });
 
-          const response = await axios.post('http://localhost:5000/api/rifa/guardar', {
+          const response = await axios.post(`${API_URL}/api/rifa/guardar`, {
             usuario_id: usuario.id,
             numeros,
             totalPago
@@ -133,7 +136,7 @@
 
       const pagarRifa = async (id) => {
         try {
-          await axios.put(`http://localhost:5000/api/rifa/pagar/${id}`);
+          await axios.put(`${API_URL}/api/rifa/pagar/${id}`);
           alert("Pago realizado con éxito");
           cargarRifas();
         } catch (error) {
@@ -209,7 +212,7 @@
                     )}
 
                     {rifa.estado === "Cancelado" && rifa.imagen_pago && (
-                      <a href={`http://localhost:5000/uploads/${rifa.imagen_pago}`} 
+                      <a href={`${API_URL}/uploads/${rifa.imagen_pago}`} 
                         target="_blank" rel="noopener noreferrer"
                         className="btn btn-info btn-sm">
                         Ver Comprobante                        
@@ -219,7 +222,7 @@
                   <td style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                     {rifa.imagen_pago ? (
                       <img
-                        src={`http://localhost:5000/uploads/${rifa.imagen_pago}`}
+                        src={`${API_URL}/uploads/${rifa.imagen_pago}`}
                         alt="Comprobante"
                         width={60}
                         height={55}

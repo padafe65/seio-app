@@ -5,6 +5,8 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
 const Admin = () => {
   const { authToken, userRole } = useAuth();
   const [usuarios, setUsuarios] = useState([]);
@@ -17,7 +19,7 @@ const Admin = () => {
     }
     const fetchUsuarios = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/admin/users', {
+        const response = await axios.get(`${API_URL}/api/admin/users`, {
           headers: { Authorization: `Bearer ${authToken}` }
         });
         setUsuarios(response.data);
