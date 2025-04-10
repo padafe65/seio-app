@@ -11,7 +11,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 5000;
 
 // Verifica que las variables de entorno estén siendo cargadas correctamente
 console.log("🔍 Verificando variables de entorno:");
@@ -26,15 +26,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 
-const app = express();
-//app.use(cors());
-app.use(cors({
-    origin: ['http://localhost:3000', 'https://rifa-app-1.onrender.com'],
-    credentials: true
-  }));
-app.use(express.json()); 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // Conexión a MySQL
 const db = mysql.createPool({
     host: process.env.DB_HOST,
@@ -42,6 +33,16 @@ const db = mysql.createPool({
     password: process.env.DB_PASSWORD === 'empty' ? '' : process.env.DB_PASSWORD,
     database: process.env.DB_NAME
   });
+
+const app = express();
+//app.use(cors());
+app.use(cors({
+    
+  }));
+app.use(express.json()); 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+
 
 // Configurar multer
 const storage = multer.diskStorage({
