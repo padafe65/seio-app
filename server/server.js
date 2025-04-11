@@ -34,10 +34,7 @@ const db = mysql.createPool({
     ssl: {
         minVersion: 'TLSv1.2',
         rejectUnauthorized: true
-      },
-       // Opcional: especificar protocolo
-    connectAttributes: {
-        'useIPv6': false}
+      }
   });
 
   // Verificar conexión al iniciar
