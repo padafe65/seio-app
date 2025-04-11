@@ -26,7 +26,7 @@ const __dirname = dirname(__filename);
 
 // Conexión a MySQL
 const db = mysql.createPool({
-    host: process.env.DB_HOST,
+    host: process.env.DB_HOST || '3306',
     port: process.env.DB_PORT,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -34,7 +34,10 @@ const db = mysql.createPool({
     ssl: {
         minVersion: 'TLSv1.2',
         rejectUnauthorized: true
-      }
+      },
+       // Opcional: especificar protocolo
+    connectAttributes: {
+        'useIPv6': false}
   });
 
   // Verificar conexión al iniciar
@@ -92,7 +95,7 @@ app.post('/api/subir-comprobante/:id', upload.single('imagen'), async (req, res)
   
 
 // Servir la carpeta "uploads" como pública
-app.use('/uploads', express.static('uploads'));
+//app.use('/uploads', express.static('uploads'));
 
 
 app.post('/api/auth/login', async (req, res) => {

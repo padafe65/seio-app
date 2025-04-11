@@ -6,22 +6,31 @@ import { useAuth } from '../context/AuthContext';
 const Navbar = () => {
   const { authToken, logout } = useAuth();
 
-  // Este useEffect está ahora DENTRO del componente
   useEffect(() => {
     console.log("🔄 Cambios en authToken:", authToken);
   }, [authToken]);
-
-  console.log("🧠 authToken en Navbar:", authToken);
 
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
       <div className="container">
         <Link className="navbar-brand" to="/">Rifa</Link>
-        <button className="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+
+        {/* 🔽 Este es el botón para dispositivos móviles con mejoras */}
+        <button
+          className="navbar-toggler"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#navbarNav"
+          aria-controls="navbarNav"
+          aria-expanded="false"
+          aria-label="Toggle navigation"
+        >
           <span className="navbar-toggler-icon"></span>
         </button>
+
+        {/* 🔽 Menú que se colapsa en dispositivos móviles */}
         <div className="collapse navbar-collapse" id="navbarNav">
-          <ul className="navbar-nav me-auto">
+          <ul className="navbar-nav ms-auto"> {/* ms-auto alinea a la derecha */}
             {authToken ? (
               <>
                 <li className="nav-item">
