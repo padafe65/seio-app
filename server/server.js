@@ -11,8 +11,6 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = process.env.PORT || 5000;
-
 // Verifica que las variables de entorno estén siendo cargadas correctamente
 console.log("🔍 Verificando variables de entorno:");
 console.log("DB_HOST:", process.env.DB_HOST);
@@ -29,10 +27,25 @@ const __dirname = dirname(__filename);
 // Conexión a MySQL
 const db = mysql.createPool({
     host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
     user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD === 'empty' ? '' : process.env.DB_PASSWORD,
-    database: process.env.DB_NAME
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    ssl: {
+        minVersion: 'TLSv1.2',
+        rejectUnauthorized: true
+      }
   });
+
+  // Verificar conexión al iniciar
+db.getConnection()
+.then(conn => {
+  console.log('✅ Conexión exitosa a TiDB');
+  conn.release();
+})
+.catch(err => {
+  console.error('❌ Error al conectar a TiDB:', err);
+});
 
 const app = express();
 //app.use(cors());
@@ -120,16 +133,25 @@ app.post('/api/auth/login', async (req, res) => {
 
 // 🔹 Nueva ruta para registrar usuarios
 app.post('/api/auth/register', async (req, res) => {
-    console.log("📥 Datos recibidos:", req.body);
+    
     try {
-        const { nombre, telefono, email,  password, rol } = req.body;
-
-        // Verificar si el usuario ya existe
-        const [userExists] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
-        if (userExists.length > 0) {
-            return res.status(400).json({ error: "El usuario ya existe" });
-        }
-
+        const { nombre, telefono, email, password, rol } = req.body;
+        console.log("📥 Datos recibidos:", req.body);
+        const [existingUser] = await db.query('SELECT * FROM usuarios WHERE nombre = ? OR email = ?',
+            [nombre, email]);
+          
+          if (existingUser.length > 0) {
+            const usuarioExistente = existingUser[0];
+          
+            if (usuarioExistente.nombre === nombre && usuarioExistente.email === email) {
+              return res.status(400).json({ message: 'El nombre de usuario y el correo ya están en uso' });
+            } else if (usuarioExistente.nombre === nombre) {
+              return res.status(400).json({ message: 'El nombre de usuario ya está en uso' });
+            } else if (usuarioExistente.email === email) {
+              return res.status(400).json({ message: 'El correo electrónico ya está en uso' });
+            }
+          }
+          
         // Encriptar contraseña
         const hashedPassword = await bcrypt.hash(password, 10);
         // Guardar en la base de datos
@@ -257,7 +279,7 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
 
 
 // Servidor corriendo en el puerto 5000
-
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
 });

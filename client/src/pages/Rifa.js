@@ -97,11 +97,16 @@
     }, [usuario, cargarRifas]);    
     
 
-      const generarNumero = () => {
-        const nuevoNumero = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-        setNumeros([...numeros, nuevoNumero]);
-        setTotalPago(totalPago + parseInt(nuevoNumero, 10));
-      };
+    const generarNumero = () => {
+      let nuevoNumero;
+      do {
+        nuevoNumero = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      } while (numeros.includes(nuevoNumero));
+    
+      setNumeros([...numeros, nuevoNumero]);
+      setTotalPago(totalPago + parseInt(nuevoNumero, 10));
+    };
+    
 
       const guardarNumeros = async () => {
         console.log("Estado actual:", usuario); // Verifica el usuario autenticado

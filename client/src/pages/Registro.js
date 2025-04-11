@@ -43,15 +43,46 @@ const Registro = () => {
       });
   
     } catch (error) {
-      notiMySwal.fire({
-        icon: 'error',
-        title: 'Error en el registro',
-        text: error.response?.data?.message || 'No se pudo registrar el usuario',
-        confirmButtonColor: '#dc3545' // color btn-danger
-      });
-      //alert('Usuario registrado con éxito');
-      //navigate('/');
-    } //catch (error) {
+      if (!error.response) {
+        // ❌ Error de red o servidor caído
+        Swal.fire({
+          icon: 'error',
+          title: 'Error de conexión',
+          text: 'No se pudo conectar con el servidor. Inténtalo más tarde.'
+        });
+      } else {
+        const mensaje = error.response.data.message;
+  
+        // Puedes hacer aún más específico si quieres:
+        if (mensaje.includes('nombre') && mensaje.includes('correo')) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Duplicado',
+            text: 'El nombre de usuario y el correo ya están en uso.'
+          });
+        } else if (mensaje.includes('nombre')) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Nombre en uso',
+            text: 'El nombre de usuario ya está registrado.'
+          });
+        } else if (mensaje.includes('correo')) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Correo en uso',
+            text: 'El correo electrónico ya está registrado.'
+          });
+        } else {
+          // Otro tipo de error
+          Swal.fire({
+            icon: 'error',
+            title: 'Error',
+            text: mensaje || 'Ocurrió un error inesperado.'
+          });
+        }
+      }
+    }
+      //catch (error) {
       //console.error('Error en el registro:', error);
    // }
   };
