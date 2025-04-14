@@ -167,8 +167,17 @@
 
       const guardarNumeros = async () => {
         console.log("Estado actual:", usuario); // Verifica el usuario autenticado
-        if (numeros.length === 0) {
-          alert("Debes generar al menos un número antes de guardar.");
+        if (numeros.length === 0) {          
+          //alert("Número/s guardados con exito.");
+          notiMySwal.fire({
+            icon: 'info',
+            title: 'Atención',
+             html: `<i><strong>${usuario.nombre} </strong>, Debes generar al menos un número antes de guardar, gracias por tú colaboración.</i>`,
+            imageUrl: "img/numero.gif",
+            imageWidth: 100,
+            imageHeight: 100,
+            confirmButtonColor: '#3085d6'
+          });   
           return;
         }
 
@@ -186,12 +195,40 @@
             totalPago
           });
 
+          if (response.data.message==="Números guardados con éxito") {
+            //alert("Número/s guardados con exito.");
+            notiMySwal.fire({
+              icon: 'info',
+              title: 'Atención',
+               html: `<i><strong>${usuario.nombre} </strong>, Número/s guardados con éxito, gracias por tú colaboración.</i>`,
+              imageUrl: "img/guardar.gif",
+              imageWidth: 100,
+              imageHeight: 100,
+              confirmButtonColor: '#3085d6'
+            });    
+
+          }
+
           alert(response.data.message);
           setNumeros([]);
           setTotalPago(0);
           cargarRifas();
         } catch (error) {
           console.error("Error al guardar números:", error);
+          if (error) {
+            //alert("Ya alcanzaste el límite de 5 números.");
+            notiMySwal.fire({
+              icon: 'info',
+              title: 'Atención',
+               html: `<i><strong>${usuario.nombre} </strong>, Error al guardar el o los números, gracias por tú colaboración.</i>`,
+              imageUrl: "img/errorpago.gif",
+              imageWidth: 100,
+              imageHeight: 100,
+              //text: 'Usuario registrado con éxito',
+              confirmButtonColor: '#3085d6'
+            });    
+            
+          }
           alert("Hubo un error al guardar los números.");
         }
       };

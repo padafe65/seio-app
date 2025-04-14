@@ -83,27 +83,7 @@
 
           
           {/* Draggable con imagen y texto */}
-          <Draggable nodeRef={draggableRef}>
-            <div
-              ref={draggableRef}
-              style={{
-                position: 'fixed',
-                top: '75%',
-                left: '7%',
-                transform: 'translate(-40%, -40%)',
-                width: '100%',
-                maxWidth: '950px',
-                maxHeight: '90vh',
-                padding: '20px',
-                backgroundColor: '#17a2b8',
-                color: 'white',
-                borderRadius: '10px',
-                cursor: 'move',
-                zIndex: 1000,
-                overflowY: 'auto',
-              }}
-            >
-
+          
             {/* Imagen en la parte superior */}
             <img
               src="/img/jesus.jpg" //Asegúrate de que esta imagen esté en public/img
@@ -115,9 +95,10 @@
                 marginBottom: '10px',
               }}
             />
-
-            <p>
-              <lu>
+          <div  className="overflow-y-auto p-4 rounded-xl mt-3" style={{ maxHeight: '70vh', backgroundColor: '#17a2b8', // cyan-ish fondo     color: '#f8f9fa', // texto beige/blanco claro  fontSize: '1rem',
+            WebkitOverflowScrolling: 'touch', touchAction: 'manipulation', color:'whitesmoke'}}>
+            <p >
+              <lu >
                 <li>
                   <i><strong style={{ color: 'beige' }}>Bienvenido y gracias por participar en la rifa pro_quimioterapia Erwin (Este elemento de texto informativo es desplazable).</strong></i> 
                 </li>
@@ -138,8 +119,9 @@
                 </ol>
               </ul>
             </p>
-          </div>
-        </Draggable>
+           </div>
+          
+        
       </div>
     );
   };

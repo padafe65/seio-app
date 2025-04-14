@@ -35,8 +35,10 @@ const Registro = () => {
         imageWidth: 100,
         imageHeight: 100,
         //text: 'Usuario registrado con éxito',
-        confirmButtonColor: '#3085d6',
-      }); 
+        confirmButtonColor: '#3085d6'
+      }).then(() => {
+        navigate('/');
+        }); 
             
   
     } catch (error) {
@@ -147,9 +149,7 @@ const Registro = () => {
           onChange={handleChange} 
           className="form-control mb-2" 
           required 
-        />
-
-        
+        />       
 
         <button type="submit" className="btn btn-success">Registrar</button>
       </form>
