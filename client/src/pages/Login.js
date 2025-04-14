@@ -105,19 +105,20 @@
               </lu><br />
               💡
               Para entrar a nuestra página y participar en la rifa de $300000 COP (Trescientos mil pesos colombianos) debe estar registrado en la plataforma y posteriormente ingresar con su usuario y contraseña. La rifa funciona de la manera siguiente:
-              participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número "0214" cancelas $214 COP y con este número participas en larifa y si deseas participar con más números, da clic en el botón nuevamente, si te sale "1026", cancelas en total la suma de los dos números: $1240 COP y con estos dos números tienes oportunidad de ganar (Puedes generar los números deseados). <br /><br />
+              participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número "0214" cancelas $214 COP y con este número participas en la rifa y si deseas participar con más números, da clic en el botón nuevamente (no es obligatorio), si decides generar otro número y te sale "1026", cancelas en total la suma de los dos números: $1240 COP y con estos dos números tienes oportunidad de ganar (Puedes generar los números deseados hasta un máximo de cinco números, pero no es necesario hacerlo si solo quieres participar con uno, dos, ..., cinco números esta bien). <br /><br />
               <li><strong>Tenga en cuenta:</strong> </li><br />
               <ul>
                 <ol>
-                  <li><strong>Tenga en cuenta que por cada vez que genere un número en la sesión, lo que cancela va aumentando, porque es la suma de los números generados, esto se puede ver en la tabla inferior, donde se van mostrando los números jugados y el pago total de estos.</strong> </li>
-                  <li><strong>Debes registrar tu usuario y proporcionar los datos solicitados.</strong> </li>
+                  <li><strong>Tenga en cuenta que por cada vez que genere un número en la sesión, lo que cancela va aumentando, porque es la suma de los números generados en una sola sesión o en varias, esto se puede ver en la tabla inferior, donde se van mostrando los números jugados y el pago total de estos.</strong> </li>
+                  <li><strong>El usuario puede participar con un sólo número generado aleatoriamente por el botón "Generar Números" y si desea más boletas o números para la rifa, debe (solo si lo desea) hacer clik en el botón, tendrá como máximo cinco posiblidades en total de generar un número para la rifa, por usuario.</strong> </li>
+                    <li><strong>La rifa pro-quimioterapia Erwin, juega el día sábado 31 de mayo del 2025.</strong> </li>
+                    <li><strong>Debes registrar tu usuario y proporcionar los datos solicitados.</strong> </li>
                     <li><strong>Iniciar sesión con tu correo y la clave que seleccionaste.</strong> </li>
                     <li><strong>Todo número/s de la rifa debe estar cancelado para el pago del premio y se debe enviar o subir el comprobante de pago al celular <strong>3142999274</strong> a Nequi o Daviplata a nombre de <strong>Vilma o Vilme</strong>. Gracias por su colaboración.</strong> </li>
                     <li><strong>Las oportunidades para ganar son proporcionales a los números generados.</strong> </li>
                     <li><strong>Los comprobantes subidos a la plataforma deben ser de un operador valido como por ejemplo Nequi o Daviplata entre otros al número proporcionado en la página.</strong> </li>
-                    <li><strong>El número menor generado por el sistema es el "0000" y el mayor es "9999".</strong> </li>
-                    <li><strong>El número máximo y total de oportunidades por usuario es de 5, ingresando en una o diferente sesiones y debe cancelar el valor total resultado de la suma de los números generados en cada sesión con su respectivo comprobante y sólo participan los números cancelados en cada comprobante.</strong> </li>
-                    <li><strong>La rifa pro-quimioterapia Erwin, juega el día sábado 31 de mayo del 2025.</strong> </li>
+                    <li><strong>El número menor generado por el sistema es el "0000" y el mayor es "9999".</strong> </li>                    
+                    
                 </ol>
               </ul>
             </p>
