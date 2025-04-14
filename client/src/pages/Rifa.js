@@ -3,10 +3,10 @@
     import { useCallback } from "react";
     import { useAuth } from '../context/AuthContext';
     import 'bootstrap/dist/css/bootstrap.min.css';
-    //import Swal from 'sweetalert2';
-    //import withReactContent from 'sweetalert2-react-content';
+    import Swal from 'sweetalert2';
+    import withReactContent from 'sweetalert2-react-content';
 
-    //const notiMySwal = withReactContent(Swal);
+    const notiMySwal = withReactContent(Swal);
 
     const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -26,6 +26,9 @@
       // Por estas:
       const [mensajesPorRifa, setMensajesPorRifa] = useState({});
       const [verComprobantePorRifa, setVerComprobantePorRifa] = useState({});
+      const [botonDeshabilitado, setBotonDeshabilitado] = useState(false);
+      const [cantidadJugados, setCantidadJugados] = useState();
+
 
       const pagarRifa1 = (id) => {
         setFilaActivaParaPago(id); // Habilita la subida solo en esta fila
@@ -47,12 +50,24 @@
           return;
         }
       
+        const rifaSeleccionada = rifas.find((r) => r.id === rifaId);
+        const numeros = rifaSeleccionada?.numeros || "N/D";
+  
+
         const formData = new FormData();
         formData.append("imagen", imagen);
       
         try {
           const respuesta = await axios.post(`${API_URL}/api/subir-comprobante/${rifaId}`, formData);
-          
+          notiMySwal.fire({
+            icon: 'success',
+            title: 'Atención',
+            html: `<i><strong> ${usuario.nombre} </strong>,  participas con los números: ${numeros}, habilitados gracias por tu colaboración y pago</i>`,
+            imageUrl: "img/pago.gif",
+            imageWidth: 100,
+            imageHeight: 100,            
+            confirmButtonColor: '#3085d6',
+          }); 
           setMensajesPorRifa((prev) => ({ ...prev, [rifaId]: "✅ Comprobante subido con éxito." }));
           setVerComprobantePorRifa((prev) => ({ ...prev, [rifaId]: true }));
           cargarRifas();
@@ -84,6 +99,29 @@
           }
 
           setRifas(response.data);
+
+           // ✅ Contar la cantidad total de números jugados por el usuario
+          let totalNumerosJugados = 0;
+
+          response.data.forEach(rifa => {
+            if (rifa.numeros) {
+              const numerosLista = rifa.numeros.split(",").map(n => n.trim()).filter(n => n !== "");
+              totalNumerosJugados += numerosLista.length;
+              
+            }
+          });
+
+          // 👉 Guarda la cantidad en un estado si lo necesitas
+          setCantidadJugados(totalNumerosJugados); // solo si lo necesitas en otra parte
+          
+
+        // Verifica la cantidad de números jugados por el usuario
+        if (response.data.length >= 5) {
+          setBotonDeshabilitado(true);
+        } else {
+          setBotonDeshabilitado(false);
+        }
+
       } catch (error) {
           console.error("Error al cargar rifas:", error);
       }
@@ -98,13 +136,32 @@
     
 
     const generarNumero = () => {
+      if (rifas.length >= 5 || cantidadJugados >= 5) {
+        //alert("Ya alcanzaste el límite de 5 números.");
+        notiMySwal.fire({
+          icon: 'info',
+          title: 'Atención',
+           html: `<i><strong>${usuario.nombre} </strong>, Ya alcanzaste el límite de 5 números, gracias por tú colaboración.</i>`,
+          imageUrl: "img/limite.gif",
+          imageWidth: 100,
+          imageHeight: 100,
+          //text: 'Usuario registrado con éxito',
+          confirmButtonColor: '#3085d6',
+        });    
+        return;
+      }
+    
       let nuevoNumero;
       do {
         nuevoNumero = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       } while (numeros.includes(nuevoNumero));
     
+      // Agregamos el número y actualizamos estados
       setNumeros([...numeros, nuevoNumero]);
-      setTotalPago(totalPago + parseInt(nuevoNumero, 10));
+      setCantidadJugados(prev => prev + 1);
+      setTotalPago(prev => prev + parseInt(nuevoNumero, 10));
+    
+      console.log("Cantidad Jugados (previo): " + cantidadJugados);
     };
     
 
@@ -153,8 +210,12 @@
       return (
         <div className="container mt-5">
           <h2>Participar en la Rifa</h2>
-          <button className="btn btn-success" onClick={generarNumero}>Generar Número</button>
-          <button className="btn btn-primary ms-2" onClick={guardarNumeros}>Guardar Números</button>
+          <button className="btn btn-success" onClick={generarNumero} disabled={botonDeshabilitado} variant="primary">
+            Generar Número
+          </button>
+          <button   className="btn btn-primary ms-2" onClick={guardarNumeros} disabled={botonDeshabilitado} variant="primary">
+          Guardar Números </button>
+
 
           <div className="mt-3">
             <h4>Números Jugados:</h4>
@@ -165,7 +226,8 @@
 
             <h3>Total a pagar: ${formatearPesos(totalPago)}</h3>
             {totalPago < 1000 && <p className="text-danger">Por favor jugar almennos un o unos números más  hasta alcanzar una suma de los números juagados igual o mayor a  $1000 pesos si lo desea</p>}
-            
+            <h3>Oportunidades según números jugados: {cantidadJugados} / 5</h3>
+
             <h3>Rol detectado: {usuario.rol}</h3>
             <h3>Usuario en la sesión: {usuario.nombre}</h3>
             <h3>Id Usuario: {usuario.id}</h3>

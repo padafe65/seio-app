@@ -10,7 +10,7 @@ const notiMySwal = withReactContent(Swal);
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const Registro = () => {
-  const [user, setUser] = useState({ nombre: '', telefono:'', email: '', password: '', rol: 'usuario' });
+  const [user, setUser] = useState({ nombre: '', telefono:'', email: '', password: ''});
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -18,14 +18,7 @@ const Registro = () => {
 
     // Se actualiza el estado con el nuevo valor del campo
     const updatedUser = { ...user, [name]: value };
-
-    // Verifica si el nombre y la contraseña coinciden con las credenciales del admin
-    if (updatedUser.nombre === 'Padafe65' && updatedUser.password === 'Pdve4461') {
-      updatedUser.rol = 'admin';
-    } else {
-      updatedUser.rol = 'usuario';
-    }
-
+    
     setUser(updatedUser);
   };
 
@@ -33,51 +26,83 @@ const Registro = () => {
     e.preventDefault();
     try {
       await axios.post(`${API_URL}/api/auth/register`, user);
+      
       notiMySwal.fire({
         icon: 'success',
-        title: 'Registro exitoso',
-        text: 'Usuario registrado con éxito',
-        confirmButtonColor: '#198754' // color btn-success
-      }).then(() => {
-        navigate('/');
-      });
+        title: 'Atención',
+        html: `<i><strong> ${user.nombre} </strong>,  Su Registro fue exitoso, ya esta habilitado en la plataforma para partcicipar en la rifa.</i>`,
+        imageUrl: "img/ingreso.gif",
+        imageWidth: 100,
+        imageHeight: 100,
+        //text: 'Usuario registrado con éxito',
+        confirmButtonColor: '#3085d6',
+      }); 
+            
   
     } catch (error) {
       if (!error.response) {
         // ❌ Error de red o servidor caído
-        Swal.fire({
+        notiMySwal.fire({
           icon: 'error',
-          title: 'Error de conexión',
-          text: 'No se pudo conectar con el servidor. Inténtalo más tarde.'
+          title: 'Error de conexión',                    
+          html: `<i><strong> ${user.nombre} </strong>,   No se pudo conectar con el servidor. Inténtalo más tarde.</i>`,
+          imageUrl: "img/error.gif",
+          imageWidth: 100,
+          imageHeight: 100,
+          //text: 'Usuario registrado con éxito',
+          confirmButtonColor: '#3085d6'
         });
       } else {
         const mensaje = error.response.data.message;
   
         // Puedes hacer aún más específico si quieres:
         if (mensaje.includes('nombre') && mensaje.includes('correo')) {
-          Swal.fire({
+          notiMySwal.fire({
             icon: 'warning',
             title: 'Duplicado',
-            text: 'El nombre de usuario y el correo ya están en uso.'
+            text: 'El nombre de usuario y el correo ya están en uso.',
+            html: `<i><strong> ${user.nombre} </strong>,   El nombre de usuario y el correo ya están en uso.</i>`,
+            imageUrl: "img/duplicado.gif",
+            imageWidth: 100,
+            imageHeight: 100,
+            //text: 'Usuario registrado con éxito',
+            confirmButtonColor: '#3085d6'
           });
-        } else if (mensaje.includes('nombre')) {
-          Swal.fire({
+        } else if (mensaje.includes('nombre')) {          
+          notiMySwal.fire({
             icon: 'warning',
             title: 'Nombre en uso',
-            text: 'El nombre de usuario ya está registrado.'
+            text: 'El nombre de usuario y el correo ya están en uso.',
+            html: `<i><strong> ${user.nombre} </strong>, El nombre de usuario ya está registrado.</i>`,
+            imageUrl: "img/duplicado.gif",
+            imageWidth: 100,
+            imageHeight: 100,
+            //text: 'Usuario registrado con éxito',
+            confirmButtonColor: '#3085d6'
           });
-        } else if (mensaje.includes('correo')) {
-          Swal.fire({
+        } else if (mensaje.includes('correo')) {          
+          notiMySwal.fire({
             icon: 'warning',
             title: 'Correo en uso',
-            text: 'El correo electrónico ya está registrado.'
+            text: 'El nombre de usuario y el correo ya están en uso.',
+            html: `<i><strong> ${user.nombre}: </strong>, ${user.email} este correo electrónico ya está registrado.</i>`,
+            imageUrl: "img/duplicado.gif",
+            imageWidth: 100,
+            imageHeight: 100,
+            //text: 'Usuario registrado con éxito',
+            confirmButtonColor: '#3085d6'
           });
         } else {
-          // Otro tipo de error
-          Swal.fire({
+          // Otro tipo de error          
+          notiMySwal.fire({
             icon: 'error',
-            title: 'Error',
-            text: mensaje || 'Ocurrió un error inesperado.'
+            title: 'Error de conexión',                    
+            html: `<i><strong> ${user.nombre} </strong>,  ${mensaje} || 'Ocurrió un error inesperado.'</i>`,
+            imageUrl: "img/error.gif",
+            imageWidth: 100,
+            imageHeight: 100,
+            //text: 'Usuario registrado con éxito',
+            confirmButtonColor: '#3085d6'
           });
         }
       }

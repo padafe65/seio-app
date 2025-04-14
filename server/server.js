@@ -26,7 +26,7 @@ const __dirname = dirname(__filename);
 
 // Conexión a MySQL
 const db = mysql.createPool({
-    host: process.env.DB_HOST || '3306',
+    host: process.env.DB_HOST || '5000',
     port: process.env.DB_PORT,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -135,13 +135,24 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
     
     try {
-        const { nombre, telefono, email, password, rol } = req.body;
+        const { nombre, telefono, email, password} = req.body;
         console.log("📥 Datos recibidos:", req.body);
+        let rol = 'usuario';
+        if ((nombre === 'Padafe65' || nombre === 'Erwin Alirio Ferreira') && password === 'Pdve1410') {
+          console.log(nombre === 'Padafe65' || nombre === 'Erwin Alirio Ferreira');
+          rol = 'admin';
+        }
+         // Verificar si el usuario ya existe
         const [existingUser] = await db.query('SELECT * FROM usuarios WHERE nombre = ? OR email = ?',
             [nombre, email]);
           
           if (existingUser.length > 0) {
             const usuarioExistente = existingUser[0];
+
+             // Si intenta registrar de nuevo al admin ya existente
+             if (usuarioExistente.nombre === 'Padafe65') {
+              return res.status(400).json({ message: 'El administrador ya está registrado' });
+          }
           
             if (usuarioExistente.nombre === nombre && usuarioExistente.email === email) {
               return res.status(400).json({ message: 'El nombre de usuario y el correo ya están en uso' });
@@ -154,6 +165,9 @@ app.post('/api/auth/register', async (req, res) => {
           
         // Encriptar contraseña
         const hashedPassword = await bcrypt.hash(password, 10);
+
+
+        
         // Guardar en la base de datos
         await db.query("INSERT INTO usuarios (nombre, telefono, email, password, rol) VALUES (?, ?, ?, ?, ?)", 
             [nombre, telefono, email, hashedPassword, rol]);

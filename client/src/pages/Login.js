@@ -47,7 +47,17 @@
           });
           //navigate('/rifa');
         } else {
-          alert("Correo o contraseña incorrectos"); // o mejor con un toast
+          notiMySwal.fire({
+            icon: 'error',
+            title: 'Atención',
+             html: `<i><strong>${credentials.email} </strong>, Error de email o password   no se pude ingresar a su usuario, intente de nuevo</i>`,
+            imageUrl: "img/errorlogin.gif",
+            imageWidth: 100,
+            imageHeight: 100,
+            //text: 'Usuario registrado con éxito',
+            confirmButtonColor: '#3085d6',
+          });    
+          
         }
       };
       
@@ -73,22 +83,27 @@
 
           
           {/* Draggable con imagen y texto */}
-        <Draggable nodeRef={draggableRef}>
-          <div
-            ref={draggableRef}
-            style={{
-              width: '950px',
-              padding: '10px',
-              backgroundColor: '#17a2b8',
-              color: 'white',
-              borderRadius: '10px',
-              position: 'absolute',
-              top: '300px',
-              right: '130px',
-              cursor: 'move',
-              zIndex: 1000,
-            }}
-          >
+          <Draggable nodeRef={draggableRef}>
+            <div
+              ref={draggableRef}
+              style={{
+                position: 'fixed',
+                top: '75%',
+                left: '7%',
+                transform: 'translate(-40%, -40%)',
+                width: '100%',
+                maxWidth: '950px',
+                maxHeight: '90vh',
+                padding: '20px',
+                backgroundColor: '#17a2b8',
+                color: 'white',
+                borderRadius: '10px',
+                cursor: 'move',
+                zIndex: 1000,
+                overflowY: 'auto',
+              }}
+            >
+
             {/* Imagen en la parte superior */}
             <img
               src="/img/jesus.jpg" //Asegúrate de que esta imagen esté en public/img
@@ -102,17 +117,26 @@
             />
 
             <p>
-              💡<i><strong style={{ color: 'beige' }}>Bienvenido y gracias por participar en la rifa pro_quimioterapia Erwin.</strong></i> 
-              Para entrar a nuestra página y participar en la rifa de $500000 COP (Quinientos mil pesos colombianos), la cual funciona de la manera siguiente:
-              participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número 
-              "0214" cancelas $214 COP y si deseas participar con más números, da clic en el botón nuevamente, si te sale "1026", cancelas en total la suma de los dos 
-              números: $1240 COP. <br /><br />
-              <strong>Tenga en cuenta:</strong> <br />
-              1. Debes registrar tu usuario y proporcionar los datos solicitados.<br />
-              2. Iniciar sesión con tu correo y la clave que seleccionaste.<br />
-              3. Todo número/s de la rifa debe estar cancelado para el pago del premio y se debe subir el comprobante de pago al número <strong>3142999274</strong> a 
-              nombre de <strong>Vilma</strong>.<br />
-              4. Las oportunidades para ganar son proporcionales a los números generados.
+              <lu>
+                <li>
+                  <i><strong style={{ color: 'beige' }}>Bienvenido y gracias por participar en la rifa pro_quimioterapia Erwin (Este elemento de texto informativo es desplazable).</strong></i> 
+                </li>
+              </lu><br />
+              💡
+              Para entrar a nuestra página y participar en la rifa de $300000 COP (Trescientos mil pesos colombianos) debe estar registrado en la plataforma y posteriormente ingresar con su usuario y contraseña. La rifa funciona de la manera siguiente:
+              participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número "0214" cancelas $214 COP y con este número participas en larifa y si deseas participar con más números, da clic en el botón nuevamente, si te sale "1026", cancelas en total la suma de los dos números: $1240 COP y con estos dos números tienes oportunidad de ganar (Puedes generar los números deseados). <br /><br />
+              <li><strong>Tenga en cuenta:</strong> </li><br />
+              <ul>
+                <ol><li><strong>Debes registrar tu usuario y proporcionar los datos solicitados.</strong> </li>
+                    <li><strong>Iniciar sesión con tu correo y la clave que seleccionaste.</strong> </li>
+                    <li><strong>Todo número/s de la rifa debe estar cancelado para el pago del premio y se debe enviar o subir el comprobante de pago al celular <strong>3142999274</strong> a Nequi o Daviplata a nombre de <strong>Vilma o Vilme</strong>. Gracias por su colaboración.</strong> </li>
+                    <li><strong>Las oportunidades para ganar son proporcionales a los números generados.</strong> </li>
+                    <li><strong>Los comprobantes subidos a la plataforma deben ser de un operador valido como por ejemplo Nequi o Daviplata entre otros al número proporcionado en la página.</strong> </li>
+                    <li><strong>El número menor generado por el sistema es el "0000" y el mayor es "9999".</strong> </li>
+                    <li><strong>El número máximo y total de oportunidades por usuario es de 5, ingresando en una o diferente sesiones y debe cancelar el valor total resultado de la suma de los números generados en cada sesión con su respectivo comprobante y sólo participan los números cancelados en cada comprobante.</strong> </li>
+                    <li><strong>La rifa pro-quimioterapia Erwin, juega el día sábado 31 de mayo del 2025.</strong> </li>
+                </ol>
+              </ul>
             </p>
           </div>
         </Draggable>
