@@ -108,7 +108,9 @@
               participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número "0214" cancelas $214 COP y con este número participas en larifa y si deseas participar con más números, da clic en el botón nuevamente, si te sale "1026", cancelas en total la suma de los dos números: $1240 COP y con estos dos números tienes oportunidad de ganar (Puedes generar los números deseados). <br /><br />
               <li><strong>Tenga en cuenta:</strong> </li><br />
               <ul>
-                <ol><li><strong>Debes registrar tu usuario y proporcionar los datos solicitados.</strong> </li>
+                <ol>
+                  <li><strong>Tenga en cuenta que por cada vez que genere un número en la sesión, lo que cancela va aumentando, porque es la suma de los números generados, esto se puede ver en la tabla inferior, donde se van mostrando los números jugados y el pago total de estos.</strong> </li>
+                  <li><strong>Debes registrar tu usuario y proporcionar los datos solicitados.</strong> </li>
                     <li><strong>Iniciar sesión con tu correo y la clave que seleccionaste.</strong> </li>
                     <li><strong>Todo número/s de la rifa debe estar cancelado para el pago del premio y se debe enviar o subir el comprobante de pago al celular <strong>3142999274</strong> a Nequi o Daviplata a nombre de <strong>Vilma o Vilme</strong>. Gracias por su colaboración.</strong> </li>
                     <li><strong>Las oportunidades para ganar son proporcionales a los números generados.</strong> </li>
