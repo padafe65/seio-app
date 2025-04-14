@@ -149,16 +149,7 @@ const Registro = () => {
           required 
         />
 
-        {/* Se muestra el rol seleccionado automáticamente */}  
-        <div className="mb-3">
-          <label className="form-label">Rol asignado:</label>
-          <input 
-            type="text" 
-            value={user.rol} 
-            className="form-control" 
-            readOnly 
-          />
-        </div>
+        
 
         <button type="submit" className="btn btn-success">Registrar</button>
       </form>
