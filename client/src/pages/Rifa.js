@@ -137,17 +137,15 @@
 
     const generarNumero = () => {
       if (rifas.length >= 5 || cantidadJugados >= 5) {
-        //alert("Ya alcanzaste el límite de 5 números.");
         notiMySwal.fire({
           icon: 'info',
           title: 'Atención',
-           html: `<i><strong>${usuario.nombre} </strong>, Ya alcanzaste el límite de 5 números, gracias por tú colaboración.</i>`,
+          html: `<i><strong>${usuario.nombre}</strong>, ya alcanzaste el límite de 5 números. Gracias por tu colaboración.</i>`,
           imageUrl: "img/limite.gif",
           imageWidth: 100,
           imageHeight: 100,
-          //text: 'Usuario registrado con éxito',
           confirmButtonColor: '#3085d6',
-        });    
+        });
         return;
       }
     
@@ -156,82 +154,72 @@
         nuevoNumero = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       } while (numeros.includes(nuevoNumero));
     
-      // Agregamos el número y actualizamos estados
-      setNumeros([...numeros, nuevoNumero]);
-      setCantidadJugados(prev => prev + 1);
-      setTotalPago(prev => prev + parseInt(nuevoNumero, 10));
+      // Calcula el nuevo arreglo y total antes de actualizar el estado
+      const nuevosNumeros = [...numeros, nuevoNumero];
+      const nuevoTotal = totalPago + parseInt(nuevoNumero, 10);
     
-      console.log("Cantidad Jugados (previo): " + cantidadJugados);
+      // Actualiza el estado
+      setNumeros(nuevosNumeros);
+      setCantidadJugados(prev => prev + 1);
+      setTotalPago(nuevoTotal);
+    
+      // Llama a guardarNumeros pasando los nuevos valores
+      guardarNumeros(nuevosNumeros, nuevoTotal);
     };
     
+    
 
-      const guardarNumeros = async () => {
-        console.log("Estado actual:", usuario); // Verifica el usuario autenticado
-        if (numeros.length === 0) {          
-          //alert("Número/s guardados con exito.");
+    const guardarNumeros = async (numerosAGuardar, totalAGuardar) => {
+      if (numerosAGuardar.length === 0) {
+        notiMySwal.fire({
+          icon: 'info',
+          title: 'Atención',
+          html: `<i><strong>${usuario.nombre}</strong>, debes generar al menos un número antes de guardar.</i>`,
+          imageUrl: "img/numero.gif",
+          imageWidth: 100,
+          imageHeight: 100,
+          confirmButtonColor: '#3085d6'
+        });
+        return;
+      }
+    
+      try {
+        const response = await axios.post(`${API_URL}/api/rifa/guardar`, {
+          usuario_id: usuario.id,
+          numeros: numerosAGuardar,
+          totalPago: totalAGuardar
+        });
+    
+        if (response.data.message === "Números guardados con éxito") {
           notiMySwal.fire({
             icon: 'info',
             title: 'Atención',
-             html: `<i><strong>${usuario.nombre} </strong>, Debes generar al menos un número antes de guardar, gracias por tú colaboración.</i>`,
-            imageUrl: "img/numero.gif",
+            html: `<i><strong>${usuario.nombre}</strong>, número/s guardados con éxito. Gracias por tu colaboración.</i>`,
+            imageUrl: "img/guardar.gif",
             imageWidth: 100,
             imageHeight: 100,
             confirmButtonColor: '#3085d6'
-          });   
-          return;
-        }
-
-        try {
-
-          console.log("📤 Enviando datos al servidor:", {
-            usuario_id: usuario.id,
-            numeros,
-            totalPago
-        });
-
-          const response = await axios.post(`${API_URL}/api/rifa/guardar`, {
-            usuario_id: usuario.id,
-            numeros,
-            totalPago
           });
-
-          if (response.data.message==="Números guardados con éxito") {
-            //alert("Número/s guardados con exito.");
-            notiMySwal.fire({
-              icon: 'info',
-              title: 'Atención',
-               html: `<i><strong>${usuario.nombre} </strong>, Número/s guardados con éxito, gracias por tú colaboración.</i>`,
-              imageUrl: "img/guardar.gif",
-              imageWidth: 100,
-              imageHeight: 100,
-              confirmButtonColor: '#3085d6'
-            });    
-
-          }
-
-          alert(response.data.message);
-          setNumeros([]);
-          setTotalPago(0);
-          cargarRifas();
-        } catch (error) {
-          console.error("Error al guardar números:", error);
-          if (error) {
-            //alert("Ya alcanzaste el límite de 5 números.");
-            notiMySwal.fire({
-              icon: 'info',
-              title: 'Atención',
-               html: `<i><strong>${usuario.nombre} </strong>, Error al guardar el o los números, gracias por tú colaboración.</i>`,
-              imageUrl: "img/errorpago.gif",
-              imageWidth: 100,
-              imageHeight: 100,
-              //text: 'Usuario registrado con éxito',
-              confirmButtonColor: '#3085d6'
-            });    
-            
-          }
-          alert("Hubo un error al guardar los números.");
         }
-      };
+    
+        alert(response.data.message);
+        setNumeros([]);
+        setTotalPago(0);
+        cargarRifas();
+      } catch (error) {
+        console.error("Error al guardar números:", error);
+        notiMySwal.fire({
+          icon: 'info',
+          title: 'Atención',
+          html: `<i><strong>${usuario.nombre}</strong>, error al guardar el o los números.</i>`,
+          imageUrl: "img/errorpago.gif",
+          imageWidth: 100,
+          imageHeight: 100,
+          confirmButtonColor: '#3085d6'
+        });
+      }
+    };
+    
 
       const pagarRifa = async (id) => {
         try {
@@ -249,10 +237,7 @@
           <h2>Participar en la Rifa</h2>
           <button className="btn btn-success" onClick={generarNumero} disabled={botonDeshabilitado} variant="primary">
             Generar Número
-          </button>
-          <button   className="btn btn-primary ms-2" onClick={guardarNumeros} disabled={botonDeshabilitado} variant="primary">
-          Guardar Números </button>
-
+          </button>          
 
           <div className="mt-3">
             <h4>Números Jugados:</h4>
