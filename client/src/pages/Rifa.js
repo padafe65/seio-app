@@ -28,6 +28,8 @@
       const [verComprobantePorRifa, setVerComprobantePorRifa] = useState({});
       const [botonDeshabilitado, setBotonDeshabilitado] = useState(false);
       const [cantidadJugados, setCantidadJugados] = useState();
+      const [generarDeshabilitado, setGenerarDeshabilitado] = useState(false);
+
 
 
       const pagarRifa1 = (id) => {
@@ -41,6 +43,8 @@
           [rifaId]: file
         }));
       };
+      
+
       
 
       const subirComprobantePago = async (rifaId) => {
@@ -135,9 +139,10 @@
     }, [usuario, cargarRifas]);    
     
 
-    const generarNumero = () => {
+    const generarNumero = async () => {
+      // Verificación inicial de límite
       if (rifas.length >= 5 || cantidadJugados >= 5) {
-        notiMySwal.fire({
+        await notiMySwal.fire({
           icon: 'info',
           title: 'Atención',
           html: `<i><strong>${usuario.nombre}</strong>, ya alcanzaste el límite de 5 números. Gracias por tu colaboración.</i>`,
@@ -145,26 +150,53 @@
           imageWidth: 100,
           imageHeight: 100,
           confirmButtonColor: '#3085d6',
+          allowOutsideClick: false,
+          allowEscapeKey: false
         });
+    
+        // Guarda el estado actual
+        guardarNumeros(numeros, totalPago);
+        setGenerarDeshabilitado(true);
         return;
       }
     
+      // Generar número único
       let nuevoNumero;
       do {
         nuevoNumero = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
       } while (numeros.includes(nuevoNumero));
     
-      // Calcula el nuevo arreglo y total antes de actualizar el estado
+      // Cálculo nuevo estado
       const nuevosNumeros = [...numeros, nuevoNumero];
       const nuevoTotal = totalPago + parseInt(nuevoNumero, 10);
     
-      // Actualiza el estado
+      // Actualiza el estado visual
       setNumeros(nuevosNumeros);
       setCantidadJugados(prev => prev + 1);
       setTotalPago(nuevoTotal);
     
-      // Llama a guardarNumeros pasando los nuevos valores
-      guardarNumeros(nuevosNumeros, nuevoTotal);
+      // Pregunta si desea generar otro número
+      const resultado = await notiMySwal.fire({
+        title: '¿Deseas generar otro número?',
+        icon: 'question',
+        html: `<i><strong>${usuario.nombre}</strong>, ¿Deseas participar con otro número de la rifa?</i>`,
+        imageUrl: "img/jugarmas.gif",
+        imageWidth: 100,
+        imageHeight: 100,
+        showCancelButton: true,
+        confirmButtonText: 'Sí',
+        cancelButtonText: 'No',
+        confirmButtonColor: '#198754',
+        cancelButtonColor: '#d33',
+        allowOutsideClick: false,
+        allowEscapeKey: false
+      });
+    
+      // Si el usuario dice NO, guardar datos y desactivar el botón
+      if (resultado.dismiss === notiMySwal.DismissReason.cancel || resultado.isDenied) {
+        guardarNumeros(nuevosNumeros, nuevoTotal);
+        setGenerarDeshabilitado(true);
+      }
     };
     
     
@@ -235,7 +267,7 @@
       return (
         <div className="container mt-5">
           <h2>Participar en la Rifa</h2>
-          <button className="btn btn-success" onClick={generarNumero} disabled={botonDeshabilitado} variant="primary">
+          <button className="btn btn-success" onClick={generarNumero} disabled={botonDeshabilitado || generarDeshabilitado} variant="primary">
             Generar Número
           </button>          
 
