@@ -1,16 +1,16 @@
 // backend-rifa/config/db.js
 import mysql from 'mysql2/promise';
-import mysql from "mysql2/promise"; 
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const pool = mysql.createPool({
-    host: "localhost",
-    user: "root",         // Cambia si tienes otro usuario
-    password: "",         // Si tienes contraseña, agrégala aquí
-    database: "rifa",     // Cambia por el nombre de tu BD
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
 });
 
-export default pool;
+console.log('✅ Conexión exitosa a TiDB (MySQL con promesas)');
 
+export default pool;

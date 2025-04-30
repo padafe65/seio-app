@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
@@ -10,108 +9,54 @@ const notiMySwal = withReactContent(Swal);
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const Registro = () => {
-  const [user, setUser] = useState({ nombre: '', telefono:'', email: '', password: ''});
+  const [user, setUser] = useState({ name: '', phone: '', email: '', password: '', role: '' });
   const navigate = useNavigate();
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-
-    // Se actualiza el estado con el nuevo valor del campo
-    const updatedUser = { ...user, [name]: value };
-    
-    setUser(updatedUser);
+    setUser({ ...user, [name]: value });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post(`${API_URL}/api/auth/register`, user);
+      const response = await axios.post(`${API_URL}/api/auth/register`, user);
       
+      const userId = response.data.user.id;
+      localStorage.setItem('user_id', userId);  // ✅ CORREGIDO: ahora guarda 'user_id' con guión bajo
+
       notiMySwal.fire({
         icon: 'success',
         title: 'Atención',
-        html: `<i><strong> ${user.nombre} </strong>,  Su Registro fue exitoso, ya esta habilitado en la plataforma para partcicipar en la rifa.</i>`,
+        html: `<i><strong> ${user.name} </strong>, su registro fue exitoso. Ya está habilitado en la plataforma SEIO.</i>`,
         imageUrl: "img/ingreso.gif",
         imageWidth: 100,
         imageHeight: 100,
-        //text: 'Usuario registrado con éxito',
         confirmButtonColor: '#3085d6'
       }).then(() => {
-        navigate('/');
-        }); 
-            
-  
-    } catch (error) {
-      if (!error.response) {
-        // ❌ Error de red o servidor caído
-        notiMySwal.fire({
-          icon: 'error',
-          title: 'Error de conexión',                    
-          html: `<i><strong> ${user.nombre} </strong>,   No se pudo conectar con el servidor. Inténtalo más tarde.</i>`,
-          imageUrl: "img/error.gif",
-          imageWidth: 100,
-          imageHeight: 100,
-          //text: 'Usuario registrado con éxito',
-          confirmButtonColor: '#3085d6'
-        });
-      } else {
-        const mensaje = error.response.data.message;
-  
-        // Puedes hacer aún más específico si quieres:
-        if (mensaje.includes('nombre') && mensaje.includes('correo')) {
-          notiMySwal.fire({
-            icon: 'warning',
-            title: 'Duplicado',
-            text: 'El nombre de usuario y el correo ya están en uso.',
-            html: `<i><strong> ${user.nombre} </strong>,   El nombre de usuario y el correo ya están en uso.</i>`,
-            imageUrl: "img/duplicado.gif",
-            imageWidth: 100,
-            imageHeight: 100,
-            //text: 'Usuario registrado con éxito',
-            confirmButtonColor: '#3085d6'
-          });
-        } else if (mensaje.includes('nombre')) {          
-          notiMySwal.fire({
-            icon: 'warning',
-            title: 'Nombre en uso',
-            text: 'El nombre de usuario y el correo ya están en uso.',
-            html: `<i><strong> ${user.nombre} </strong>, El nombre de usuario ya está registrado.</i>`,
-            imageUrl: "img/duplicado.gif",
-            imageWidth: 100,
-            imageHeight: 100,
-            //text: 'Usuario registrado con éxito',
-            confirmButtonColor: '#3085d6'
-          });
-        } else if (mensaje.includes('correo')) {          
-          notiMySwal.fire({
-            icon: 'warning',
-            title: 'Correo en uso',
-            text: 'El nombre de usuario y el correo ya están en uso.',
-            html: `<i><strong> ${user.nombre}: </strong>, ${user.email} este correo electrónico ya está registrado.</i>`,
-            imageUrl: "img/duplicado.gif",
-            imageWidth: 100,
-            imageHeight: 100,
-            //text: 'Usuario registrado con éxito',
-            confirmButtonColor: '#3085d6'
-          });
+        if (user.role === 'estudiante') {
+          navigate('/CompleteStudent');
+        } else if (user.role === 'docente') {
+          navigate('/CompleteTeacher');
         } else {
-          // Otro tipo de error          
-          notiMySwal.fire({
-            icon: 'error',
-            title: 'Error de conexión',                    
-            html: `<i><strong> ${user.nombre} </strong>,  ${mensaje} || 'Ocurrió un error inesperado.'</i>`,
-            imageUrl: "img/error.gif",
-            imageWidth: 100,
-            imageHeight: 100,
-            //text: 'Usuario registrado con éxito',
-            confirmButtonColor: '#3085d6'
-          });
+          navigate('/');
         }
-      }
+      });
+
+    } catch (error) {
+      console.error(error);
+
+      const mensaje = error.response?.data?.message || 'Ocurrió un error inesperado.';
+      notiMySwal.fire({
+        icon: 'error',
+        title: 'Error',
+        html: `<i><strong> ${user.name} </strong>, ${mensaje}</i>`,
+        imageUrl: "img/error.gif",
+        imageWidth: 100,
+        imageHeight: 100,
+        confirmButtonColor: '#3085d6'
+      });
     }
-      //catch (error) {
-      //console.error('Error en el registro:', error);
-   // }
   };
 
   return (
@@ -120,20 +65,22 @@ const Registro = () => {
       <form onSubmit={handleSubmit}>
         <input 
           type="text" 
-          name="nombre" 
-          placeholder="Nombre" 
+          name="name" 
+          placeholder="Nombre completo" 
           onChange={handleChange} 
           className="form-control mb-2" 
           required 
         />
+
         <input 
           type="text" 
-          name="telefono" 
-          placeholder="telefono fijo o celular" 
+          name="phone" 
+          placeholder="Teléfono fijo o celular" 
           onChange={handleChange} 
           className="form-control mb-2" 
           required 
         />
+
         <input 
           type="email" 
           name="email" 
@@ -142,6 +89,7 @@ const Registro = () => {
           className="form-control mb-2" 
           required 
         />
+
         <input 
           type="password" 
           name="password" 
@@ -149,9 +97,20 @@ const Registro = () => {
           onChange={handleChange} 
           className="form-control mb-2" 
           required 
-        />       
+        />
 
-        <button type="submit" className="btn btn-success">Registrar</button>
+        <select 
+          name="role" 
+          onChange={handleChange} 
+          className="form-control mb-3" 
+          required
+        >
+          <option value="">Seleccione su Rol</option>
+          <option value="estudiante">Estudiante</option>
+          <option value="docente">Docente</option>
+        </select>
+
+        <button type="submit" className="btn btn-success w-100">Registrar</button>
       </form>
     </div>
   );

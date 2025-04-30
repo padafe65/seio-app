@@ -8,6 +8,10 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
+import questionRoutes from './routes/questionRoutes.js';
+import questionnaireRoutes from './routes/questionnaireRoutes.js';
+
+
 
 dotenv.config();
 
@@ -31,10 +35,10 @@ const db = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    ssl: {
+    /*ssl: {
         minVersion: 'TLSv1.2',
         rejectUnauthorized: true
-      }
+      }*/
   });
 
   // Verificar conexión al iniciar
@@ -54,6 +58,8 @@ app.use(cors({
   }));
 app.use(express.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/', questionRoutes);
+app.use('/api', questionnaireRoutes);
 
 
 
@@ -99,7 +105,7 @@ app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        const [rows] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
+        const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
 
         if (rows.length === 0) {
             return res.status(401).json({ error: "Usuario no encontrado" });
@@ -119,10 +125,12 @@ app.post('/api/auth/login', async (req, res) => {
             token,
             usuario: {
                 id: user.id,
-                nombre: user.nombre,
-                telefono: user.telefono,
+                name: user.name,
+                phone: user.phone,
                 email: user.email,
-                rol: user.rol
+                password:user.password,
+                role: user.role,
+                create_at: user.create_at
             }
         });
     } catch (error) {
@@ -133,51 +141,54 @@ app.post('/api/auth/login', async (req, res) => {
 
 // 🔹 Nueva ruta para registrar usuarios
 app.post('/api/auth/register', async (req, res) => {
-    
-    try {
-        const { nombre, telefono, email, password} = req.body;
-        console.log("📥 Datos recibidos:", req.body);
-        let rol = 'usuario';
-        if ((nombre === 'Padafe65' || nombre === 'Erwin Alirio Ferreira') && password === 'Pdve1410') {
-          console.log(nombre === 'Padafe65' || nombre === 'Erwin Alirio Ferreira');
-          rol = 'admin';
-        }
-         // Verificar si el usuario ya existe
-        const [existingUser] = await db.query('SELECT * FROM usuarios WHERE nombre = ? OR email = ?',
-            [nombre, email]);
-          
-          if (existingUser.length > 0) {
-            const usuarioExistente = existingUser[0];
+  try {
+      const { name, phone, email, password, role } = req.body;
+      console.log("📥 Datos recibidos:", req.body);
 
-             // Si intenta registrar de nuevo al admin ya existente
-             if (usuarioExistente.nombre === 'Padafe65') {
+      // Verificar si el usuario ya existe
+      const [existingUser] = await db.query('SELECT * FROM users WHERE name = ? OR email = ?', [name, email]);
+      
+      if (existingUser.length > 0) {
+          const usuarioExistente = existingUser[0];
+
+          // Si intenta registrar de nuevo al admin ya existente
+          if (usuarioExistente.name === 'Padafe65') {
               return res.status(400).json({ message: 'El administrador ya está registrado' });
           }
-          
-            if (usuarioExistente.nombre === nombre && usuarioExistente.email === email) {
+          if (usuarioExistente.name === name && usuarioExistente.email === email) {
               return res.status(400).json({ message: 'El nombre de usuario y el correo ya están en uso' });
-            } else if (usuarioExistente.nombre === nombre) {
+          } else if (usuarioExistente.name === name) {
               return res.status(400).json({ message: 'El nombre de usuario ya está en uso' });
-            } else if (usuarioExistente.email === email) {
+          } else if (usuarioExistente.email === email) {
               return res.status(400).json({ message: 'El correo electrónico ya está en uso' });
-            }
           }
-          
-        // Encriptar contraseña
-        const hashedPassword = await bcrypt.hash(password, 10);
+      }
 
+      // Encriptar contraseña
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-        
-        // Guardar en la base de datos
-        await db.query("INSERT INTO usuarios (nombre, telefono, email, password, rol) VALUES (?, ?, ?, ?, ?)", 
-            [nombre, telefono, email, hashedPassword, rol]);
+      // Guardar en la base de datos
+      const [result] = await db.query(
+          "INSERT INTO users (name, phone, email, password, role) VALUES (?, ?, ?, ?, ?)",
+          [name, phone, email, hashedPassword, role]
+      );
 
-        console.log("✅ Usuario registrado");
-        res.status(201).json({ message: "Usuario registrado con éxito" });
-    } catch (error) {
-        console.error("❌ Error en el servidor:", error);
-        res.status(500).json({ error: "Error en el servidor" });
-    }
+      console.log("✅ Usuario registrado", result);
+
+      // Obtener el usuario recién insertado
+      const [userRows] = await db.query('SELECT id, name, phone, email, role FROM users WHERE id = ?', [result.insertId]);
+      const newUser = userRows[0];
+
+      // Devolver el usuario completo
+      res.status(201).json({
+          message: "Usuario registrado con éxito",
+          user: newUser
+      });
+
+  } catch (error) {
+      console.error("❌ Error en el servidor:", error);
+      res.status(500).json({ error: "Error en el servidor" });
+  }
 });
 
 const verificarToken = (req, res, next) => {
@@ -290,6 +301,49 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
         res.status(500).json({ error: "Error en el servidor" });
     }
 });
+
+// Ruta para completar datos de estudiante
+app.post('/api/students', async (req, res) => {
+  try {
+    const { user_id, contact_phone, contact_email, age, grade } = req.body;
+
+    console.log("Datos recibidos para estudiante:", req.body);
+
+    // Aquí deberías guardar los datos en la tabla 'students'
+    const result = await db.query(
+      'INSERT INTO students (contact_phone, contact_email, age, grade, user_id) VALUES (?, ?, ?, ?, ?)',
+      [contact_phone, contact_email, age, grade, user_id]
+    );
+
+    res.status(201).json({ message: 'Estudiante registrado correctamente', studentId: result.insertId });
+
+  } catch (error) {
+    console.error('❌ Error registrando estudiante:', error);
+    res.status(500).json({ message: 'Error al registrar estudiante' });
+  }
+});
+
+// Ruta para completar datos de teacher
+app.post('/api/teachers', async (req, res) => {
+  try {
+    const { user_id, subject, institution } = req.body;
+
+    console.log("Datos recibidos para docente:", req.body);
+
+    // Aquí deberías guardar los datos en la tabla 'students'
+    const result = await db.query(
+      'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
+      [user_id, subject, institution]
+    );
+
+    res.status(201).json({ message: 'Donte registrado correctamente', teacherId: result.insertId });
+
+  } catch (error) {
+    console.error('❌ Error registrando docente:', error);
+    res.status(500).json({ message: 'Error al registrar dodente' });
+  }
+});
+
 
 
 // Servidor corriendo en el puerto 5000

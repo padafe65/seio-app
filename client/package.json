@@ -2,24 +2,27 @@
   "name": "client",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
-    "@testing-library/user-event": "^13.5.0",
-    "axios": "^1.8.4",
-    "bootstrap": "^5.3.3",
+    "@testing-library/user-event": "^14.6.1",
+    "ajv": "^8.17.1",
+    "ajv-keywords": "^5.1.0",
+    "axios": "^1.9.0",
+    "bootstrap": "^5.3.5",
     "framer-motion": "^12.6.3",
+    "lucide-react": "^0.503.0",
     "process": "^0.11.10",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-draggable": "^4.4.6",
     "react-router-dom": "^6.30.0",
-    "react-scripts": "^3.4.4",
+    "react-scripts": "^5.0.1",
     "sweetalert2": "^11.17.2",
     "sweetalert2-react-content": "^5.1.0",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "wouter": "^3.7.0"
   },
   "scripts": {
     "start": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts start",
@@ -44,5 +47,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-optional-chaining": "^7.21.0",
+    "@babel/preset-env": "^7.26.9",
+    "@babel/preset-react": "^7.26.3"
   }
 }

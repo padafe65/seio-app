@@ -1,10 +1,11 @@
-// frontend-rifa/src/components/Navbar.js
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { Pencil } from "lucide-react";
+
 
 const Navbar = () => {
-  const { authToken, logout } = useAuth();
+  const { authToken, logout, user } = useAuth();
 
   useEffect(() => {
     console.log("🔄 Cambios en authToken:", authToken);
@@ -13,9 +14,9 @@ const Navbar = () => {
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
       <div className="container">
-        <Link className="navbar-brand" to="/">Rifa</Link>
+        <Link className="navbar-brand" to="/">SEIO - Sistema Evaluativo Integral Online</Link>
 
-        {/* 🔽 Este es el botón para dispositivos móviles con mejoras */}
+        {/* 🔽 Botón hamburguesa para móviles */}
         <button
           className="navbar-toggler"
           type="button"
@@ -28,9 +29,9 @@ const Navbar = () => {
           <span className="navbar-toggler-icon"></span>
         </button>
 
-        {/* 🔽 Menú que se colapsa en dispositivos móviles */}
+        {/* 🔽 Menú colapsable */}
         <div className="collapse navbar-collapse" id="navbarNav">
-          <ul className="navbar-nav ms-auto"> {/* ms-auto alinea a la derecha */}
+          <ul className="navbar-nav ms-auto">
             {authToken ? (
               <>
                 <li className="nav-item">
@@ -39,6 +40,14 @@ const Navbar = () => {
                 <li className="nav-item">
                   <Link className="nav-link" to="/admin">Administración</Link>
                 </li>
+                {user?.role === 'docente' && (
+                 <li className="nav-item">
+                 <Link className="btn btn-primary d-flex align-items-center ms-2" to="/crear-pregunta">
+                   <Pencil size={16} className="me-1" />
+                   Crear Pregunta
+                 </Link>
+               </li>
+                )}
                 <li className="nav-item">
                   <button className="btn btn-danger ms-3" onClick={logout}>Cerrar sesión</button>
                 </li>
@@ -61,3 +70,4 @@ const Navbar = () => {
 };
 
 export default Navbar;
+

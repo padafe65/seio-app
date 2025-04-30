@@ -5,15 +5,19 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import Login from './pages/Login';
 import Registro from './pages/Registro';
-import Rifa from './pages/Rifa';
 import Admin from './pages/Admin';
 import './styles/styles.css';
 import ResetPassword from './pages/ResetPassword';
+import CompleteStudent from './components/CompleteStudent';
+import CompleteTeacher from './components/CompleteTeacher';
+import Dashboard from './pages/Dashboard';
+import CreateQuestionForm from './components/CreateQuestionForm.js'; // o './pages/' según donde esté
+import CreateQuestionPage from './pages/CreateQuestionPage.js'; // Ajusta según tu estructura
+
 
 // Componente de ruta protegida
 function ProtectedRoute({ children }) {
   const { authToken } = useAuth();
-  // Si no hay token, redirige al login
   if (!authToken) {
     return <Navigate to="/" replace />;
   }
@@ -29,22 +33,29 @@ function App() {
           <Routes>
             <Route path="/" element={<Login />} />
             <Route path="/registro" element={<Registro />} />
+            <Route path="/CompleteStudent" element={<CompleteStudent />} />
+            <Route path="/CompleteTeacher" element={<CompleteTeacher />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
+
             <Route
-              path="/rifa"
+              path="/admin"
               element={
                 <ProtectedRoute>
-                  <Rifa />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="/admin" element={
-                  <ProtectedRoute>
                   <Admin />
                 </ProtectedRoute>
               }
             />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route
+              path="/crear-pregunta"
+              element={
+                <ProtectedRoute>
+                  <CreateQuestionForm />
+                </ProtectedRoute>
+              }
+            />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
       </Router>

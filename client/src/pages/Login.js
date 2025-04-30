@@ -11,7 +11,7 @@
 
     const Login = () => {
       const [credentials, setCredentials] = useState({ email: '', password: '' });
-      const { login } = useAuth();
+      const { login, user } = useAuth();
       const navigate = useNavigate();    
 
       // Refs para Draggable (para evitar el uso de findDOMNode)
@@ -43,7 +43,14 @@
             confirmButtonColor: '#198754' // color btn-success
             
           }).then(() => {
-            navigate('/rifa');
+            if (user?.role === 'teacher') {
+              navigate('/dashboard');
+            } else if (user?.role === 'student') {
+              navigate('/dashboard');
+            } else {
+              navigate('/login');
+            }
+            
           });
           //navigate('/rifa');
         } else {
