@@ -10,7 +10,7 @@ import { dirname } from 'path';
 import dotenv from 'dotenv';
 import questionRoutes from './routes/questionRoutes.js';
 import questionnaireRoutes from './routes/questionnaireRoutes.js';
-
+import quizRoutes from './routes/quiz.js';
 
 
 dotenv.config();
@@ -59,7 +59,8 @@ app.use(cors({
 app.use(express.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/', questionRoutes);
-app.use('/api', questionnaireRoutes);
+app.use('/api/questionnaires', questionnaireRoutes);
+app.use('/api/quiz', quizRoutes);
 
 
 
@@ -207,84 +208,13 @@ const verificarToken = (req, res, next) => {
     });
 };
 
-app.post('/api/rifa/guardar', async (req, res) => {
-    try {
-        const { usuario_id, numeros, totalPago } = req.body;
-
-        if (!usuario_id || !numeros || numeros.length === 0) {
-            return res.status(400).json({ error: "Datos incompletos" });
-        }
-        //alert(usuario_id);
-        const numerosJSON = JSON.stringify(numeros);
-
-        await db.query(
-            "INSERT INTO numeros_jugados (usuario_id, numeros, monto_total, estado) VALUES (?, ?, ?, 'Debe')",
-            [usuario_id, numerosJSON, totalPago]);
-
-        res.json({ message: "Números guardados con éxito" });
-    } catch (error) {
-        console.error("Error al guardar números:", error);
-        res.status(500).json({ error: "Error en el servidor" });
-    }
-});
-
-
-app.put('/api/rifa/pagar/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        const result = await db.query(
-            "UPDATE numeros_jugados SET estado = 'Cancelado' WHERE id = ?", [id]);
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: "Registro no encontrado" });
-        }
-
-        res.json({ message: "Pago actualizado con éxito" });
-    } catch (error) {
-        console.error("Error al actualizar pago:", error);
-        res.status(500).json({ error: "Error en el servidor" });
-    }
-});
-
-
-app.get('/api/rifa/listar/:usuario_id', async (req, res) => {
-    try {
-        const { usuario_id } = req.params;
-
-        const [rows] = await db.query(
-            "SELECT * FROM numeros_jugados WHERE usuario_id = ?",
-            [usuario_id]
-        );
-
-        res.json(rows);
-    } catch (error) {
-        console.error("Error al obtener rifas:", error);
-        res.status(500).json({ error: "Error en el servidor" });
-    }
-});
-
-app.get('/api/rifas', async (req, res) => {
-    try {
-      const [rows] = await db.query(`
-        SELECT r.*, u.nombre AS nombre_usuario 
-        FROM numeros_jugados r
-        JOIN usuarios u ON r.usuario_id = u.id
-      `);
-      res.json(rows);
-    } catch (error) {
-      console.error("Error al obtener rifas:", error);
-      res.status(500).json({ error: "Error en el servidor" });
-    }
-  });
-
 
 app.post('/api/auth/reestablecer-password', async (req, res) => {
     const { email, nuevaPassword } = req.body;
 
     try {
         // Verifica si el usuario existe
-        const [rows] = await db.query("SELECT * FROM usuarios WHERE email = ?", [email]);
+        const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
         if (rows.length === 0) {
             return res.status(404).json({ error: "Usuario no encontrado" });
         }
@@ -293,7 +223,7 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
         const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
 
         // Actualiza la contraseña
-        await db.query("UPDATE usuarios SET password = ? WHERE email = ?", [hashedPassword, email]);
+        await db.query("UPDATE users SET password = ? WHERE email = ?", [hashedPassword, email]);
 
         res.json({ message: "Contraseña actualizada correctamente" });
     } catch (error) {
@@ -343,8 +273,6 @@ app.post('/api/teachers', async (req, res) => {
     res.status(500).json({ message: 'Error al registrar dodente' });
   }
 });
-
-
 
 // Servidor corriendo en el puerto 5000
 const PORT = process.env.PORT || 5000;

@@ -41,7 +41,8 @@ export const AuthProvider = ({ children }) => {
       setUserRole(response.data.role);
       setUser(response.data.usuario); // Asegúrate que tu API devuelve "usuario"
       console.log("✅ Usuario almacenado en AuthContext:", response.data.usuario);
-      return true;
+      return response.data.usuario; // en vez de return true
+
     } catch (error) {
       console.error('Error en login:', error);
       return false;

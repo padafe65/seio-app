@@ -1,8 +1,7 @@
     // frontend-rifa/src/pages/Login.js
-    //import React, { useState } from 'react';
     import { useAuth } from '../context/AuthContext';
     import { useNavigate } from 'react-router-dom';
-    import Draggable from 'react-draggable';
+  
     import React, { useState, useRef } from 'react';
     import Swal from 'sweetalert2';
     import withReactContent from 'sweetalert2-react-content';
@@ -13,9 +12,8 @@
       const [credentials, setCredentials] = useState({ email: '', password: '' });
       const { login, user } = useAuth();
       const navigate = useNavigate();    
+      console.log("Usuario autenticado:", user);
 
-      // Refs para Draggable (para evitar el uso de findDOMNode)
-    const draggableRef = useRef(null);
 
     // Dentro del componente Login
   const handleForgotPassword = () => {
@@ -43,10 +41,11 @@
             confirmButtonColor: '#198754' // color btn-success
             
           }).then(() => {
-            if (user?.role === 'teacher') {
+            const role = success?.role?.toLowerCase();
+            if (role === 'docente') {
               navigate('/dashboard');
-            } else if (user?.role === 'student') {
-              navigate('/dashboard');
+            } else if (role === 'estudiante') {
+              navigate('/student/dashboard');
             } else {
               navigate('/login');
             }
@@ -104,15 +103,15 @@
             />
           <div  className="overflow-y-auto p-4 rounded-xl mt-3" style={{ maxHeight: '70vh', backgroundColor: '#17a2b8', // cyan-ish fondo     color: '#f8f9fa', // texto beige/blanco claro  fontSize: '1rem',
             WebkitOverflowScrolling: 'touch', touchAction: 'manipulation', color:'whitesmoke'}}>
-            <p >
-              <lu >
+            
+              <ul >
                 <li>
                   <i><strong style={{ color: 'beige' }}>Bienvenido y gracias por participar en la rifa pro_quimioterapia Erwin (Este elemento de texto informativo es desplazable).</strong></i> 
                 </li>
-              </lu><br />
+              </ul>
               💡
               Para entrar a nuestra página y participar en la rifa de $300000 COP (Trescientos mil pesos colombianos) debe estar registrado en la plataforma y posteriormente ingresar con su usuario y contraseña. La rifa funciona de la manera siguiente:
-              participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número "0214" cancelas $214 COP y con este número participas en la rifa y si deseas participar con más números, da clic en el botón nuevamente (no es obligatorio), si decides generar otro número y te sale "1026", cancelas en total la suma de los dos números: $1240 COP y con estos dos números tienes oportunidad de ganar (Puedes generar los números deseados hasta un máximo de cinco números, pero no es necesario hacerlo si solo quieres participar con uno, dos, ..., cinco números esta bien). <br /><br />
+              participas con el número de cuatro cifras generado por el botón "Generar Número" y esta es la cantidad que debes pagar, por ejemplo, si se genera el número "0214" cancelas $214 COP y con este número participas en la rifa y si deseas participar con más números, da clic en el botón nuevamente (no es obligatorio), si decides generar otro número y te sale "1026", cancelas en total la suma de los dos números: $1240 COP y con estos dos números tienes oportunidad de ganar (Puedes generar los números deseados hasta un máximo de cinco números, pero no es necesario hacerlo si solo quieres participar con uno, dos, ..., cinco números esta bien). <br />
               <li><strong>Tenga en cuenta:</strong> </li><br />
               <ul>
                 <ol>
@@ -128,7 +127,7 @@
                     
                 </ol>
               </ul>
-            </p>
+            
            </div>
           
         
