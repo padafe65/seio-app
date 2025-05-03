@@ -24,6 +24,7 @@
     "web-vitals": "^2.1.4",
     "wouter": "^3.7.0"
   },
+  "proxy": "http://localhost:5000",
   "scripts": {
     "start": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts start",
     "build": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts build",

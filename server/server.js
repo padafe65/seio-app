@@ -13,6 +13,9 @@ import questionnaireRoutes from './routes/questionnaireRoutes.js';
 import quizRoutes from './routes/quiz.js';
 
 
+
+
+
 dotenv.config();
 
 // Verifica que las variables de entorno estén siendo cargadas correctamente
@@ -30,7 +33,8 @@ const __dirname = dirname(__filename);
 
 // Conexión a MySQL
 const db = mysql.createPool({
-    host: process.env.DB_HOST || '5000',
+    //host: process.env.DB_HOST || '5000',
+    host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
@@ -61,8 +65,6 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/', questionRoutes);
 app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
-
-
 
 // Configurar multer
 const storage = multer.diskStorage({

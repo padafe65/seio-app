@@ -86,31 +86,12 @@ router.post('/submit', async (req, res) => {
   }
 });
 
-/*// Verificar cantidad de intentos por estudiante en un cuestionario
-router.get('/attempts/:studentId/:questionnaireId', async (req, res) => {
-  const { studentId, questionnaireId } = req.params;
-
-  try {
-    const [rows] = await pool.query(
-      `SELECT COUNT(*) AS attempts
-       FROM quiz_attempts
-       WHERE student_id = ? AND questionnaire_id = ?`,
-      [studentId, questionnaireId]
-    );
-
-    res.json({ attempts: rows[0].attempts });
-  } catch (err) {
-    console.error('❌ Error al verificar intentos:', err);
-    res.status(500).json({ error: 'Error al verificar intentos del cuestionario' });
-  }
-});*/
-
 // Obtener intentos de un estudiante para un cuestionario
 router.get('/attempts/:student_id/:questionnaire_id', async (req, res) => {
   const { student_id, questionnaire_id } = req.params;
   try {
     const [rows] = await pool.query(
-      `SELECT attempt_number, score, attempted_at 
+      `SELECT attempt_number, score, attempt_date 
        FROM quiz_attempts 
        WHERE student_id = ? AND questionnaire_id = ?
        ORDER BY attempt_number`,
@@ -123,6 +104,48 @@ router.get('/attempts/:student_id/:questionnaire_id', async (req, res) => {
   }
 });
 
+// Obtener preguntas por ID de cuestionario con información del cuestionario
+router.get('/questions/:id', async (req, res) => {
+  const questionnaireId = req.params.id;
 
+  try {
+    // Primero obtener la información del cuestionario
+    const [questionnaireInfo] = await pool.query(`
+      SELECT 
+        q.id, q.title, q.category, q.grade, q.phase, 
+        u.name AS teacher_name, 
+        c.name AS course_name
+      FROM questionnaires q
+      JOIN users u ON q.created_by = u.id
+      JOIN courses c ON q.course_id = c.id
+      WHERE q.id = ?
+    `, [questionnaireId]);
+
+    if (questionnaireInfo.length === 0) {
+      return res.status(404).json({ error: 'Cuestionario no encontrado' });
+    }
+
+    // Extraer nombre de materia desde category si lo necesitas
+    const subject_name = questionnaireInfo[0].category?.split('_')[1] || '';
+    
+    // Luego obtener las preguntas
+    const [questions] = await pool.query(
+      'SELECT * FROM questions WHERE questionnaire_id = ?',
+      [questionnaireId]
+    );
+
+    // Devolver tanto la información del cuestionario como las preguntas
+    res.json({
+      questionnaire: {
+        ...questionnaireInfo[0],
+        subject_name
+      },
+      questions
+    });
+  } catch (err) {
+    console.error('Error al obtener preguntas:', err);
+    res.status(500).json({ error: 'Error al obtener preguntas' });
+  }
+});
 
 export default router;
