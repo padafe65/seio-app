@@ -1,11 +1,52 @@
 import express from 'express';
 import pool from '../config/db.js'; // tu conexión MySQL
 const router = express.Router();
-// Obtener todos los cuestionarios
+
+// Obtener todos los cuestionarios filtrados por curso del estudiante
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM questionnaires');
-    res.json(rows);
+    const { studentId } = req.query;
+    
+    if (!studentId) {
+      const [rows] = await pool.query('SELECT * FROM questionnaires');
+      return res.json(rows);
+    }
+    
+    // Obtener el course_id del estudiante
+    const [studentRows] = await pool.query(
+      'SELECT id, course_id FROM students WHERE user_id = ?',
+      [studentId]
+    );
+
+    if (studentRows.length === 0) {
+      return res.json([]);
+    }
+
+    const courseId = studentRows[0].course_id;
+    
+    // Obtener los cuestionarios del curso del estudiante
+    const [rows] = await pool.query(`
+      SELECT 
+        q.*,
+        u.name AS teacher_name,
+        c.name AS course_name
+      FROM questionnaires q
+      JOIN users u ON q.created_by = u.id
+      JOIN courses c ON q.course_id = c.id
+      WHERE q.course_id = ?
+      ORDER BY q.created_at DESC
+    `, [courseId]);
+    
+    // Extraer nombre de materia desde category
+    const enrichedRows = rows.map(q => {
+      const parts = q.category?.split('_') || [];
+      return {
+        ...q,
+        subject_name: parts[1] || '',
+      };
+    });
+    
+    res.json(enrichedRows);
   } catch (err) {
     console.error('❌ Error al obtener cuestionarios:', err);
     res.status(500).json({ error: 'Error al obtener los cuestionarios' });
@@ -61,7 +102,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-
 // Eliminar un cuestionario
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
@@ -104,45 +144,6 @@ router.get('/student/:studentId', async (req, res) => {
   } catch (err) {
     console.error('❌ Error al obtener cuestionarios por estudiante:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
-  }
-});
-
-// Obtener todos los cuestionarios
-router.get('/questionnaires', async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT * FROM questionnaires');
-    res.json(rows);
-  } catch (err) {
-    console.error('Error al obtener cuestionarios:', err);
-    res.status(500).json({ message: 'Error al obtener cuestionarios' });
-  }
-});
-
-// Obtener los cuestionarios del curso del estudiante
-router.get('/:studentId', async (req, res) => {
-  const { studentId } = req.params;
-
-  try {
-    const [studentRows] = await pool.query(
-      'SELECT course_id FROM students WHERE id = ?',
-      [studentId]
-    );
-
-    if (studentRows.length === 0) {
-      return res.status(404).json({ message: 'Estudiante no encontrado' });
-    }
-
-    const courseId = studentRows[0].course_id;
-
-    const [questionnaires] = await pool.query(
-      'SELECT * FROM questionnaires WHERE course_id = ?',
-      [courseId]
-    );
-
-    res.json(questionnaires);
-  } catch (error) {
-    console.error('Error al obtener cuestionarios por curso:', error);
-    res.status(500).json({ message: 'Error interno del servidor' });
   }
 });
 
@@ -192,6 +193,5 @@ router.get('/detailed', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener cuestionarios detallados' });
   }
 });
-
 
 export default router;

@@ -1,15 +1,32 @@
 import React, { useEffect } from 'react';
-import { Link } from 'react-router-dom';
+//import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Pencil } from "lucide-react";
+import { Link, useNavigate } from 'react-router-dom'; // Importar useNavigate
 
 
 const Navbar = () => {
   const { authToken, logout, user } = useAuth();
+  const navigate = useNavigate(); // Inicializar useNavigate
 
   useEffect(() => {
     console.log("🔄 Cambios en authToken:", authToken);
   }, [authToken]);
+
+   // Función para manejar el cierre de sesión
+  // En Navbar.js o donde tengas la función de logout
+const handleLogout = () => {
+  logout();
+  
+  // Prevenir navegación hacia atrás después de logout
+  window.history.pushState(null, '', '/');
+  window.onpopstate = function() {
+    window.history.pushState(null, '', '/');
+  };
+  
+  navigate('/');
+};
+
 
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
@@ -49,7 +66,7 @@ const Navbar = () => {
                </li>
                 )}
                 <li className="nav-item">
-                  <button className="btn btn-danger ms-3" onClick={logout}>Cerrar sesión</button>
+                  <button className="btn btn-danger ms-3" onClick={handleLogout}>Cerrar sesión</button>
                 </li>
               </>
             ) : (
