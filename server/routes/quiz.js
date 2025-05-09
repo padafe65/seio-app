@@ -52,6 +52,7 @@ router.post('/submit', async (req, res) => {
 
     const attemptNumber = attempts[0].count + 1;
 
+    // Mantener el límite de 2 intentos por evaluación
     if (attemptNumber > 2) {
       return res.status(400).json({ message: 'Ya has realizado los 2 intentos permitidos.' });
     }
@@ -104,40 +105,64 @@ router.post('/submit', async (req, res) => {
       }
     }
 
-    // Actualizar la tabla grades con la fase correspondiente
-    const phaseColumn = `phase${phaseNumber}`;
-    
-    // Verificar si ya existe un registro para este estudiante y cuestionario
-    const [existingGrade] = await pool.query(
-      'SELECT * FROM grades WHERE student_id = ? AND questionnaire_id = ?',
-      [realStudentId, questionnaire_id]
-    );
-    
-    if (existingGrade.length === 0) {
-      // Crear nuevo registro en grades
-      await pool.query(
-        `INSERT INTO grades (student_id, questionnaire_id, ${phaseColumn}, created_at) 
-         VALUES (?, ?, ?, NOW())`,
-        [realStudentId, questionnaire_id, score]
-      );
-    } else {
-      // Actualizar registro existente
-      await pool.query(
-        `UPDATE grades SET ${phaseColumn} = ? WHERE student_id = ? AND questionnaire_id = ?`,
-        [score, realStudentId, questionnaire_id]
-      );
-    }
-    
-    // Recalcular el promedio
+    // MODIFICACIÓN PRINCIPAL: Calcular el promedio de todas las mejores notas de la fase
+// Obtener todas las mejores notas de evaluaciones en esta fase
+const [phaseEvaluations] = await pool.query(
+  `SELECT er.best_score 
+   FROM evaluation_results er
+   JOIN questionnaires q ON er.questionnaire_id = q.id
+   WHERE er.student_id = ? AND q.phase = ?`,
+  [realStudentId, phaseNumber]
+);
+
+// Calcular el promedio de todas las evaluaciones de esta fase
+let phaseAverage = 0;
+if (phaseEvaluations.length > 0) {
+  const sum = phaseEvaluations.reduce((total, item) => total + item.best_score, 0);
+  phaseAverage = parseFloat((sum / phaseEvaluations.length).toFixed(2));
+}
+
+// Verificar si el promedio es NaN y convertirlo a NULL para MySQL
+const phaseAverageForDB = isNaN(phaseAverage) ? null : phaseAverage;
+
+// Actualizar la columna de la fase correspondiente en la tabla grades
+const phaseColumn = `phase${phaseNumber}`;
+
+// Verificar si ya existe un registro para este estudiante
+const [existingGrade] = await pool.query(
+  'SELECT * FROM grades WHERE student_id = ?',
+  [realStudentId]
+);
+
+if (existingGrade.length === 0) {
+  // Crear nuevo registro en grades
+  await pool.query(
+    `INSERT INTO grades (student_id, ${phaseColumn}, created_at) 
+     VALUES (?, ?, NOW())`,
+    [realStudentId, phaseAverageForDB]
+  );
+} else {
+  // Actualizar registro existente
+  await pool.query(
+    `UPDATE grades SET ${phaseColumn} = ? WHERE student_id = ?`,
+    [phaseAverageForDB, realStudentId]
+  );
+}
+
+    // Recalcular el promedio general
     await pool.query(
       `UPDATE grades 
        SET average = (COALESCE(phase1, 0) + COALESCE(phase2, 0) + COALESCE(phase3, 0) + COALESCE(phase4, 0)) / 
                     (IF(phase1 IS NULL, 0, 1) + IF(phase2 IS NULL, 0, 1) + IF(phase3 IS NULL, 0, 1) + IF(phase4 IS NULL, 0, 1))
-       WHERE student_id = ? AND questionnaire_id = ?`,
-      [realStudentId, questionnaire_id]
+       WHERE student_id = ?`,
+      [realStudentId]
     );
 
-    res.json({ message: 'Evaluación registrada correctamente.', score });
+    res.json({ 
+      message: 'Evaluación registrada correctamente.', 
+      score,
+      phaseAverage
+    });
 
   } catch (error) {
     console.error('Error al registrar evaluación:', error);
@@ -285,7 +310,7 @@ router.get('/intentos-por-fase/:studentId', async (req, res) => {
         q.title AS questionnaire_title,
         q.phase AS questionnaire_phase
       FROM quiz_attempts qa
-      JOIN grades g ON qa.student_id = g.student_id AND qa.questionnaire_id = g.questionnaire_id
+      JOIN grades g ON qa.student_id = g.student_id
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       WHERE qa.student_id = ? AND q.course_id = ?
       ORDER BY qa.attempt_date DESC
@@ -295,6 +320,46 @@ router.get('/intentos-por-fase/:studentId', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Error al obtener intentos por fase.' });
+  }
+});
+
+// Nueva ruta para obtener evaluaciones por fase
+router.get('/evaluations-by-phase/:studentId', async (req, res) => {
+  const { studentId } = req.params;
+
+  try {
+    // Obtener el ID real del estudiante
+    const [studentRows] = await pool.query(
+      'SELECT id FROM students WHERE user_id = ?',
+      [studentId]
+    );
+
+    if (studentRows.length === 0) {
+      return res.json([]);
+    }
+
+    const realStudentId = studentRows[0].id;
+
+    // Obtener todas las evaluaciones agrupadas por fase
+    const [evaluations] = await pool.query(`
+      SELECT 
+        q.phase,
+        COUNT(er.id) AS total_evaluations,
+        AVG(er.best_score) AS phase_average,
+        g.phase1, g.phase2, g.phase3, g.phase4,
+        g.average AS overall_average
+      FROM evaluation_results er
+      JOIN questionnaires q ON er.questionnaire_id = q.id
+      LEFT JOIN grades g ON er.student_id = g.student_id
+      WHERE er.student_id = ?
+      GROUP BY q.phase
+      ORDER BY q.phase
+    `, [realStudentId]);
+
+    res.json(evaluations);
+  } catch (error) {
+    console.error('Error al obtener evaluaciones por fase:', error);
+    res.status(500).json({ error: 'Error al obtener evaluaciones por fase.' });
   }
 });
 

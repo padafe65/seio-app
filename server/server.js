@@ -214,17 +214,40 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
   }
 });
 
+// Ruta para obtener todos los cursos
+app.get('/api/courses', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT id, name FROM courses ORDER BY name');
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener cursos:', error);
+    res.status(500).json({ message: 'Error al obtener cursos' });
+  }
+});
+
 // Ruta para completar datos de estudiante
+// En server.js, modificar la ruta /api/students:
 app.post('/api/students', async (req, res) => {
   try {
-    const { user_id, contact_phone, contact_email, age, grade } = req.body;
+    const { user_id, contact_phone, contact_email, age, grade, course_id } = req.body;
 
     console.log("Datos recibidos para estudiante:", req.body);
 
-    // Aquí deberías guardar los datos en la tabla 'students'
-    const result = await db.query(
-      'INSERT INTO students (contact_phone, contact_email, age, grade, user_id) VALUES (?, ?, ?, ?, ?)',
-      [contact_phone, contact_email, age, grade, user_id]
+    // Verificar que user_id no sea nulo
+    if (!user_id) {
+      return res.status(400).json({ message: 'El campo user_id es obligatorio' });
+    }
+
+    // Verificar que no exista ya un estudiante con ese user_id
+    const [existingStudent] = await db.query('SELECT id FROM students WHERE user_id = ?', [user_id]);
+    if (existingStudent.length > 0) {
+      return res.status(400).json({ message: 'Ya existe un estudiante asociado a este usuario' });
+    }
+
+    // Guardar los datos en la tabla 'students'
+    const [result] = await db.query(
+      'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [user_id, contact_phone, contact_email, age, grade, course_id]
     );
 
     res.status(201).json({ message: 'Estudiante registrado correctamente', studentId: result.insertId });
@@ -234,6 +257,144 @@ app.post('/api/students', async (req, res) => {
     res.status(500).json({ message: 'Error al registrar estudiante' });
   }
 });
+
+// Ruta para obtener todos los estudiantes
+app.get('/api/students', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
+        u.name, u.email, u.phone, u.role, u.created_at,
+        c.name as course_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener estudiantes:', error);
+    res.status(500).json({ message: 'Error al obtener estudiantes' });
+  }
+});
+
+
+
+// Ruta para obtener estudiantes con datos completos (para el dashboard del docente)
+app.get('/api/students/complete', async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
+        u.name, u.email, u.phone, u.role, u.created_at,
+        c.name as course_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener estudiantes:', error);
+    res.status(500).json({ message: 'Error al obtener estudiantes' });
+  }
+});
+
+// server.js (fragmento con la nueva ruta)
+
+// Ruta para obtener un estudiante específico por ID
+app.get('/api/students/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const [rows] = await db.query(`
+      SELECT 
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
+        u.name, u.email, u.phone, u.role,
+        c.name as course_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+      WHERE s.id = ?
+    `, [id]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Estudiante no encontrado' });
+    }
+    
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('❌ Error al obtener estudiante:', error);
+    res.status(500).json({ message: 'Error al obtener estudiante' });
+  }
+});
+
+
+// Ruta para actualizar datos de estudiante
+app.put('/api/students/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { contact_phone, contact_email, age, grade, course_id, name, email, phone } = req.body;
+
+    // Obtener el user_id del estudiante
+    const [studentRows] = await db.query(
+      'SELECT user_id FROM students WHERE id = ?',
+      [id]
+    );
+    
+    if (studentRows.length === 0) {
+      return res.status(404).json({ message: 'Estudiante no encontrado' });
+    }
+    
+    const userId = studentRows[0].user_id;
+    
+    // Actualizar datos en la tabla users
+    await db.query(
+      'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
+      [name, email, phone, userId]
+    );
+    
+    // Actualizar datos en la tabla students
+    await db.query(
+      'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
+      [contact_phone, contact_email, age, grade, course_id, id]
+    );
+    
+    res.json({ message: 'Datos de estudiante actualizados correctamente' });
+  } catch (error) {
+    console.error('❌ Error al actualizar estudiante:', error);
+    res.status(500).json({ message: 'Error al actualizar estudiante' });
+  }
+});
+
+// Ruta para eliminar estudiante
+app.delete('/api/students/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Obtener el user_id del estudiante
+    const [studentRows] = await db.query(
+      'SELECT user_id FROM students WHERE id = ?',
+      [id]
+    );
+    
+    if (studentRows.length === 0) {
+      return res.status(404).json({ message: 'Estudiante no encontrado' });
+    }
+    
+    const userId = studentRows[0].user_id;
+    
+    // Eliminar estudiante
+    await db.query('DELETE FROM students WHERE id = ?', [id]);
+    
+    // Eliminar usuario asociado
+    await db.query('DELETE FROM users WHERE id = ?', [userId]);
+    
+    res.json({ message: 'Estudiante eliminado correctamente' });
+  } catch (error) {
+    console.error('❌ Error al eliminar estudiante:', error);
+    res.status(500).json({ message: 'Error al eliminar estudiante' });
+  }
+});
+
 
 // Ruta para completar datos de teacher
 app.post('/api/teachers', async (req, res) => {
@@ -313,6 +474,95 @@ app.get('/api/student/attempts/:student_id', async (req, res) => {
     res.status(500).json({ error: 'Error al obtener intentos detallados' });
   }
 });
+
+// Ruta para obtener categorías por materia
+app.get('/api/categories/:subject', async (req, res) => {
+  try {
+    const { subject } = req.params;
+    
+    const [rows] = await db.query(
+      'SELECT category FROM subject_categories WHERE subject = ?',
+      [subject]
+    );
+    
+    res.json(rows.map(row => row.category));
+  } catch (error) {
+    console.error('❌ Error al obtener categorías:', error);
+    res.status(500).json({ message: 'Error al obtener categorías' });
+  }
+});
+
+// Ruta para obtener la materia del docente
+app.get('/api/teacher/subject/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const [rows] = await db.query(
+      'SELECT subject FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Docente no encontrado' });
+    }
+    
+    res.json({ subject: rows[0].subject });
+  } catch (error) {
+    console.error('❌ Error al obtener materia del docente:', error);
+    res.status(500).json({ message: 'Error al obtener materia del docente' });
+  }
+});
+
+// Ruta para obtener categorías por materia
+app.get('/api/subject-categories/:subject', async (req, res) => {
+  try {
+    const { subject } = req.params;
+    
+    // Si la materia es "Matemàticas", buscar como "Matematicas" (sin tilde)
+    const searchSubject = subject === 'Matemàticas' ? 'Matematicas' : subject;
+    
+    // Consulta directa a la tabla subject_categories
+    const [rows] = await pool.query(
+      'SELECT * FROM subject_categories WHERE subject = ?',
+      [searchSubject]
+    );
+    
+    // Si no hay categorías para esta materia, devolver categorías predeterminadas
+    if (rows.length === 0) {
+      return res.json([
+        { id: 1, subject: searchSubject, category: `${searchSubject}_Categoria1` },
+        { id: 2, subject: searchSubject, category: `${searchSubject}_Categoria2` }
+      ]);
+    }
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener categorías:', error);
+    res.status(500).json({ message: 'Error al obtener categorías' });
+  }
+});
+
+// Ruta para obtener el ID del profesor por ID de usuario
+app.get('/api/teachers/by-user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    const [rows] = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Profesor no encontrado' });
+    }
+    
+    res.json({ id: rows[0].id });
+  } catch (error) {
+    console.error('❌ Error al obtener profesor:', error);
+    res.status(500).json({ message: 'Error al obtener profesor' });
+  }
+});
+
 
 // Servidor corriendo en el puerto 5000
 const PORT = process.env.PORT || 5000;

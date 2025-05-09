@@ -31,6 +31,11 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('authToken');
       localStorage.removeItem('userRole');
       localStorage.removeItem("user");
+      // Limpiar localStorage
+      localStorage.removeItem('user_id');
+      localStorage.removeItem('temp_user_id');
+      localStorage.removeItem('is_teacher_registration');
+
     }
   }, [authToken, userRole, user]);
 

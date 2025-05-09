@@ -10,6 +10,7 @@ const TakeQuizPage = () => {
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
   const [score, setScore] = useState(null);
+  const [phaseAverage, setPhaseAverage] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [attempts, setAttempts] = useState([]);
   const [intentos, setIntentos] = useState([]);
@@ -195,6 +196,7 @@ const TakeQuizPage = () => {
       });
   
       setScore(res.data.score);
+      setPhaseAverage(res.data.phaseAverage); // Añadir esta línea para recibir el promedio de fase
       setSubmitted(true); // Marcar como enviado
   
       // Actualizar todos los intentos
@@ -226,8 +228,10 @@ const TakeQuizPage = () => {
         setMaxAttemptsReached(true);
       }
   
-      // Mostrar mensaje de éxito
-      alert(`Tu calificación es: ${res.data.score}. La evaluación ha sido registrada correctamente en la fase correspondiente.`);
+      // Mostrar mensaje de éxito con el promedio de fase
+      alert(`Tu calificación es: ${res.data.score}. 
+             Promedio actual de la fase: ${res.data.phaseAverage}.
+             La evaluación ha sido registrada correctamente.`);
       
       // Redirigir automáticamente al dashboard después de mostrar la alerta
       navigate('/student/dashboard');
@@ -439,24 +443,23 @@ const TakeQuizPage = () => {
               
               {questions[currentQuestionIndex].image_url && (
                 <div className="text-center mb-4">
-                  
-      {/* Lado derecho: Imagen */}
-      <div style={{ flex: '1 1 35%', textAlign: 'center' }}>
-              <img
-                src={"/img/evaluacion.gif"} // Asegúrate de que la ruta sea correcta
-                alt="Imagen cuestionario"
-                className="img-fluid"
-                style={{ maxWidth: '7%', height: 'auto', marginLeft: '75%', animation: 'walking 3s infinite' }}
-              />
-      </div>
-              <img 
-              src={questions[currentQuestionIndex].image_url} 
-              alt="Imagen pregunta" 
-              className="my-2 img-fluid mx-auto" 
-              style={{ maxWidth: '300px' }} 
-              />
-                      </div>
-                    )}
+                  {/* Lado derecho: Imagen */}
+                  <div style={{ flex: '1 1 35%', textAlign: 'center' }}>
+                    <img
+                      src={"/img/evaluacion.gif"} // Asegúrate de que la ruta sea correcta
+                      alt="Imagen cuestionario"
+                      className="img-fluid"
+                      style={{ maxWidth: '7%', height: 'auto', marginLeft: '75%', animation: 'walking 3s infinite' }}
+                    />
+                  </div>
+                  <img 
+                    src={questions[currentQuestionIndex].image_url} 
+                    alt="Imagen pregunta" 
+                    className="my-2 img-fluid mx-auto" 
+                    style={{ maxWidth: '300px' }} 
+                  />
+                </div>
+              )}
                     
               <div className="space-y-2">
                 {[1, 2, 3, 4].map((n) => (
@@ -521,6 +524,11 @@ const TakeQuizPage = () => {
           <div className="text-green-600 font-bold text-lg mb-3">
             Tu nota final: {score}
           </div>
+          {phaseAverage && (
+            <div className="text-blue-600 font-bold text-lg mb-3">
+              Promedio actual de la fase: {phaseAverage}
+            </div>
+          )}
           <button 
             onClick={handleReturnToDashboard} 
             className="btn btn-success"
