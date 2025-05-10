@@ -563,6 +563,28 @@ app.get('/api/teachers/by-user/:userId', async (req, res) => {
   }
 });
 
+// Obtener preguntas por ID de cuestionario
+app.get('/api/questions', async (req, res) => {
+  try {
+    const { questionnaire_id } = req.query;
+    
+    let query = 'SELECT * FROM questions';
+    let params = [];
+    
+    if (questionnaire_id) {
+      query += ' WHERE questionnaire_id = ?';
+      params.push(questionnaire_id);
+    }
+    
+    const [rows] = await pool.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener preguntas:', error);
+    res.status(500).json({ message: 'Error al obtener preguntas' });
+  }
+});
+
+
 
 // Servidor corriendo en el puerto 5000
 const PORT = process.env.PORT || 5000;

@@ -17,37 +17,29 @@ const QuestionnairesList = () => {
   const [error, setError] = useState(null);
   
   useEffect(() => {
-    const fetchQuestionnaires = async () => {
-      try {
-        setLoading(true);
-        
-        // Obtener el ID del profesor
-        const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
-        console.log("ID del docente:", teacherResponse.data.id);
-        const teacherId = teacherResponse.data.id;
-        
-        // Obtener cuestionarios filtrados por el ID del profesor
-        const response = await axios.get(`${API_URL}/api/questionnaires?created_by=${user.id}`);
-        console.log("Cuestionarios obtenidos:", response.data);
-        
-        // Verificar cada cuestionario
-        response.data.forEach((questionnaire, index) => {
-          console.log(`Cuestionario ${index + 1}:`, questionnaire.title, "created_by:", questionnaire.created_by);
-        });
-        
-        // No es necesario filtrar aquí, ya que el backend debería devolver los cuestionarios filtrados
-        setQuestionnaires(response.data);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error al cargar cuestionarios:', error);
-        setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
-        setQuestionnaires([]);
-        setLoading(false);
-      }
-    };
-    
-    fetchQuestionnaires();
-  }, [user.id]);
+  const fetchQuestionnaires = async () => {
+    try {
+      setLoading(true);
+      
+      // Construir la URL con los filtros
+      let url = `${API_URL}/api/questionnaires?created_by=${user.id}`;
+      if (filterPhase !== 'all') url += `&phase=${filterPhase}`;
+      if (filterGrade !== 'all') url += `&grade=${filterGrade}`;
+      
+      const response = await axios.get(url);
+      setQuestionnaires(response.data);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error al cargar cuestionarios:', error);
+      setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
+      setQuestionnaires([]);
+      setLoading(false);
+    }
+  };
+  
+  fetchQuestionnaires();
+}, [user.id, filterPhase, filterGrade]);
+
   
   const handleDelete = async (id) => {
     if (window.confirm('¿Estás seguro de que deseas eliminar este cuestionario? Esta acción también eliminará todas las preguntas asociadas.')) {

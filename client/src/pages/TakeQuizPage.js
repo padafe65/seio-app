@@ -3,6 +3,9 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext.js';
 import { useNavigate } from 'react-router-dom';
+// Importaciones para KaTeX
+import 'katex/dist/katex.min.css';
+import { InlineMath, BlockMath } from 'react-katex';
 
 const TakeQuizPage = () => {
   const [questionnaires, setQuestionnaires] = useState([]);
@@ -26,6 +29,11 @@ const TakeQuizPage = () => {
   const { user } = useAuth();
   const studentId = user?.id;
   const navigate = useNavigate();
+
+  // Función para detectar si un texto contiene expresiones LaTeX
+  const containsLatex = (text) => {
+    return text && (text.includes('\\') || text.includes('{') || text.includes('}'));
+  };
 
   // Verificar si el usuario está autenticado
   useEffect(() => {
@@ -439,7 +447,16 @@ const TakeQuizPage = () => {
           {/* Mostrar solo la pregunta actual */}
           {questions.length > 0 && (
             <div className="mb-4 p-4 border rounded bg-white shadow">
-              <p className="font-semibold text-lg mb-3" style={{fontSize:'18px', color:'#0060C1'}}><strong>{currentQuestionIndex + 1}. {questions[currentQuestionIndex].question_text}</strong></p>
+              <p className="font-semibold text-lg mb-3" style={{fontSize:'18px', color:'#0060C1'}}>
+                <strong>
+                  {currentQuestionIndex + 1}. 
+                  {containsLatex(questions[currentQuestionIndex].question_text) ? (
+                    <BlockMath math={questions[currentQuestionIndex].question_text} />
+                  ) : (
+                    questions[currentQuestionIndex].question_text
+                  )}
+                </strong>
+              </p>
               
               {questions[currentQuestionIndex].image_url && (
                 <div className="text-center mb-4">
@@ -473,8 +490,15 @@ const TakeQuizPage = () => {
                         onChange={() => handleSelectAnswer(questions[currentQuestionIndex].id, n)}
                         className="mt-1 mr-2"
                       />
-                       
-                      <span style={{color:'#0060C1'}}><strong> {questions[currentQuestionIndex][`option${n}`]}</strong></span>
+                      <span style={{color:'#0060C1'}}>
+                        <strong>
+                          {containsLatex(questions[currentQuestionIndex][`option${n}`]) ? (
+                            <InlineMath math={questions[currentQuestionIndex][`option${n}`]} />
+                          ) : (
+                            questions[currentQuestionIndex][`option${n}`]
+                          )}
+                        </strong>
+                      </span>
                     </label>
                   </div>
                 ))}

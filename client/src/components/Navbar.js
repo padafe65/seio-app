@@ -4,7 +4,7 @@ import { Pencil } from "lucide-react";
 import { Link, useNavigate } from 'react-router-dom';
 
 const Navbar = () => {
-  const { authToken, logout, user } = useAuth();
+  const { authToken, logout, user, isAuthReady } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -23,10 +23,22 @@ const Navbar = () => {
     navigate('/');
   };
 
+  // Función para determinar la ruta del dashboard según el rol
+  const getDashboardRoute = () => {
+    if (!user) return '/';
+    return user.role === 'estudiante' ? '/student/dashboard' : '/dashboard';
+  };
+
+  if (!isAuthReady) {
+    return null; // No mostrar nada mientras se inicializa la autenticación
+  }
+
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-dark">
       <div className="container">
-        <Link className="navbar-brand" to="/">SEIO - Sistema Evaluativo Integral Online</Link>
+        <Link className="navbar-brand" to={authToken ? getDashboardRoute() : "/"}>
+          SEIO - Sistema Evaluativo Integral Online
+        </Link>
 
         <button
           className="navbar-toggler"
@@ -42,10 +54,10 @@ const Navbar = () => {
 
         <div className="collapse navbar-collapse" id="navbarNav">
           <ul className="navbar-nav ms-auto">
-            {authToken ? (
+            {authToken && user ? (
               <>
                 <li className="nav-item">
-                  <Link className="nav-link" to="/dashboard">Inicio</Link>
+                  <Link className="nav-link" to={getDashboardRoute()}>Inicio</Link>
                 </li>
                 <li className="nav-item">
                   <Link className="nav-link" to="/admin">Administración</Link>

@@ -1,27 +1,42 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import PerformanceSummary from '../components/dashboard/PerformanceSummary';
 import GradeProgress from '../components/dashboard/GradeProgress';
 import EventsList from '../components/dashboard/EventsList';
 import ActivityTable from '../components/dashboard/ActivityTable';
-import QuickActions from '../components/dashboard/QuickActions'; // Opcional, si quieres atajos
+import QuickActions from '../components/dashboard/QuickActions';
 import { Navigate } from 'react-router-dom';
-import CreateQuestionForm from '../components/CreateQuestionForm';
-import { Link } from 'react-router-dom'; // Asegúrate de importar esto al inicio
+import { Link } from 'react-router-dom';
 import { PlusCircle } from 'lucide-react';
 
-
-
-
 const Dashboard = () => {
-  
   const { user } = useAuth();
-  if (!user) {
-    return <Navigate to="/" replace />; // o muestra un loader
-  }
+  const [loading, setLoading] = useState(true);
   
+  useEffect(() => {
+    // Simular carga de datos
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, []);
+  
+  if (!user) {
+    return <Navigate to="/" replace />;
+  }
 
-  // 🔹 Simulación de datos de ejemplo:
+  if (loading) {
+    return (
+      <div className="text-center py-5">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Simulación de datos de ejemplo:
   const subjects = [
     { subject: 'Matemáticas', percentage: 85 },
     { subject: 'Ciencias', percentage: 90 },
@@ -50,22 +65,19 @@ const Dashboard = () => {
     { label: 'Fases Completadas', value: 3 },
   ];
 
-
-
   return (
     <div className="p-6 space-y-6">
-
-      {/* 🏷️ Bienvenida */}
+      {/* Bienvenida */}
       <div>
         <h1 className="text-2xl font-bold text-gray-800">
-          {user.role === 'student' ? `Hola, ${user.name}` : `Hola, Profesor(a) ${user.name}`}
+          {user.role === 'estudiante' ? `Hola, ${user.name}` : `Hola, Profesor(a) ${user.name}`}
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          {user.role === 'student' ? 'Aquí puedes ver tu progreso académico.' : 'Aquí puedes gestionar y revisar el progreso de tus alumnos.'}
+          {user.role === 'estudiante' ? 'Aquí puedes ver tu progreso académico.' : 'Aquí puedes gestionar y revisar el progreso de tus alumnos.'}
         </p>
       </div>
 
-      {/* 📈 Tarjetas de estadísticas */}
+      {/* Tarjetas de estadísticas */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {stats.map((stat, index) => (
           <div key={index} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
@@ -75,14 +87,13 @@ const Dashboard = () => {
         ))}
       </div>
 
-
-      {/* ✨ Acciones Rápidas (solo para docentes) */}
-      {user.role === 'teacher' && (
+      {/* Acciones Rápidas (solo para docentes) */}
+      {user.role === 'docente' && (
         <QuickActions />
       )}
 
-      {/* 🧠 Botón para crear preguntas (solo docentes) */}
-      {user.role === 'teacher' && (
+      {/* Botón para crear preguntas (solo docentes) */}
+      {user.role === 'docente' && (
         <div className="d-flex justify-content-end mb-4">
           <Link to="/crear-pregunta" className="btn btn-primary d-flex align-items-center gap-2">
             <PlusCircle size={20} />
@@ -91,9 +102,9 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* 📊 Secciones principales */}
+      {/* Secciones principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {user.role === 'student' && (
+        {user.role === 'estudiante' && (
           <>
             <PerformanceSummary subjects={subjects} />
             <GradeProgress grades={grades} />
@@ -101,7 +112,7 @@ const Dashboard = () => {
           </>
         )}
 
-        {user.role === 'teacher' && (
+        {user.role === 'docente' && (
           <>
             <GradeProgress grades={grades} />
             <ActivityTable activities={activities} />
@@ -109,7 +120,6 @@ const Dashboard = () => {
           </>
         )}
       </div>
-
     </div>
   );
 };

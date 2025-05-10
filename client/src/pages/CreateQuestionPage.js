@@ -1,9 +1,13 @@
+// pages/CreateQuestionPage.js
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import { ArrowLeft } from 'lucide-react';
+// Importaciones para KaTeX
+import 'katex/dist/katex.min.css';
+import { InlineMath, BlockMath } from 'react-katex';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -31,46 +35,54 @@ const CreateQuestionPage = () => {
   const [editingId, setEditingId] = useState(null);
   const [currentQuestionnaire, setCurrentQuestionnaire] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Estado para previsualizar expresiones matemáticas
+  const [mathPreview, setMathPreview] = useState({
+    question_text: false,
+    option1: false,
+    option2: false,
+    option3: false,
+    option4: false
+  });
 
   useEffect(() => {
-    fetchQuestionnaires();
+    const fetchData = async () => {
+      try {
+        // Si hay un ID de cuestionario en la URL, carga solo las preguntas de ese cuestionario
+        if (questionnaireIdFromUrl) {
+          setFormData(prev => ({
+            ...prev,
+            questionnaire_id: questionnaireIdFromUrl
+          }));
+          
+          // Cargar detalles del cuestionario y sus preguntas en una sola petición
+          const questionnaireResponse = await axios.get(`${API_URL}/api/questionnaires/${questionnaireIdFromUrl}`);
+          console.log("Cuestionario create:", questionnaireResponse.data);
+          
+          // Establecer el cuestionario actual
+          setCurrentQuestionnaire(questionnaireResponse.data.questionnaire);
+          
+          // IMPORTANTE: Establecer la categoría del cuestionario en el estado del formulario
+          setFormData(prev => ({
+            ...prev,
+            category: questionnaireResponse.data.questionnaire.category
+          }));
+          
+          // Usar las preguntas que vienen en la respuesta del cuestionario
+          setQuestions(questionnaireResponse.data.questions);
+        } else {
+          // Si no hay ID, carga todos los cuestionarios y preguntas como antes
+          fetchQuestions();
+          fetchQuestionnaires();
+        }
+        setLoading(false);
+      } catch (error) {
+        console.error('Error al cargar datos:', error);
+        setLoading(false);
+      }
+    };
     
-    if (questionnaireIdFromUrl) {
-      setFormData(prev => ({
-        ...prev,
-        questionnaire_id: questionnaireIdFromUrl
-      }));
-      
-      // Cargar solo las preguntas del cuestionario seleccionado
-      fetchQuestionsByQuestionnaire(questionnaireIdFromUrl);
-      
-      // Obtener detalles del cuestionario actual
-      fetchQuestionnaireDetails(questionnaireIdFromUrl);
-    } else {
-      fetchQuestions();
-      setLoading(false);
-    }
+    fetchData();
   }, [questionnaireIdFromUrl]);
-
-  const fetchQuestionnaireDetails = async (id) => {
-    try {
-      const res = await axios.get(`${API_URL}/api/questionnaires/${id}`);
-      setCurrentQuestionnaire(res.data.questionnaire);
-      setLoading(false);
-    } catch (err) {
-      console.error('Error cargando detalles del cuestionario:', err.message);
-      setLoading(false);
-    }
-  };
-
-  const fetchQuestionsByQuestionnaire = async (id) => {
-    try {
-      const res = await axios.get(`${API_URL}/api/questions?questionnaire_id=${id}`);
-      setQuestions(res.data);
-    } catch (err) {
-      console.error('Error cargando preguntas del cuestionario:', err.message);
-    }
-  };
 
   const fetchQuestions = async () => {
     try {
@@ -113,6 +125,19 @@ const CreateQuestionPage = () => {
     }
   };
 
+  // Función para alternar entre vista normal y matemática
+  const toggleMathPreview = (field) => {
+    setMathPreview(prev => ({
+      ...prev,
+      [field]: !prev[field]
+    }));
+  };
+
+  // Función para detectar si un texto contiene expresiones LaTeX
+  const containsLatex = (text) => {
+    return text && (text.includes('\\') || text.includes('{') || text.includes('}'));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const data = new FormData();
@@ -139,7 +164,9 @@ const CreateQuestionPage = () => {
       resetForm();
       
       if (questionnaireIdFromUrl) {
-        fetchQuestionsByQuestionnaire(questionnaireIdFromUrl);
+        // Recargar solo las preguntas del cuestionario actual
+        const questionsResponse = await axios.get(`${API_URL}/api/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+        setQuestions(questionsResponse.data);
       } else {
         fetchQuestions();
       }
@@ -156,6 +183,14 @@ const CreateQuestionPage = () => {
     });
     setPreview(null);
     setEditingId(null);
+    // Resetear también la vista previa matemática
+    setMathPreview({
+      question_text: false,
+      option1: false,
+      option2: false,
+      option3: false,
+      option4: false
+    });
   };
 
   const handleEdit = (question) => {
@@ -193,7 +228,9 @@ const CreateQuestionPage = () => {
         Swal.fire('Eliminada', 'La pregunta ha sido eliminada', 'success');
         
         if (questionnaireIdFromUrl) {
-          fetchQuestionsByQuestionnaire(questionnaireIdFromUrl);
+          // Recargar solo las preguntas del cuestionario actual
+          const questionsResponse = await axios.get(`${API_URL}/api/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+          setQuestions(questionsResponse.data);
         } else {
           fetchQuestions();
         }
@@ -204,7 +241,7 @@ const CreateQuestionPage = () => {
     }
   };
 
-  if (loading && questionnaireIdFromUrl) {
+  if (loading) {
     return (
       <div className="text-center py-5">
         <div className="spinner-border text-primary" role="status">
@@ -272,15 +309,36 @@ const CreateQuestionPage = () => {
             </div>
 
             <div className="mb-3">
-              <label className="form-label">Texto de la pregunta</label>
-              <textarea
-                className="form-control"
-                name="question_text"
-                value={formData.question_text}
-                onChange={handleChange}
-                required
-                rows={3}
-              />
+              <label className="form-label">
+                Texto de la pregunta
+                <button 
+                  type="button" 
+                  className="btn btn-sm btn-outline-secondary ms-2"
+                  onClick={() => toggleMathPreview('question_text')}
+                >
+                  {mathPreview.question_text ? 'Editar' : 'Ver como fórmula'}
+                </button>
+              </label>
+              
+              {mathPreview.question_text ? (
+                <div className="border rounded p-3 bg-light">
+                  <BlockMath math={formData.question_text || ''} />
+                </div>
+              ) : (
+                <textarea
+                  className="form-control"
+                  name="question_text"
+                  value={formData.question_text}
+                  onChange={handleChange}
+                  required
+                  rows={3}
+                  placeholder="Usa sintaxis LaTeX para expresiones matemáticas. Ej: \frac{1}{2} para fracciones"
+                />
+              )}
+              
+              <small className="form-text text-muted">
+                Para fracciones usa \frac{'n'}{'d'}, para raíces \sqrt{'x'}, para potencias x^{'n'}
+              </small>
             </div>
 
             <div className="row g-3 mb-3">
@@ -309,15 +367,32 @@ const CreateQuestionPage = () => {
             <div className="row g-3 mb-3">
               {[1, 2, 3, 4].map((i) => (
                 <div className="col-md-6 mb-3" key={i}>
-                  <label className="form-label">Opción {i}</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    name={`option${i}`}
-                    value={formData[`option${i}`]}
-                    onChange={handleChange}
-                    required
-                  />
+                  <label className="form-label">
+                    Opción {i}
+                    <button 
+                      type="button" 
+                      className="btn btn-sm btn-outline-secondary ms-2"
+                      onClick={() => toggleMathPreview(`option${i}`)}
+                    >
+                      {mathPreview[`option${i}`] ? 'Editar' : 'Ver como fórmula'}
+                    </button>
+                  </label>
+                  
+                  {mathPreview[`option${i}`] ? (
+                    <div className="border rounded p-3 bg-light">
+                      <InlineMath math={formData[`option${i}`] || ''} />
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      className="form-control"
+                      name={`option${i}`}
+                      value={formData[`option${i}`]}
+                      onChange={handleChange}
+                      required
+                      placeholder="Usa sintaxis LaTeX para expresiones matemáticas"
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -394,13 +469,24 @@ const CreateQuestionPage = () => {
                   {questions.map((q) => (
                     <tr key={q.id}>
                       <td>{q.id}</td>
-                      <td>{q.question_text}</td>
+                      <td>
+                        {containsLatex(q.question_text) ? (
+                          <BlockMath math={q.question_text} />
+                        ) : (
+                          q.question_text
+                        )}
+                      </td>
                       <td>
                         <ol className="mb-0 ps-3">
-                          <li>{q.option1}</li>
-                          <li>{q.option2}</li>
-                          <li>{q.option3}</li>
-                          <li>{q.option4}</li>
+                          {[1, 2, 3, 4].map((n) => (
+                            <li key={n}>
+                              {containsLatex(q[`option${n}`]) ? (
+                                <InlineMath math={q[`option${n}`]} />
+                              ) : (
+                                q[`option${n}`]
+                              )}
+                            </li>
+                          ))}
                         </ol>
                       </td>
                       <td className="text-center">{q.correct_answer}</td>
@@ -437,6 +523,37 @@ const CreateQuestionPage = () => {
               </table>
             </div>
           )}
+        </div>
+      </div>
+      
+      {/* Guía rápida de LaTeX */}
+      <div className="card mt-4">
+        <div className="card-header bg-info text-white">
+          <h5 className="mb-0">Guía Rápida de LaTeX para Matemáticas</h5>
+        </div>
+        <div className="card-body">
+          <div className="row">
+            <div className="col-md-4">
+              <h6>Fracciones</h6>
+              <p><code>{'\\frac{numerador}{denominador}'}</code> → <InlineMath math="\frac{1}{2}" /></p>
+              
+              <h6>Potencias</h6>
+              <p><code>{'x^{2}'}</code> → <InlineMath math="x^{2}" /></p>
+            </div>
+            <div className="col-md-4">
+              <h6>Raíces</h6>
+              <p><code>{'\\sqrt{x}'}</code> → <InlineMath math="\sqrt{x}" /></p>
+              
+              <h6>Números mixtos</h6>
+              <p><code>{'2\\frac{3}{4}'}</code> → <InlineMath math="2\frac{3}{4}" /></p>
+            </div>
+            <div className="col-md-4">
+              <h6>Operadores</h6>
+              <p><code>{'\\times'}</code> → <InlineMath math="\times" /></p>
+              <p><code>{'\\div'}</code> → <InlineMath math="\div" /></p>
+              <p><code>{'\\pm'}</code> → <InlineMath math="\pm" /></p>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -7,53 +7,82 @@ const router = express.Router();
 // Obtener todos los cuestionarios
 router.get('/', async (req, res) => {
   try {
-    const userId = req.query.created_by;
-    console.log("ID del usuario recibido:", userId);
+    const { created_by, phase, grade, studentId } = req.query;
+    let params = [];
+    let conditions = [];
+    let query = `
+      SELECT 
+        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by,
+        u.name as created_by_name,
+        c.name as course_name,
+        (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
+      FROM questionnaires q
+      JOIN users u ON q.created_by = u.id
+      JOIN courses c ON q.course_id = c.id
+    `;
     
-    if (userId) {
-      // Primero obtener el ID del profesor
+    // Si hay un studentId, filtrar por el grado del estudiante
+    if (studentId) {
+      // Obtener el grado y course_id del estudiante
+      const [studentRows] = await pool.query(
+        'SELECT grade, course_id FROM students WHERE user_id = ?',
+        [studentId]
+      );
+
+      if (studentRows.length > 0) {
+        const studentGrade = studentRows[0].grade;
+        
+        // Filtrar cuestionarios por el grado del estudiante
+        conditions.push('q.grade = ?');
+        params.push(studentGrade);
+      } else {
+        // Si no se encuentra el estudiante, devolver un array vacío
+        return res.json([]);
+      }
+    }
+    
+    if (created_by) {
+      // Obtener el ID del profesor a partir del ID de usuario
       const [teacherRows] = await pool.query(
         'SELECT id FROM teachers WHERE user_id = ?',
-        [userId]
+        [created_by]
       );
       
       if (teacherRows.length > 0) {
         const teacherId = teacherRows[0].id;
-        
-        // Luego obtener los cuestionarios creados por ese profesor
-        const query = `
-          SELECT 
-            q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by,
-            u.name as created_by_name,
-            c.name as course_name,
-            (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
-          FROM questionnaires q
-          JOIN users u ON q.created_by = u.id
-          JOIN courses c ON q.course_id = c.id
-          WHERE q.created_by = ?
-        `;
-        
-        const [rows] = await pool.query(query, [teacherId]);
-        res.json(rows);
-      } else {
-        res.json([]);
+        conditions.push('q.created_by = ?');
+        params.push(teacherId);
       }
-    } else {
-      // Si no se proporciona userId, devolver todos los cuestionarios
-      const query = `
-        SELECT 
-          q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by,
-          u.name as created_by_name,
-          c.name as course_name,
-          (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
-        FROM questionnaires q
-        JOIN users u ON q.created_by = u.id
-        JOIN courses c ON q.course_id = c.id
-      `;
-      
-      const [rows] = await pool.query(query);
-      res.json(rows);
     }
+    
+    if (phase) {
+      conditions.push('q.phase = ?');
+      params.push(phase);
+    }
+    
+    if (grade) {
+      conditions.push('q.grade = ?');
+      params.push(grade);
+    }
+    
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    
+    query += ' ORDER BY q.created_at DESC';
+    
+    const [rows] = await pool.query(query, params);
+    
+    // Enriquecer los resultados con el nombre de la materia
+    const enrichedRows = rows.map(q => {
+      const parts = q.category?.split('_') || [];
+      return {
+        ...q,
+        subject_name: parts[1] || '',
+      };
+    });
+    
+    res.json(enrichedRows);
   } catch (error) {
     console.error('❌ Error al obtener cuestionarios:', error);
     res.status(500).json({ message: 'Error al obtener cuestionarios' });

@@ -18,9 +18,10 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ✅ Crear nueva pregunta
+// En questionRoutes.js, modifica la ruta POST /questions
 router.post('/questions', upload.single('image'), async (req, res) => {
   try {
-    const {
+    let {
       questionnaire_id,
       question_text,
       option1,
@@ -31,8 +32,21 @@ router.post('/questions', upload.single('image'), async (req, res) => {
       category
     } = req.body;
 
-    const image_url = req.file ? `/uploads/${req.file.filename}` : null;
+    // Si no se proporciona una categoría, obtenerla del cuestionario
+    if (!category) {
+      const [questionnaireRows] = await pool.query(
+        'SELECT category FROM questionnaires WHERE id = ?',
+        [questionnaire_id]
+      );
+      
+      if (questionnaireRows.length > 0) {
+        category = questionnaireRows[0].category;
+      } else {
+        return res.status(400).json({ message: 'Se requiere una categoría' });
+      }
+    }
 
+    const image_url = req.file ? `/uploads/${req.file.filename}` : null;
 
     const [result] = await pool.query(
       `INSERT INTO questions (questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url)
