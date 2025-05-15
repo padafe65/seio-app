@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Pencil } from "lucide-react";
+import { Pencil, Users } from "lucide-react";
 import { Link, useNavigate } from 'react-router-dom';
 
 const Navbar = () => {
@@ -63,12 +63,20 @@ const Navbar = () => {
                   <Link className="nav-link" to="/admin">Administración</Link>
                 </li>
                 {user?.role === 'docente' && (
-                 <li className="nav-item">
-                 <Link className="btn btn-primary d-flex align-items-center ms-2" to="/crear-pregunta">
-                   <Pencil size={16} className="me-1" />
-                   Crear Pregunta
-                 </Link>
-               </li>
+                  <>
+                    <li className="nav-item">
+                      <Link className="btn btn-primary d-flex align-items-center ms-2" to="/crear-pregunta">
+                        <Pencil size={16} className="me-1" />
+                        Crear Pregunta
+                      </Link>
+                    </li>
+                    <li className="nav-item">
+                      <Link className="btn btn-info d-flex align-items-center ms-2" to="/mis-estudiantes">
+                        <Users size={16} className="me-1" />
+                        Mis Estudiantes
+                      </Link>
+                    </li>
+                  </>
                 )}
                 <li className="nav-item">
                   <button className="btn btn-danger ms-3" onClick={handleLogout}>Cerrar sesión</button>

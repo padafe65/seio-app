@@ -59,7 +59,7 @@ router.post('/submit', async (req, res) => {
 
     // 6. Obtener la fase del cuestionario
     const [questionnaireInfo] = await pool.query(
-      'SELECT phase FROM questionnaires WHERE id = ?',
+      'SELECT phase, created_by FROM questionnaires WHERE id = ?',
       [questionnaire_id]
     );
 
@@ -68,6 +68,7 @@ router.post('/submit', async (req, res) => {
     }
 
     const phaseNumber = questionnaireInfo[0].phase;
+    const teacherId = questionnaireInfo[0].created_by;
 
     // 4. Insertar intento con el ID de estudiante correcto y la fase
     const [result] = await pool.query(
@@ -106,49 +107,49 @@ router.post('/submit', async (req, res) => {
     }
 
     // MODIFICACIÓN PRINCIPAL: Calcular el promedio de todas las mejores notas de la fase
-// Obtener todas las mejores notas de evaluaciones en esta fase
-const [phaseEvaluations] = await pool.query(
-  `SELECT er.best_score 
-   FROM evaluation_results er
-   JOIN questionnaires q ON er.questionnaire_id = q.id
-   WHERE er.student_id = ? AND q.phase = ?`,
-  [realStudentId, phaseNumber]
-);
-
-// Calcular el promedio de todas las evaluaciones de esta fase
-let phaseAverage = 0;
-if (phaseEvaluations.length > 0) {
-  const sum = phaseEvaluations.reduce((total, item) => total + item.best_score, 0);
-  phaseAverage = parseFloat((sum / phaseEvaluations.length).toFixed(2));
-}
-
-// Verificar si el promedio es NaN y convertirlo a NULL para MySQL
-const phaseAverageForDB = isNaN(phaseAverage) ? null : phaseAverage;
-
-// Actualizar la columna de la fase correspondiente en la tabla grades
-const phaseColumn = `phase${phaseNumber}`;
-
-// Verificar si ya existe un registro para este estudiante
-const [existingGrade] = await pool.query(
-  'SELECT * FROM grades WHERE student_id = ?',
-  [realStudentId]
-);
-
-if (existingGrade.length === 0) {
-  // Crear nuevo registro en grades
-  await pool.query(
-    `INSERT INTO grades (student_id, ${phaseColumn}, created_at) 
-     VALUES (?, ?, NOW())`,
-    [realStudentId, phaseAverageForDB]
-  );
-} else {
-  // Actualizar registro existente
-  await pool.query(
-    `UPDATE grades SET ${phaseColumn} = ? WHERE student_id = ?`,
-    [phaseAverageForDB, realStudentId]
-  );
-}
-
+    // Obtener todas las mejores notas de evaluaciones en esta fase
+    const [phaseEvaluations] = await pool.query(
+      `SELECT er.best_score 
+       FROM evaluation_results er
+       JOIN questionnaires q ON er.questionnaire_id = q.id
+       WHERE er.student_id = ? AND q.phase = ?`,
+      [realStudentId, phaseNumber]
+    );
+    
+    // Calcular el promedio de todas las evaluaciones de esta fase
+    let phaseAverage = 0;
+    if (phaseEvaluations.length > 0) {
+      const sum = phaseEvaluations.reduce((total, item) => total + item.best_score, 0);
+      phaseAverage = parseFloat((sum / phaseEvaluations.length).toFixed(2));
+    }
+    
+    // Verificar si el promedio es NaN y convertirlo a NULL para MySQL
+    const phaseAverageForDB = isNaN(phaseAverage) ? null : phaseAverage;
+    
+    // Actualizar la columna de la fase correspondiente en la tabla grades
+    const phaseColumn = `phase${phaseNumber}`;
+    
+    // Verificar si ya existe un registro para este estudiante
+    const [existingGrade] = await pool.query(
+      'SELECT * FROM grades WHERE student_id = ?',
+      [realStudentId]
+    );
+    
+    if (existingGrade.length === 0) {
+      // Crear nuevo registro en grades incluyendo questionnaire_id
+      await pool.query(
+        `INSERT INTO grades (student_id, questionnaire_id, ${phaseColumn}, created_at) 
+         VALUES (?, ?, ?, NOW())`,
+        [realStudentId, questionnaire_id, phaseAverageForDB]
+      );
+    } else {
+      // Actualizar registro existente
+      await pool.query(
+        `UPDATE grades SET ${phaseColumn} = ? WHERE student_id = ?`,
+        [phaseAverageForDB, realStudentId]
+      );
+    }
+    
     // Recalcular el promedio general
     await pool.query(
       `UPDATE grades 
@@ -157,11 +158,36 @@ if (existingGrade.length === 0) {
        WHERE student_id = ?`,
       [realStudentId]
     );
+    
+    // Actualizar o crear registro en phase_averages
+    try {
+      const [existingPhaseAvg] = await pool.query(
+        'SELECT * FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+        [realStudentId, teacherId, phaseNumber]
+      );
+
+      if (existingPhaseAvg.length === 0) {
+        // Crear nuevo registro
+        await pool.query(
+          'INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, evaluations_completed) VALUES (?, ?, ?, ?, ?)',
+          [realStudentId, teacherId, phaseNumber, phaseAverageForDB, phaseEvaluations.length]
+        );
+      } else {
+        // Actualizar registro existente
+        await pool.query(
+          'UPDATE phase_averages SET average_score = ?, evaluations_completed = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+          [phaseAverageForDB, phaseEvaluations.length, realStudentId, teacherId, phaseNumber]
+        );
+      }
+    } catch (error) {
+      console.error('Error al actualizar phase_averages:', error);
+      // No interrumpimos el flujo principal si hay un error aquí
+    }
 
     res.json({ 
       message: 'Evaluación registrada correctamente.', 
       score,
-      phaseAverage
+      phaseAverage: phaseAverageForDB
     });
 
   } catch (error) {
@@ -360,6 +386,104 @@ router.get('/evaluations-by-phase/:studentId', async (req, res) => {
   } catch (error) {
     console.error('Error al obtener evaluaciones por fase:', error);
     res.status(500).json({ error: 'Error al obtener evaluaciones por fase.' });
+  }
+});
+
+// Obtener los mejores resultados de evaluación para un estudiante (evaluation_results)
+router.get('/student/evaluation-results/:studentId', async (req, res) => {
+  const { studentId } = req.params;
+
+  try {
+    // Obtener el ID real del estudiante
+    const [studentRows] = await pool.query(
+      'SELECT id FROM students WHERE user_id = ?',
+      [studentId]
+    );
+
+    if (studentRows.length === 0) {
+      return res.json([]);
+    }
+
+    const realStudentId = studentRows[0].id;
+
+    // Consulta para obtener los mejores resultados con información adicional
+    const [rows] = await pool.query(`
+      SELECT 
+        er.id,
+        er.student_id,
+        er.questionnaire_id,
+        er.best_score,
+        er.selected_attempt_id,
+        er.phase,
+        er.recorded_at,
+        q.title,
+        q.category,
+        qa.attempt_number
+      FROM evaluation_results er
+      JOIN questionnaires q ON er.questionnaire_id = q.id
+      JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
+      WHERE er.student_id = ?
+      ORDER BY er.phase, er.recorded_at DESC
+    `, [realStudentId]);
+
+    // Agregar subject_name si es necesario
+    const processedRows = rows.map(row => ({
+      ...row,
+      subject_name: row.category?.split('_')[1] || ''
+    }));
+
+    res.json(processedRows);
+  } catch (error) {
+    console.error('Error al obtener resultados de evaluación:', error);
+    res.status(500).json({ error: 'Error al obtener resultados de evaluación' });
+  }
+});
+
+// Obtener todos los intentos de un estudiante con detalles
+router.get('/student/attempts/:studentId', async (req, res) => {
+  const { studentId } = req.params;
+
+  try {
+    // Obtener el ID real del estudiante
+    const [studentRows] = await pool.query(
+      'SELECT id FROM students WHERE user_id = ?',
+      [studentId]
+    );
+
+    if (studentRows.length === 0) {
+      return res.json([]);
+    }
+
+    const realStudentId = studentRows[0].id;
+
+    // Consulta para obtener todos los intentos con información adicional
+    const [rows] = await pool.query(`
+      SELECT 
+        qa.id AS attempt_id,
+        qa.student_id,
+        qa.questionnaire_id,
+        qa.attempt_number,
+        qa.score,
+        qa.attempt_date AS attempted_at,
+        qa.phase,
+        q.title,
+        q.category
+      FROM quiz_attempts qa
+      JOIN questionnaires q ON qa.questionnaire_id = q.id
+      WHERE qa.student_id = ?
+      ORDER BY qa.attempt_date DESC
+    `, [realStudentId]);
+
+    // Agregar subject_name si es necesario
+    const processedRows = rows.map(row => ({
+      ...row,
+      subject_name: row.category?.split('_')[1] || ''
+    }));
+
+    res.json(processedRows);
+  } catch (error) {
+    console.error('Error al obtener intentos de evaluación:', error);
+    res.status(500).json({ error: 'Error al obtener intentos de evaluación' });
   }
 });
 

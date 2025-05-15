@@ -7,6 +7,8 @@ import { useNavigate } from 'react-router-dom';
 import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
 
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
 const TakeQuizPage = () => {
   const [questionnaires, setQuestionnaires] = useState([]);
   const [questionnaireId, setQuestionnaireId] = useState('');
@@ -26,6 +28,8 @@ const TakeQuizPage = () => {
   const [count, setCount] = useState();
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedPhase, setSelectedPhase] = useState(null);
+  const [evaluations, setEvaluations] = useState([]);
+  const [studentData, setStudentData] = useState(null);
   const { user } = useAuth();
   const studentId = user?.id;
   const navigate = useNavigate();
@@ -46,6 +50,31 @@ const TakeQuizPage = () => {
   const handleReturnToDashboard = () => {
     navigate('/student/dashboard');
   };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (user && user.role === 'estudiante') {
+        try {
+          // Obtener datos del estudiante
+          const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
+          setStudentData(studentResponse.data);
+          
+          // Obtener evaluaciones del estudiante
+          const evaluationsResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${user.id}`);
+          setEvaluations(evaluationsResponse.data);
+          console.log('Evaluaciones1:', evaluationsResponse.data);
+          
+          setLoading(false);
+        } catch (error) {
+          console.error('Error al cargar datos del estudiante:', error);
+          setLoading(false);
+        }
+      }
+    };
+    
+    fetchData();
+  }, [user]);
+  
 
   // Cargar cuestionarios al inicio
   useEffect(() => {
@@ -157,8 +186,23 @@ const TakeQuizPage = () => {
   
   // Función para obtener información de intentos por fase para un cuestionario específico
   const getIntentosPorFase = (questionnaireId) => {
-    return intentos.find(i => parseInt(i.questionnaire_id) === parseInt(questionnaireId)) || null;
-  };
+  // Primero buscar en intentos
+  const intentoInfo = intentos.find(i => parseInt(i.questionnaire_id) === parseInt(questionnaireId));
+  
+  // Si no se encuentra en intentos, buscar en allAttempts
+  if (!intentoInfo) {
+    const attemptInfo = allAttempts.find(a => parseInt(a.questionnaire_id) === parseInt(questionnaireId));
+    if (attemptInfo) {
+      return {
+        questionnaire_id: attemptInfo.questionnaire_id,
+        attempt_number: attemptInfo.attempt_count
+      };
+    }
+  }
+  
+  return intentoInfo || null;
+};
+
 
   const handleSelectAnswer = (questionId, optionNumber) => {
     setAnswers((prev) => ({ ...prev, [questionId]: optionNumber }));
@@ -301,8 +345,8 @@ const TakeQuizPage = () => {
                     {/* Mostrar información de intentos por fase */}
                     {intentoInfo ? (
                       <div className="mt-2 p-2 bg-gray-100 rounded">
-                        <p><strong>Intentos realizados:</strong> {intentoInfo.attempt_number || 0}/2</p>
-                        <p><strong>Última calificación:</strong> {intentoInfo.score || 'N/A'}</p>
+                        <p><strong>Intentos realizados:</strong> {intentoInfo.attempt_number || intentoInfo.attempt_count || 0}/2</p>
+                        <p><strong>Última calificación:</strong> {evaluations.map((e)=>e.phase1) || 'N/A'}</p>
                         
                         {/* Mostrar notas por fase según la fase del cuestionario */}
                         {q.phase === 1 && intentoInfo.phase1 !== null && (
@@ -357,7 +401,7 @@ const TakeQuizPage = () => {
                         </div>
                       </div>
                     ) : (
-                      <p><strong>Intentos:</strong> 0/2</p>
+                      <p><strong>Intentos:</strong> {getAttemptCount(q.id)}/2</p>
                     )}
 
                     {hasTwoAttempts ? (

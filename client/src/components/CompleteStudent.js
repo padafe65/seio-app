@@ -19,27 +19,33 @@ const CompletarEstudiante = () => {
     age: '',
     grade: '',
     course_id: '',
-    user_id: userId
+    user_id: userId,
+    teacher_id: '' // Nuevo campo para el profesor
   });
   
-
   const [courses, setCourses] = useState([]);
+  const [teachers, setTeachers] = useState([]); // Nuevo estado para profesores
   const [loading, setLoading] = useState(true);
 
-  // Cargar la lista de cursos al montar el componente
+  // Cargar la lista de cursos y profesores al montar el componente
   useEffect(() => {
-    const fetchCourses = async () => {
+    const fetchData = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/courses`);
-        setCourses(response.data);
+        const [coursesResponse, teachersResponse] = await Promise.all([
+          axios.get(`${API_URL}/api/courses`),
+          axios.get(`${API_URL}/api/teachers/list`) // Nueva ruta para obtener profesores
+        ]);
+        
+        setCourses(coursesResponse.data);
+        setTeachers(teachersResponse.data);
         setLoading(false);
       } catch (error) {
-        console.error('Error al cargar los cursos:', error);
+        console.error('Error al cargar datos:', error);
         setLoading(false);
       }
     };
 
-    fetchCourses();
+    fetchData();
   }, []);
 
   const handleChange = (e) => {
@@ -47,47 +53,58 @@ const CompletarEstudiante = () => {
     setStudent({ ...student, [name]: value });
   };
 
-  // En CompleteStudent.js, modificar el handleSubmit:
-// En CompleteStudent.js
-const handleSubmit = async (e) => {
-  // ... código existente ...
-
-  try {
-    await axios.post(`${API_URL}/api/students`, student);
-
-    // Mensaje de éxito
-    await notiMySwal.fire({
-      icon: 'success',
-      title: 'Registro completo',
-      html: `<i><strong>¡Bien hecho!</strong><br>Tu registro como estudiante ha sido completado con éxito.</i>`,
-      imageUrl: "img/estudiante.gif",
-      imageWidth: 100,
-      imageHeight: 100,
-      confirmButtonText: 'Continuar',
-      confirmButtonColor: '#3085d6'
-    });
-
-    // Limpiar localStorage
-    localStorage.removeItem('user_id');
-    localStorage.removeItem('temp_user_id');
+  const handleSubmit = async (e) => {
+    e.preventDefault(); // Prevenir el comportamiento predeterminado del formulario
     
-    // Verificar si fue registro por docente
-    const isTeacherRegistration = localStorage.getItem('is_teacher_registration') === 'true';
-    localStorage.removeItem('is_teacher_registration');
-    
-    // Redirigir según el caso
-    if (isTeacherRegistration) {
-      navigate('/estudiantes'); // Volver a la lista de estudiantes
-    } else {
-      navigate('/'); // Ir al login
+    try {
+      // Registrar estudiante
+      const studentResponse = await axios.post(`${API_URL}/api/students`, student);
+      const studentId = studentResponse.data.studentId;
+      
+      // Si se seleccionó un profesor, crear la relación en teacher_students
+      if (student.teacher_id) {
+        await axios.post(`${API_URL}/api/teacher/assign-student`, {
+          teacher_id: student.teacher_id,
+          student_id: studentId
+        });
+      }
+
+      // Verificar si fue registro por docente ANTES de eliminar la bandera
+      const isTeacherRegistration = localStorage.getItem('is_teacher_registration') === 'true';
+      
+      // Limpiar localStorage
+      localStorage.removeItem('user_id');
+      localStorage.removeItem('temp_user_id');
+      localStorage.removeItem('is_teacher_registration');
+      
+      // Mensaje de éxito
+      notiMySwal.fire({
+        icon: 'success',
+        title: 'Registro completo',
+        html: `<i><strong>¡Bien hecho!</strong><br>Tu registro como estudiante ha sido completado con éxito.</i>`,
+        imageUrl: "img/estudiante.gif",
+        imageWidth: 100,
+        imageHeight: 100,
+        confirmButtonText: 'Continuar',
+        confirmButtonColor: '#3085d6'
+      }).then(() => {
+        // Redirigir dentro del callback de SweetAlert
+        if (isTeacherRegistration) {
+          navigate('/estudiantes');
+        } else {
+          navigate('/');
+        }
+      });
+
+    } catch (error) {
+      console.error('Error al registrar estudiante:', error);
+      notiMySwal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: 'Hubo un problema al registrar tus datos. Por favor, intenta nuevamente.'
+      });
     }
-
-  } catch (error) {
-    // ... manejo de errores ...
-  }
-};
-
-
+  };
 
   if (loading) {
     return (
@@ -95,7 +112,7 @@ const handleSubmit = async (e) => {
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Cargando...</span>
         </div>
-        <p className="mt-2">Cargando cursos disponibles...</p>
+        <p className="mt-2">Cargando datos disponibles...</p>
       </div>
     );
   }
@@ -180,6 +197,25 @@ const handleSubmit = async (e) => {
                 {courses.map(course => (
                   <option key={course.id} value={course.id}>
                     {course.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            
+            {/* Nuevo selector de profesor */}
+            <div className="mb-3">
+              <label htmlFor="teacher_id" className="form-label">Profesor</label>
+              <select
+                id="teacher_id"
+                name="teacher_id"
+                onChange={handleChange}
+                className="form-select"
+                required
+              >
+                <option value="">Selecciona un profesor</option>
+                {teachers.map(teacher => (
+                  <option key={teacher.id} value={teacher.id}>
+                    {teacher.name} - {teacher.subject}
                   </option>
                 ))}
               </select>

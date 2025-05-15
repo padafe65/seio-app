@@ -7,12 +7,12 @@ const router = express.Router();
 // Obtener todos los cuestionarios
 router.get('/', async (req, res) => {
   try {
-    const { created_by, phase, grade, studentId } = req.query;
+    const { created_by, phase, grade, studentId, description } = req.query;
     let params = [];
     let conditions = [];
     let query = `
       SELECT 
-        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by,
+        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
         u.name as created_by_name,
         c.name as course_name,
         (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
@@ -64,6 +64,11 @@ router.get('/', async (req, res) => {
       conditions.push('q.grade = ?');
       params.push(grade);
     }
+
+    if (description) {
+      conditions.push('q.description = ?');
+      params.push(grade);
+    }
     
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
@@ -95,7 +100,7 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     const [rows] = await pool.query(`
       SELECT 
-        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by,
+        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
         u.name as created_by_name,
         c.name as course_name
       FROM questionnaires q
@@ -127,15 +132,16 @@ router.get('/:id', async (req, res) => {
 // Crear un nuevo cuestionario
 router.post('/', async (req, res) => {
   try {
-    const { title, category, grade, phase, course_id, created_by } = req.body;
+    const { title, category, grade, phase, course_id, created_by, description } = req.body;
     
     console.log('Datos recibidos para crear cuestionario:', req.body);
     
     // Validar que todos los campos necesarios estén presentes
-    if (!title || !category || !grade || !phase || !course_id || !created_by) {
+    if (!title || !category || !grade || !phase || !course_id || !created_by || !description) {
+      console.log('Faltan campos requeridos:', { title, category, grade, phase, course_id, created_by, description });
       return res.status(400).json({ 
         message: 'Faltan campos requeridos', 
-        received: { title, category, grade, phase, course_id, created_by } 
+        received: { title, category, grade, phase, course_id, created_by, description } 
       });
     }
     
@@ -155,9 +161,9 @@ router.post('/', async (req, res) => {
     }
     
     const [result] = await pool.query(
-      `INSERT INTO questionnaires (title, category, grade, phase, course_id, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [title, category, grade, phase, course_id, teacherId]
+      `INSERT INTO questionnaires (title, category, grade, phase, course_id, created_by, description) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [title, category, grade, phase, course_id, teacherId, description]
     );
     
     res.status(201).json({ 
@@ -174,13 +180,13 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, category, grade, phase, course_id } = req.body;
+    const { title, category, grade, phase, course_id, description } = req.body;
     
     const [result] = await pool.query(
       `UPDATE questionnaires 
-       SET title = ?, category = ?, grade = ?, phase = ?, course_id = ? 
+       SET title = ?, category = ?, grade = ?, phase = ?, course_id = ?, description = ? 
        WHERE id = ?`,
-      [title, category, grade, phase, course_id, id]
+      [title, category, grade, phase, course_id, description, id]
     );
     
     if (result.affectedRows === 0) {
@@ -215,5 +221,7 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ message: 'Error al eliminar cuestionario' });
   }
 });
+
+
 
 export default router;

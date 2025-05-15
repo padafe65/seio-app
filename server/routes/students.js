@@ -43,7 +43,7 @@ router.get('/:id', async (req, res) => {
 
 // Crear un nuevo estudiante
 router.post('/', async (req, res) => {
-  const { name, contact_email, contact_phone, grade, course_id, age } = req.body;
+  const { name, contact_email, contact_phone, grade, course_id, age, teacher_id } = req.body;
   
   try {
     // Primero crear el usuario
@@ -60,9 +60,19 @@ router.post('/', async (req, res) => {
       [userId, contact_phone, contact_email, age, grade, course_id]
     );
     
+    const studentId = studentResult.insertId;
+    
+    // Si se proporcionó un teacher_id, crear la relación en teacher_students
+    if (teacher_id) {
+      await pool.query(
+        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
+        [teacher_id, studentId]
+      );
+    }
+    
     res.status(201).json({ 
       message: 'Estudiante creado correctamente',
-      id: studentResult.insertId 
+      studentId: studentId 
     });
   } catch (err) {
     console.error('Error al crear estudiante:', err);
@@ -72,7 +82,7 @@ router.post('/', async (req, res) => {
 
 // Actualizar un estudiante
 router.put('/:id', async (req, res) => {
-  const { name, contact_email, contact_phone, grade, course_id, age } = req.body;
+  const { name, contact_email, contact_phone, grade, course_id, age, teacher_id } = req.body;
   const { id } = req.params;
   
   try {
@@ -100,6 +110,29 @@ router.put('/:id', async (req, res) => {
       [contact_phone, contact_email, age, grade, course_id, id]
     );
     
+    // Si se proporcionó un teacher_id, actualizar la relación en teacher_students
+    if (teacher_id) {
+      // Verificar si ya existe una relación
+      const [existingRelation] = await pool.query(
+        'SELECT * FROM teacher_students WHERE student_id = ?',
+        [id]
+      );
+      
+      if (existingRelation.length > 0) {
+        // Actualizar la relación existente
+        await pool.query(
+          'UPDATE teacher_students SET teacher_id = ? WHERE student_id = ?',
+          [teacher_id, id]
+        );
+      } else {
+        // Crear una nueva relación
+        await pool.query(
+          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
+          [teacher_id, id]
+        );
+      }
+    }
+    
     res.json({ message: 'Estudiante actualizado correctamente' });
   } catch (err) {
     console.error('Error al actualizar estudiante:', err);
@@ -123,6 +156,9 @@ router.delete('/:id', async (req, res) => {
     }
     
     const userId = studentRows[0].user_id;
+    
+    // Eliminar las relaciones en teacher_students
+    await pool.query('DELETE FROM teacher_students WHERE student_id = ?', [id]);
     
     // Eliminar el estudiante
     await pool.query('DELETE FROM students WHERE id = ?', [id]);

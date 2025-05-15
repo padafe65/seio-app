@@ -1,39 +1,28 @@
-// pages/students/StudentForm.js
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import Swal from 'sweetalert2';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
-const StudentForm = () => {
+const StudentForm = ({ isViewMode = false }) => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
-  const isEditing = !!id;
-  const isViewMode = location.state?.viewMode || false;
-  const isTeacherRegistration = localStorage.getItem('is_teacher_registration') === 'true';
-  
+  const [loading, setLoading] = useState(true);
+  const [courses, setCourses] = useState([]);
+  const [teachers, setTeachers] = useState([]); // Nuevo estado para profesores
   const [formData, setFormData] = useState({
-    // Datos de la tabla users
     name: '',
-    email: '',
     phone: '',
-    role: 'estudiante',
-    // Datos de la tabla students
+    email: '',
     contact_email: '',
     contact_phone: '',
     age: '',
     grade: '',
     course_id: '',
-    // Campo adicional para mostrar el nombre del curso
-    course_name: ''
+    teacher_id: '' // Nuevo campo para el profesor
   });
-  
-  const [courses, setCourses] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState(null);
-  
+
   useEffect(() => {
     const fetchCourses = async () => {
       try {
@@ -41,141 +30,167 @@ const StudentForm = () => {
         setCourses(response.data);
       } catch (error) {
         console.error('Error al cargar cursos:', error);
-        setError('No se pudieron cargar los cursos. Por favor, intenta de nuevo.');
       }
     };
-    
-    fetchCourses();
-    
-    if (isEditing) {
-      const fetchStudent = async () => {
+
+    const fetchTeachers = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/teachers/list`);
+        setTeachers(response.data);
+      } catch (error) {
+        console.error('Error al cargar profesores:', error);
+      }
+    };
+
+    const fetchStudentData = async () => {
+      if (id) {
         try {
           const response = await axios.get(`${API_URL}/api/students/${id}`);
-          const studentData = response.data;
+          const student = response.data;
+          
+          // También obtener el profesor asignado si existe
+          const teacherResponse = await axios.get(`${API_URL}/api/teacher/student-teacher/${id}`);
+          const teacherId = teacherResponse.data.teacher_id || '';
           
           setFormData({
-            // Datos de la tabla users
-            name: studentData.name || '',
-            email: studentData.email || '',
-            phone: studentData.phone || '',
-            role: studentData.role || 'estudiante',
-            // Datos de la tabla students
-            contact_email: studentData.contact_email || '',
-            contact_phone: studentData.contact_phone || '',
-            age: studentData.age || '',
-            grade: studentData.grade || '',
-            course_id: studentData.course_id || '',
-            // Campo adicional
-            course_name: studentData.course_name || ''
+            name: student.name || '',
+            phone: student.phone || '',
+            email: student.email || '',
+            contact_email: student.contact_email || '',
+            contact_phone: student.contact_phone || '',
+            age: student.age || '',
+            grade: student.grade || '',
+            course_id: student.course_id || '',
+            teacher_id: teacherId
           });
-          
-          setLoading(false);
         } catch (error) {
-          console.error('Error al cargar estudiante:', error);
-          setError('No se pudo cargar la información del estudiante. Por favor, intenta de nuevo.');
-          setLoading(false);
+          console.error('Error al cargar datos del estudiante:', error);
+          Swal.fire({
+            icon: 'error',
+            title: 'Error',
+            text: 'No se pudo cargar la información del estudiante'
+          });
         }
-      };
-      
-      fetchStudent();
-    } else {
-      setLoading(false);
-    }
-  }, [id, isEditing, API_URL]);
-  
+      }
+    };
+
+    Promise.all([fetchCourses(), fetchTeachers(), id ? fetchStudentData() : Promise.resolve()])
+      .finally(() => setLoading(false));
+  }, [id]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData({ ...formData, [name]: value });
   };
-  
+
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
+  e.preventDefault();
+  
+  try {
+    console.log("Enviando datos:", formData);
     
-    try {
-      if (isEditing) {
-        // Actualizar estudiante existente
-        await axios.put(`${API_URL}/api/students/${id}`, {
-          // Datos para actualizar en la tabla users
-          name: formData.name,
-          email: formData.email,
-          phone: formData.phone,
-          // Datos para actualizar en la tabla students
-          contact_email: formData.contact_email,
-          contact_phone: formData.contact_phone,
-          age: formData.age,
-          grade: formData.grade,
-          course_id: formData.course_id
-        });
-        
-        alert('Estudiante actualizado correctamente');
-        navigate('/estudiantes');
-      } else {
-        // Crear nuevo estudiante (registro por docente)
-        const userResponse = await axios.post(`${API_URL}/api/auth/register`, {
-          name: formData.name,
-          phone: formData.contact_phone,
-          email: formData.contact_email,
-          password: "password123", // Contraseña temporal que el estudiante deberá cambiar
-          role: "estudiante"
-        });
-        
-        // Guardar datos adicionales del estudiante
-        await axios.post(`${API_URL}/api/students`, {
+    if (!id) {
+      // Para crear un nuevo estudiante, primero crea el usuario
+      const userData = {
+        name: formData.name,
+        email: formData.contact_email,
+        phone: formData.contact_phone,
+        password: "password123", // Contraseña temporal
+        role: "estudiante"
+      };
+      
+      // Primero crear el usuario
+      const userResponse = await axios.post(`${API_URL}/api/auth/register`, userData);
+      
+      if (userResponse.data && userResponse.data.user && userResponse.data.user.id) {
+        // Luego crear el estudiante con el user_id obtenido
+        const studentData = {
           user_id: userResponse.data.user.id,
-          contact_phone: formData.contact_phone,
           contact_email: formData.contact_email,
+          contact_phone: formData.contact_phone,
           age: formData.age,
           grade: formData.grade,
-          course_id: formData.course_id
+          course_id: formData.course_id,
+          teacher_id: formData.teacher_id
+        };
+        
+        const response = await axios.post(`${API_URL}/api/students`, studentData);
+        console.log("Respuesta:", response.data);
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Creado',
+          text: 'Estudiante creado correctamente'
         });
         
-        alert('Estudiante registrado correctamente');
         navigate('/estudiantes');
       }
-    } catch (error) {
-      console.error('Error al procesar estudiante:', error);
-      setError(`Error al ${isEditing ? 'actualizar' : 'crear'} el estudiante: ${error.response?.data?.message || error.message}`);
-      setSubmitting(false);
+    } else {
+      // Actualizar estudiante existente
+      const updateData = {
+        name: formData.name,
+        phone: formData.phone,
+        email: formData.email,
+        contact_email: formData.contact_email,
+        contact_phone: formData.contact_phone,
+        age: formData.age,
+        grade: formData.grade,
+        course_id: formData.course_id,
+        teacher_id: formData.teacher_id
+      };
+      
+      const response = await axios.put(`${API_URL}/api/students/${id}`, updateData);
+      console.log("Respuesta de actualización:", response.data);
+      
+      Swal.fire({
+        icon: 'success',
+        title: 'Actualizado',
+        text: 'Estudiante actualizado correctamente'
+      });
+      
+      navigate('/estudiantes');
     }
-  };
-  
-  const handleEditMode = () => {
-    // Cambiar de modo visualización a modo edición
-    navigate(`/estudiantes/${id}/editar`);
-  };
-  
+  } catch (error) {
+    console.error('Error completo:', error);
+    
+    // Mostrar mensaje de error más detallado
+    Swal.fire({
+      icon: 'error',
+      title: 'Error',
+      text: error.response?.data?.message || 'Hubo un problema al guardar los datos'
+    });
+  }
+};
+
+
+
   if (loading) {
     return (
-      <div className="text-center py-5">
+      <div className="d-flex justify-content-center my-5">
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Cargando...</span>
         </div>
       </div>
     );
   }
-  
+
   return (
-    <div>
-      <h4 className="mb-4">
-        {isViewMode ? 'Detalles del Estudiante' : isEditing ? 'Editar Estudiante' : 'Nuevo Estudiante'}
-      </h4>
-      
-      {error && (
-        <div className="alert alert-danger mb-4">
-          <i className="bi bi-exclamation-triangle-fill me-2"></i>
-          {error}
+    <div className="container my-4">
+      <div className="card shadow-sm">
+        <div className="card-header bg-primary text-white">
+          <h5 className="mb-0">
+            {isViewMode 
+              ? 'Detalles del Estudiante' 
+              : id 
+                ? 'Editar Estudiante' 
+                : 'Registrar Nuevo Estudiante'}
+          </h5>
         </div>
-      )}
-      
-      <div className="card">
         <div className="card-body">
           <form onSubmit={handleSubmit}>
             <div className="row">
-              {/* Datos básicos del estudiante */}
               <div className="col-md-6 mb-3">
-                <label htmlFor="name" className="form-label">Nombre Completo</label>
+                <label htmlFor="name" className="form-label">Nombre completo</label>
                 <input
                   type="text"
                   className="form-control"
@@ -188,25 +203,8 @@ const StudentForm = () => {
                 />
               </div>
               
-              {/* Mostrar email de usuario solo en modo edición o visualización */}
-              {(isEditing || isViewMode) && (
-                <div className="col-md-6 mb-3">
-                  <label htmlFor="email" className="form-label">Correo de Usuario</label>
-                  <input
-                    type="email"
-                    className="form-control"
-                    id="email"
-                    name="email"
-                    value={formData.email}
-                    onChange={handleChange}
-                    required
-                    disabled={isViewMode}
-                  />
-                </div>
-              )}
-              
               <div className="col-md-6 mb-3">
-                <label htmlFor="contact_email" className="form-label">Correo de Contacto</label>
+                <label htmlFor="contact_email" className="form-label">Correo electrónico contacto</label>
                 <input
                   type="email"
                   className="form-control"
@@ -218,31 +216,46 @@ const StudentForm = () => {
                   disabled={isViewMode}
                 />
               </div>
-              
-              {/* Mostrar teléfono de usuario solo en modo edición o visualización */}
-              {(isEditing || isViewMode) && (
-                <div className="col-md-6 mb-3">
-                  <label htmlFor="phone" className="form-label">Teléfono de Usuario</label>
-                  <input
-                    type="tel"
-                    className="form-control"
-                    id="phone"
-                    name="phone"
-                    value={formData.phone}
-                    onChange={handleChange}
-                    disabled={isViewMode}
-                  />
-                </div>
-              )}
-              
+            </div>
+            
+            <div className="row">
+
               <div className="col-md-6 mb-3">
-                <label htmlFor="contact_phone" className="form-label">Teléfono de Contacto</label>
+                              <label htmlFor="contact_phone" className="form-label">Teléfono estudiante</label>
+                              <input
+                                type="text"
+                                className="form-control"
+                                id="contact_phone"
+                                name="contact_phone"
+                                value={formData.phone}
+                                onChange={handleChange}
+                                required
+                                disabled={isViewMode}
+                              />
+              </div>
+
+              <div className="col-md-6 mb-3">
+                <label htmlFor="contact_phone" className="form-label">Teléfono de contacto</label>
                 <input
-                  type="tel"
+                  type="text"
                   className="form-control"
                   id="contact_phone"
                   name="contact_phone"
                   value={formData.contact_phone}
+                  onChange={handleChange}
+                  required
+                  disabled={isViewMode}
+                />
+              </div>
+
+              <div className="col-md-6 mb-3">
+                <label htmlFor="contact_email" className="form-label">Correo electrónico estudiante</label>
+                <input
+                  type="email"
+                  className="form-control"
+                  id="email"
+                  name="email"
+                  value={formData.email}
                   onChange={handleChange}
                   required
                   disabled={isViewMode}
@@ -262,7 +275,9 @@ const StudentForm = () => {
                   disabled={isViewMode}
                 />
               </div>
-              
+            </div>
+            
+            <div className="row">
               <div className="col-md-6 mb-3">
                 <label htmlFor="grade" className="form-label">Grado</label>
                 <select
@@ -274,7 +289,7 @@ const StudentForm = () => {
                   required
                   disabled={isViewMode}
                 >
-                  <option value="">Seleccionar Grado</option>
+                  <option value="">Seleccionar grado</option>
                   <option value="7">7°</option>
                   <option value="8">8°</option>
                   <option value="9">9°</option>
@@ -285,79 +300,81 @@ const StudentForm = () => {
               
               <div className="col-md-6 mb-3">
                 <label htmlFor="course_id" className="form-label">Curso</label>
-                {isViewMode ? (
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={formData.course_name}
-                    disabled
-                  />
-                ) : (
-                  <select
-                    className="form-select"
-                    id="course_id"
-                    name="course_id"
-                    value={formData.course_id}
-                    onChange={handleChange}
-                    required
-                    disabled={isViewMode}
-                  >
-                    <option value="">Seleccionar Curso</option>
-                    {courses.map(course => (
-                      <option key={course.id} value={course.id}>
-                        {course.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <select
+                  className="form-select"
+                  id="course_id"
+                  name="course_id"
+                  value={formData.course_id}
+                  onChange={handleChange}
+                  required
+                  disabled={isViewMode}
+                >
+                  <option value="">Seleccionar curso</option>
+                  {courses.map(course => (
+                    <option key={course.id} value={course.id}>
+                      {course.name}
+                    </option>
+                  ))}
+                </select>
               </div>
-              
-              {/* Campos adicionales para estudiantes registrados por docentes */}
-              {!isEditing && !isViewMode && (
-                <div className="col-12 mb-3">
-                  <div className="alert alert-info">
-                    <i className="bi bi-info-circle me-2"></i>
-                    Este estudiante será registrado con una contraseña temporal que deberá cambiar en su primer inicio de sesión.
-                  </div>
-                </div>
-              )}
             </div>
             
-            <div className="d-flex justify-content-end gap-2 mt-3">
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                onClick={() => navigate('/estudiantes')}
-                disabled={submitting}
-              >
-                {isViewMode ? 'Volver' : 'Cancelar'}
-              </button>
-              
-              {isViewMode ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleEditMode}
+            {/* Nuevo selector de profesor */}
+            <div className="row">
+              <div className="col-md-6 mb-3">
+                <label htmlFor="teacher_id" className="form-label">Profesor</label>
+                <select
+                  className="form-select"
+                  id="teacher_id"
+                  name="teacher_id"
+                  value={formData.teacher_id}
+                  onChange={handleChange}
+                  required
+                  disabled={isViewMode}
                 >
-                  Editar Estudiante
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  disabled={submitting}
-                >
-                  {submitting ? (
-                    <>
-                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                      Guardando...
-                    </>
-                  ) : (
-                    isEditing ? 'Actualizar Estudiante' : 'Guardar Estudiante'
-                  )}
-                </button>
-              )}
+                  <option value="">Seleccionar profesor</option>
+                  {teachers.map(teacher => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.name} - {teacher.subject}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+            
+            {!isViewMode && (
+              <div className="d-flex justify-content-end mt-4">
+                <button 
+                  type="button" 
+                  className="btn btn-outline-secondary me-2"
+                  onClick={() => navigate('/estudiantes')}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  {id ? 'Actualizar' : 'Registrar'}
+                </button>
+              </div>
+            )}
+            
+            {isViewMode && (
+              <div className="d-flex justify-content-end mt-4">
+                <button 
+                  type="button" 
+                  className="btn btn-outline-secondary me-2"
+                  onClick={() => navigate('/estudiantes')}
+                >
+                  Volver
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-primary"
+                  onClick={() => navigate(`/estudiantes/editar/${id}`)}
+                >
+                  Editar
+                </button>
+              </div>
+            )}
           </form>
         </div>
       </div>
