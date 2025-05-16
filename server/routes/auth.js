@@ -1,11 +1,9 @@
-// backend-rifa/routes/authRoutes.js
+// backend-rifa/routes/auth.js
 import express from 'express';
-import { register, login } from '../controllers/authController';
 import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
-router.post('/register', register);
-router.post('/login', login);
+
 router.get('/verify', verifyToken, (req, res) => {
   res.status(200).json({
     success: true,

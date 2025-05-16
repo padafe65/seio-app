@@ -1,6 +1,6 @@
 // App.js
-import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
+import React, { useEffect, useState, useRef } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom';
 import { Offcanvas } from 'react-bootstrap';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import Navbar from './components/Navbar.js';
@@ -16,9 +16,10 @@ import CreateQuestionPage from './pages/CreateQuestionPage.js';
 import StudentDashboardPage from './pages/StudentDashboardPage.js';
 import TakeQuizPage from './pages/TakeQuizPage.js';
 import ResultsPage from './pages/ResultsPage.js';
-import IndicatorsPage from './pages/IndicatorsPage.js';
 import ImprovementPage from './pages/ImprovementPage.js';
 import SubjectCategoryForm from './pages/subjects/SubjectCategoryForm.js';
+import { useIdleTimer } from 'react-idle-timer';
+import Swal from 'sweetalert2';
 
 // Importar iconos de Lucide React
 import { 
@@ -37,30 +38,130 @@ import QuestionnairesList from './pages/questionnaires/QuestionnairesList.js';
 import QuestionnaireForm from './pages/questionnaires/QuestionnaireForm.js';
 import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
+import StudentIndicators from './pages/indicators/StudentIndicators';
+
+// Componente para el temporizador de inactividad
+function IdleTimerContainer() {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  const idleTimerRef = useRef(null);
+  
+  // Tiempo de inactividad: 15 minutos (en milisegundos)
+  const timeout = 1000 * 60 * 15;
+  
+  // Tiempo para mostrar advertencia: 1 minuto antes de logout
+  const promptBeforeIdle = 1000 * 60;
+  
+  const onPrompt = () => {
+    // Mostrar advertencia cuando quede 1 minuto
+    Swal.fire({
+      title: '¿Sigues ahí?',
+      text: 'Tu sesión está a punto de expirar por inactividad.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Mantener sesión',
+      cancelButtonText: 'Cerrar sesión',
+      confirmButtonColor: '#198754',
+      cancelButtonColor: '#d33',
+      timer: promptBeforeIdle,
+      timerProgressBar: true
+    }).then((result) => {
+      if (result.isConfirmed) {
+        // Usuario quiere continuar
+        idleTimerRef.current.reset();
+      } else {
+        // Usuario eligió cerrar sesión o el tiempo expiró
+        handleLogout();
+      }
+    });
+  };
+  
+  const onIdle = () => {
+    // Ejecutar logout cuando se alcanza el tiempo de inactividad
+    handleLogout();
+  };
+  
+  const handleLogout = () => {
+    Swal.fire({
+      title: 'Sesión expirada',
+      text: 'Tu sesión ha expirado por inactividad.',
+      icon: 'info',
+      confirmButtonColor: '#3085d6',
+      timer: 3000,
+      timerProgressBar: true
+    }).then(() => {
+      logout();
+      navigate('/');
+    });
+  };
+  
+  // eslint-disable-next-line no-unused-vars
+  const idleTimer = useIdleTimer({
+    ref: idleTimerRef,
+    timeout,
+    promptBeforeIdle,
+    onPrompt,
+    onIdle,
+    debounce: 500
+  });
+  
+  return null; // Este componente no renderiza nada visible
+}
 
 // Componente de ruta protegida
 function ProtectedRoute({ children }) {
-  const { authToken } = useAuth();
+  const { authToken, isAuthReady, verifyToken } = useAuth();
+  const [isVerifying, setIsVerifying] = useState(true);
+  
+  useEffect(() => {
+    const checkToken = async () => {
+      if (authToken) {
+        await verifyToken();
+      }
+      setIsVerifying(false);
+    };
+    
+    checkToken();
+  }, [authToken, verifyToken]);
+  
+  if (isVerifying || !isAuthReady) {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ height: "100vh" }}>
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </div>
+      </div>
+    );
+  }
+  
   if (!authToken) {
     return <Navigate to="/" replace />;
   }
-  return children;
+  
+  return (
+    <>
+      <IdleTimerContainer />
+      {children}
+    </>
+  );
 }
 
 // Componente para mostrar indicador de carga mientras se inicializa la autenticación
 function AppContent() {
-  const { user, authToken } = useAuth();
+  const { user, authToken, verifyToken } = useAuth();
   const [isAuthReady, setIsAuthReady] = useState(false);
   
   useEffect(() => {
-    // Simular verificación de autenticación
+    // Verificar autenticación al cargar la aplicación
     const checkAuth = async () => {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      if (authToken) {
+        await verifyToken();
+      }
       setIsAuthReady(true);
     };
     
     checkAuth();
-  }, []);
+  }, [authToken, verifyToken]);
   
   if (!isAuthReady) {
     return (
@@ -209,7 +310,7 @@ function AppContent() {
             
             {/* Rutas para resultados */}
             <Route path="/resultados" element={<ResultsList />} />
-
+            
             {/* Rutas para cuestionarios */}
             <Route path="/cuestionarios" element={<QuestionnairesList />} />
             <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
@@ -319,7 +420,7 @@ function AppContent() {
             <Route path="/dashboard" element={<StudentDashboardPage />} />
             <Route path="/take-quiz" element={<TakeQuizPage />} />
             <Route path="/results" element={<ResultsPage />} />
-            <Route path="/indicators" element={<IndicatorsPage />} />
+            <Route path="/indicators" element={<StudentIndicators />} />
             <Route path="/improvement" element={<ImprovementPage />} />
           </Routes>
         </div>

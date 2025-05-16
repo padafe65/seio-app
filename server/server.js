@@ -12,6 +12,8 @@ import questionRoutes from './routes/questionRoutes.js';
 import questionnaireRoutes from './routes/questionnaireRoutes.js';
 import quizRoutes from './routes/quiz.js';
 import pool from './config/db.js';
+// Importar las rutas de indicadores
+import indicatorRoutes from './routes/indicatorRoutes.js';
 
 dotenv.config();
 
@@ -53,6 +55,7 @@ app.use('/api/', questionRoutes);
 app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/intentos-por-fase', quizRoutes);
+app.use('/api/indicators', indicatorRoutes);
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -1179,6 +1182,18 @@ app.get('/api/teacher/questions/:userId', async (req, res) => {
     res.status(500).json({ message: 'Error al obtener preguntas del docente' });
   }
 });
+
+// Añadir a server.js o en authRoutes.js
+app.get('/api/auth/verify', verificarToken, (req, res) => {
+  res.status(200).json({
+    success: true,
+    user: {
+      id: req.usuario_id,
+      role: req.usuario_role
+    }
+  });
+});
+
 
 
 // Servidor corriendo en el puerto 5000
