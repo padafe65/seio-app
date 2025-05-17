@@ -1,12 +1,13 @@
 // src/components/QuestionnaireForm.js
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
+import { FileText } from 'lucide-react';
 
 const MySwal = withReactContent(Swal);
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
@@ -14,8 +15,13 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const QuestionnaireForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isEditing = !!id;
+  
+  // Obtener la categoría de los query params si existe
+  const queryParams = new URLSearchParams(location.search);
+  const categoryFromUrl = queryParams.get('category');
   
   const [formData, setFormData] = useState({
     title: '',
@@ -61,68 +67,81 @@ const QuestionnaireForm = () => {
   }, [formData, isEditing]);
   
   // Cargar datos iniciales
-useEffect(() => {
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      // Cargar cursos
-      const coursesResponse = await axios.get(`${API_URL}/api/courses`);
-      setCourses(coursesResponse.data);
-      
-      // Cargar materia del docente
-      if (user?.id) {
-        const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
-        const subject = subjectResponse.data.subject || 'Matematicas';
-        setSubjectName(subject);
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        // Cargar cursos
+        const coursesResponse = await axios.get(`${API_URL}/api/courses`);
+        setCourses(coursesResponse.data);
         
-        // Cargar categorías basadas en la materia
-        const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${subject}`);
-        setCategories(categoriesResponse.data);
-      }
-      
-      // Si estamos editando, cargar datos del cuestionario
-      if (isEditing) {
-        const questionnaireResponse = await axios.get(`${API_URL}/api/questionnaires/${id}`);
-        
-        // Verificar que la respuesta tenga la estructura esperada
-        if (questionnaireResponse.data && questionnaireResponse.data.questionnaire) {
-          const questionnaireData = questionnaireResponse.data.questionnaire;
+        // Cargar materia del docente
+        if (user?.id) {
+          const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
+          const subject = subjectResponse.data.subject || 'Matematicas';
+          setSubjectName(subject);
           
-          console.log('Datos del cuestionario recibidos:', questionnaireResponse.data);
-          
-          // Actualizar el estado del formulario con los datos del cuestionario
-          setFormData({
-            title: questionnaireData.title || '',
-            description: questionnaireData.description || '',
-            category: questionnaireData.category || '',
-            grade: String(questionnaireData.grade) || '',
-            phase: String(questionnaireData.phase) || '',
-            course_id: String(questionnaireData.course_id) || '',
-            created_by: user?.id
-          });
-          
-          console.log('FormData actualizado:', {
-            title: questionnaireData.title || '',
-            description: questionnaireData.description || '',
-            category: questionnaireData.category || '',
-            grade: String(questionnaireData.grade) || '',
-            phase: String(questionnaireData.phase) || '',
-            course_id: String(questionnaireData.course_id) || '',
-          });
+          // Cargar categorías basadas en la materia
+          const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${subject}`);
+          setCategories(categoriesResponse.data);
         }
+        
+        // Si estamos editando, cargar datos del cuestionario
+        if (isEditing) {
+          const questionnaireResponse = await axios.get(`${API_URL}/api/questionnaires/${id}`);
+          
+          // Verificar que la respuesta tenga la estructura esperada
+          if (questionnaireResponse.data && questionnaireResponse.data.questionnaire) {
+            const questionnaireData = questionnaireResponse.data.questionnaire;
+            
+            console.log('Datos del cuestionario recibidos:', questionnaireResponse.data);
+            
+            // Actualizar el estado del formulario con los datos del cuestionario
+            setFormData({
+              title: questionnaireData.title || '',
+              description: questionnaireData.description || '',
+              category: questionnaireData.category || '',
+              grade: String(questionnaireData.grade) || '',
+              phase: String(questionnaireData.phase) || '',
+              course_id: String(questionnaireData.course_id) || '',
+              created_by: user?.id
+            });
+            
+            console.log('FormData actualizado:', {
+              title: questionnaireData.title || '',
+              description: questionnaireData.description || '',
+              category: questionnaireData.category || '',
+              grade: String(questionnaireData.grade) || '',
+              phase: String(questionnaireData.phase) || '',
+              course_id: String(questionnaireData.course_id) || '',
+            });
+          }
+        }
+        
+        // Si hay una categoría en la URL, seleccionarla automáticamente
+        if (categoryFromUrl) {
+          setFormData(prev => ({
+            ...prev,
+            category: categoryFromUrl
+          }));
+          
+          // También actualizar en el modal si está abierto
+          setNewQuestionnaireData(prev => ({
+            ...prev,
+            category: categoryFromUrl
+          }));
+        }
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('Error al cargar datos:', err);
+        setError('Error al cargar los datos necesarios');
+        setLoading(false);
       }
-      
-      setLoading(false);
-    } catch (err) {
-      console.error('Error al cargar datos:', err);
-      setError('Error al cargar los datos necesarios');
-      setLoading(false);
-    }
-  };
-  
-  fetchData();
-}, [id, isEditing, user]);
-
+    };
+    
+    fetchData();
+  }, [id, isEditing, user, categoryFromUrl]);
   
   // Manejar cambios en el formulario principal
   const handleChange = (e) => {
@@ -395,29 +414,40 @@ useEffect(() => {
               <div className="col-md-6 mb-3">
                 <label htmlFor="category" className="form-label">Categoría</label>
                 {!isCreatingCategory ? (
-                  <div className="input-group">
-                    <select
-                      className="form-select"
-                      id="category"
-                      name="category"
-                      value={String(formData.category) || ''}
-                      onChange={handleChange}
-                      required
-                    >
-                      <option value="">Seleccionar categoría</option>
-                      {categories.map((cat, index) => (
-                        <option key={index} value={cat.category}>
-                          {cat.category.split('_')[1] || cat.category}
-                        </option>
-                      ))}
-                    </select>
-                    <button 
-                      type="button" 
-                      className="btn btn-outline-secondary"
-                      onClick={() => setIsCreatingCategory(true)}
-                    >
-                      <i className="bi bi-plus"></i> Nueva
-                    </button>
+                  <div>
+                    <div className="input-group mb-2">
+                      <select
+                        className="form-select"
+                        id="category"
+                        name="category"
+                        value={String(formData.category) || ''}
+                        onChange={handleChange}
+                        required
+                      >
+                        <option value="">Seleccionar categoría</option>
+                        {categories.map((cat, index) => (
+                          <option key={index} value={cat.category}>
+                            {cat.category.split('_')[1] || cat.category}
+                          </option>
+                        ))}
+                      </select>
+                      <button 
+                        type="button" 
+                        className="btn btn-outline-secondary"
+                        onClick={() => setIsCreatingCategory(true)}
+                      >
+                        <i className="bi bi-plus"></i> Nueva
+                      </button>
+                    </div>
+                    <div className="d-flex align-items-center">
+                      <small className="text-muted me-2">¿No encuentras la categoría que necesitas?</small>
+                      <Link 
+                        to="/materias-categorias?redirect=cuestionarios/nuevo" 
+                        className="btn btn-outline-primary btn-sm d-flex align-items-center"
+                      >
+                        <FileText size={14} className="me-1" /> Gestionar Materias y Categorías
+                      </Link>
+                    </div>
                   </div>
                 ) : (
                   <div className="input-group">
@@ -460,6 +490,8 @@ useEffect(() => {
                   required
                 >
                   <option value="">Seleccionar grado</option>
+                  <option value="5">5°</option>
+                  <option value="6">6°</option>
                   <option value="7">7°</option>
                   <option value="8">8°</option>
                   <option value="9">9°</option>
@@ -564,29 +596,41 @@ useEffect(() => {
             <div className="col-md-6 mb-3">
               <label htmlFor="modal-category" className="form-label">Categoría</label>
               {!isCreatingModalCategory ? (
-                <div className="input-group">
-                  <select
-                    className="form-select"
-                    id="modal-category"
-                    name="category"
-                    value={newQuestionnaireData.category || ''}
-                    onChange={handleModalChange}
-                    required
-                  >
-                    <option value="">Seleccionar categoría</option>
-                    {categories.map((cat, index) => (
-                      <option key={index} value={cat.category}>
-                        {cat.category.split('_')[1] || cat.category}
-                      </option>
-                    ))}
-                  </select>
-                  <button 
-                    type="button" 
-                    className="btn btn-outline-secondary"
-                    onClick={() => setIsCreatingModalCategory(true)}
-                  >
-                    <i className="bi bi-plus"></i> Nueva
-                  </button>
+                <div>
+                  <div className="input-group mb-2">
+                    <select
+                      className="form-select"
+                      id="modal-category"
+                      name="category"
+                      value={newQuestionnaireData.category || ''}
+                      onChange={handleModalChange}
+                      required
+                    >
+                      <option value="">Seleccionar categoría</option>
+                      {categories.map((cat, index) => (
+                        <option key={index} value={cat.category}>
+                          {cat.category.split('_')[1] || cat.category}
+                        </option>
+                      ))}
+                    </select>
+                    <button 
+                      type="button" 
+                      className="btn btn-outline-secondary"
+                      onClick={() => setIsCreatingModalCategory(true)}
+                    >
+                      <i className="bi bi-plus"></i> Nueva
+                    </button>
+                  </div>
+                  <div className="d-flex align-items-center">
+                    <small className="text-muted me-2">¿No encuentras la categoría que necesitas?</small>
+                    <Link 
+                      to="/materias-categorias?redirect=cuestionarios/nuevo" 
+                      className="btn btn-outline-primary btn-sm d-flex align-items-center"
+                      onClick={() => setShowModal(false)}
+                    >
+                      <FileText size={14} className="me-1" /> Gestionar Materias y Categorías
+                    </Link>
+                  </div>
                 </div>
               ) : (
                 <div className="input-group">
@@ -629,6 +673,8 @@ useEffect(() => {
                 required
               >
                 <option value="">Seleccionar grado</option>
+                <option value="5">5°</option>
+                <option value="6">6°</option>
                 <option value="7">7°</option>
                 <option value="8">8°</option>
                 <option value="9">9°</option>

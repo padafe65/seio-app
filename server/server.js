@@ -14,7 +14,9 @@ import quizRoutes from './routes/quiz.js';
 import pool from './config/db.js';
 // Importar las rutas de indicadores
 import indicatorRoutes from './routes/indicatorRoutes.js';
-
+import evaluationResultsRoutes from './routes/evaluationResults.js';
+// En server.js, añadir:
+import improvementPlansRoutes from './routes/improvementPlans.js';
 dotenv.config();
 
 // Verifica que las variables de entorno estén siendo cargadas correctamente
@@ -56,6 +58,8 @@ app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/intentos-por-fase', quizRoutes);
 app.use('/api/indicators', indicatorRoutes);
+app.use('/api', evaluationResultsRoutes);
+app.use('/api', improvementPlansRoutes);
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -635,60 +639,6 @@ app.post('/api/subjects', async (req, res) => {
   }
 });
 
-
-
-// Añadir esta ruta a server.js (junto a tus otras rutas de API)
-// Ruta para obtener categorías por materia - Enfoque general
-app.get('/api/categories/:subject', async (req, res) => {
-  try {
-    const { subject } = req.params;
-    
-    console.log("Buscando categorías para materia:", subject);
-    
-    // 1. Intentar buscar exactamente como viene
-    let [rows] = await db.query(
-      'SELECT * FROM subject_categories WHERE subject = ?',
-      [subject]
-    );
-    
-    // 2. Si no hay resultados, intentar normalizar (quitar tildes)
-    if (rows.length === 0) {
-      const normalizedSubject = subject
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, ""); // Quita tildes
-      
-      [rows] = await db.query(
-        'SELECT * FROM subject_categories WHERE subject = ?',
-        [normalizedSubject]
-      );
-    }
-    
-    // 3. Si aún no hay resultados, buscar con LIKE para coincidencias parciales
-    if (rows.length === 0) {
-      [rows] = await db.query(
-        'SELECT * FROM subject_categories WHERE subject LIKE ?',
-        [`%${subject}%`]
-      );
-    }
-    
-    // 4. Si todavía no hay resultados, devolver categorías genéricas
-    if (rows.length === 0) {
-      console.log(`No se encontraron categorías para ${subject}, devolviendo predeterminadas`);
-      return res.json([
-        { category: `${subject}_Teoría` },
-        { category: `${subject}_Práctica` },
-        { category: `${subject}_Evaluación` }
-      ]);
-    }
-    
-    console.log(`Se encontraron ${rows.length} categorías para ${subject}`);
-    res.json(rows);
-  } catch (error) {
-    console.error('❌ Error al obtener categorías:', error);
-    res.status(500).json({ message: 'Error al obtener categorías' });
-  }
-});
-
 // Ruta para obtener todas las categorías
 app.get('/api/all-categories', async (req, res) => {
   try {
@@ -704,8 +654,6 @@ app.get('/api/all-categories', async (req, res) => {
 });
 
 // Ruta para obtener todas las materias disponibles
-
-// Ruta para obtener todas las materias disponibles
 app.get('/api/subjects', async (req, res) => {
   try {
     const [rows] = await db.query(
@@ -718,7 +666,6 @@ app.get('/api/subjects', async (req, res) => {
     res.status(500).json({ message: 'Error al obtener materias' });
   }
 });
-
 
 // Ruta para obtener la materia del docente
 app.get('/api/teacher/subject/:userId', async (req, res) => {
@@ -802,22 +749,6 @@ app.post('/api/subject-categories', async (req, res) => {
   }
 });
 
-
-// Ruta para obtener todas las materias disponibles
-app.get('/api/subjects', async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      'SELECT DISTINCT subject FROM subject_categories ORDER BY subject'
-    );
-    
-    res.json(rows.map(row => row.subject));
-  } catch (error) {
-    console.error('❌ Error al obtener materias:', error);
-    res.status(500).json({ message: 'Error al obtener materias' });
-  }
-});
-
-
 // Ruta para obtener el ID del profesor por ID de usuario
 app.get('/api/teachers/by-user/:userId', async (req, res) => {
   try {
@@ -871,7 +802,6 @@ app.get('/api/questions', async (req, res) => {
     res.status(500).json({ message: 'Error al obtener preguntas' });
   }
 });
-
 
 // Obtener estudiantes de un profesor específico - MODIFICADA
 app.get('/api/teacher/students/:userId', async (req, res) => {
@@ -1165,7 +1095,7 @@ app.get('/api/teacher/questions/:userId', async (req, res) => {
     // Obtener las preguntas creadas por este docente o relacionadas con su materia
     const [rows] = await pool.query(`
       SELECT 
-        q.id, q.question_text, q.option1, q.option2, q.option3, q.option4, 
+        q.id, q.question_text, q.option1, q.option2, q.option3, q.option4,
         q.correct_answer, q.category, q.image_url, q.questionnaire_id,
         qn.title as questionnaire_title,
         qn.grade,
@@ -1193,8 +1123,6 @@ app.get('/api/auth/verify', verificarToken, (req, res) => {
     }
   });
 });
-
-
 
 // Servidor corriendo en el puerto 5000
 const PORT = process.env.PORT || 5000;

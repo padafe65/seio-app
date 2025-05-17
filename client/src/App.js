@@ -34,11 +34,15 @@ import StudentDetail from './pages/students/StudentDetail.js';
 import IndicatorsList from './pages/indicators/IndicatorsList.js';
 import IndicatorForm from './pages/indicators/IndicatorForm.js';
 import ResultsList from './pages/results/ResultsList.js';
+import ResultDetail from './pages/results/ResultDetail.js';
 import QuestionnairesList from './pages/questionnaires/QuestionnairesList.js';
 import QuestionnaireForm from './pages/questionnaires/QuestionnaireForm.js';
 import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
 import StudentIndicators from './pages/indicators/StudentIndicators';
+import ImprovementPlansList from './pages/improvement-plans/ImprovementPlansList.js';
+import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.js';
+import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -226,6 +230,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center">
+                  <Award size={18} className="me-2" /> Planes de Mejoramiento
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
                 </Link>
@@ -272,6 +281,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Award size={18} className="me-2" /> Planes de Mejoramiento
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center" onClick={handleClose}>
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
                 </Link>
@@ -310,6 +324,13 @@ function AppContent() {
             
             {/* Rutas para resultados */}
             <Route path="/resultados" element={<ResultsList />} />
+            <Route path="/resultados/:id" element={<ResultDetail />} />
+            
+            {/* Rutas para planes de mejoramiento */}
+            <Route path="/planes-mejoramiento" element={<ImprovementPlansList />} />
+            <Route path="/planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
+            <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
+            <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
             
             {/* Rutas para cuestionarios */}
             <Route path="/cuestionarios" element={<QuestionnairesList />} />
@@ -422,6 +443,7 @@ function AppContent() {
             <Route path="/results" element={<ResultsPage />} />
             <Route path="/indicators" element={<StudentIndicators />} />
             <Route path="/improvement" element={<ImprovementPage />} />
+            <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
           </Routes>
         </div>
       </div>
