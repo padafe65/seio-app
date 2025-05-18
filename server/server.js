@@ -17,6 +17,12 @@ import indicatorRoutes from './routes/indicatorRoutes.js';
 import evaluationResultsRoutes from './routes/evaluationResults.js';
 // En server.js, añadir:
 import improvementPlansRoutes from './routes/improvementPlans.js';
+// En server.js, añadir:
+import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
+// Importar las rutas de teacher_courses
+import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
+
+
 dotenv.config();
 
 // Verifica que las variables de entorno estén siendo cargadas correctamente
@@ -60,6 +66,8 @@ app.use('/api/intentos-por-fase', quizRoutes);
 app.use('/api/indicators', indicatorRoutes);
 app.use('/api', evaluationResultsRoutes);
 app.use('/api', improvementPlansRoutes);
+app.use('/api', phaseEvaluationRoutes);
+app.use('/api/teacher-courses', teacherCoursesRoutes);
 
 // Configurar multer
 const storage = multer.diskStorage({

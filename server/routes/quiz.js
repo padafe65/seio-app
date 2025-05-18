@@ -9,7 +9,7 @@ router.post('/submit', async (req, res) => {
   try {
     // Primero, obtener el ID del estudiante a partir del ID de usuario
     const [studentRows] = await pool.query(
-      'SELECT id FROM students WHERE user_id = ?',
+      'SELECT id, grade FROM students WHERE user_id = ?',
       [student_id]
     );
     
@@ -59,7 +59,7 @@ router.post('/submit', async (req, res) => {
 
     // 6. Obtener la fase del cuestionario
     const [questionnaireInfo] = await pool.query(
-      'SELECT phase, created_by FROM questionnaires WHERE id = ?',
+      'SELECT phase, created_by, grade FROM questionnaires WHERE id = ?',
       [questionnaire_id]
     );
 
@@ -69,6 +69,7 @@ router.post('/submit', async (req, res) => {
 
     const phaseNumber = questionnaireInfo[0].phase;
     const teacherId = questionnaireInfo[0].created_by;
+    const questionnaireGrade = questionnaireInfo[0].grade;
 
     // 4. Insertar intento con el ID de estudiante correcto y la fase
     const [result] = await pool.query(
@@ -182,6 +183,67 @@ router.post('/submit', async (req, res) => {
     } catch (error) {
       console.error('Error al actualizar phase_averages:', error);
       // No interrumpimos el flujo principal si hay un error aquí
+    }
+
+    // Verificar si el estudiante ha completado todos los cuestionarios de la fase
+    const [totalQuestionnairesByPhase] = await pool.query(`
+      SELECT COUNT(*) as total
+      FROM questionnaires
+      WHERE phase = ? AND grade = ?
+    `, [phaseNumber, questionnaireGrade]);
+
+    const [completedQuestionnairesByPhase] = await pool.query(`
+      SELECT COUNT(DISTINCT er.questionnaire_id) as completed
+      FROM evaluation_results er
+      JOIN questionnaires q ON er.questionnaire_id = q.id
+      WHERE er.student_id = ? AND q.phase = ?
+    `, [realStudentId, phaseNumber]);
+
+    // Si ha completado todos los cuestionarios, verificar si necesita plan de mejoramiento
+    if (totalQuestionnairesByPhase[0].total > 0 && 
+        completedQuestionnairesByPhase[0].completed >= totalQuestionnairesByPhase[0].total) {
+      
+      console.log(`Estudiante ${realStudentId} ha completado todos los cuestionarios de la fase ${phaseNumber}`);
+      
+      // Obtener la nota de la fase
+      const [phaseGrade] = await pool.query(`
+        SELECT 
+          CASE 
+            WHEN ${phaseNumber} = 1 THEN phase1
+            WHEN ${phaseNumber} = 2 THEN phase2
+            WHEN ${phaseNumber} = 3 THEN phase3
+            WHEN ${phaseNumber} = 4 THEN phase4
+          END as phase_score
+        FROM grades
+        WHERE student_id = ?
+      `, [realStudentId]);
+      
+      // Si la nota es menor a 3.5, generar plan de mejoramiento
+      if (phaseGrade.length > 0 && phaseGrade[0].phase_score < 3.5) {
+        // Importar y usar la función de generación de planes
+        const { generateImprovementPlan } = await import('../services/phaseEvaluationService.js');
+        
+        // Obtener datos completos del estudiante
+        const [studentData] = await pool.query(`
+          SELECT 
+            s.id as student_id, 
+            s.user_id,
+            s.grade,
+            s.course_id,
+            u.name as student_name,
+            c.name as course_name,
+            g.phase${phaseNumber} as phase_score
+          FROM students s
+          JOIN users u ON s.user_id = u.id
+          LEFT JOIN grades g ON s.id = g.student_id
+          LEFT JOIN courses c ON s.course_id = c.id
+          WHERE s.id = ?
+        `, [realStudentId]);
+        
+        if (studentData.length > 0) {
+          await generateImprovementPlan(studentData[0], phaseNumber);
+        }
+      }
     }
 
     res.json({ 

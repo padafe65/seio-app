@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Home, Users, FileText, BarChart2, 
-  PlusCircle, CheckSquare, Award, Settings, LogOut 
+  PlusCircle, CheckSquare, Award, Settings, LogOut, BookOpen
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext'; // Corregido: ruta relativa correcta
 
@@ -54,6 +54,15 @@ const Sidebar = () => {
             <Link to="/crear-pregunta" className={`nav-link bg-primary text-white mb-2 ${isActive('/crear-pregunta')}`}>
               <PlusCircle size={18} className="me-2" /> Crear Pregunta
             </Link>
+            <Link to="/evaluacion-fase" className={`nav-link text-white mb-2 ${isActive('/evaluacion-fase')}`}>
+              <CheckSquare size={18} className="me-2" /> Evaluación de Fase
+            </Link>
+            <Link to="/mis-cursos" className={`nav-link text-white mb-2 ${isActive('/mis-cursos')}`}>
+              <BookOpen size={18} className="me-2" /> Mis Cursos
+            </Link>
+
+
+
           </>
         )}
         

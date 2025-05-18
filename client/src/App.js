@@ -18,13 +18,14 @@ import TakeQuizPage from './pages/TakeQuizPage.js';
 import ResultsPage from './pages/ResultsPage.js';
 import ImprovementPage from './pages/ImprovementPage.js';
 import SubjectCategoryForm from './pages/subjects/SubjectCategoryForm.js';
+import PhaseEvaluation from './pages/phase-evaluation/PhaseEvaluation';
 import { useIdleTimer } from 'react-idle-timer';
 import Swal from 'sweetalert2';
 
 // Importar iconos de Lucide React
 import { 
   Home, Users, FileText, BarChart2, 
-  PlusCircle, CheckSquare, Award, Settings, Menu 
+  PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen 
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -43,6 +44,7 @@ import StudentIndicators from './pages/indicators/StudentIndicators';
 import ImprovementPlansList from './pages/improvement-plans/ImprovementPlansList.js';
 import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.js';
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
+import TeacherCoursesManager from './pages/courses/TeacherCoursesManager';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -235,6 +237,19 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/evaluacion-fase" className="nav-link text-white d-flex align-items-center">
+                  <CheckSquare size={18} className="me-2" /> Evaluación de Fase
+                </Link>
+              </li>
+
+              <li className="nav-item mb-2">
+                <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center">
+                  <BookOpen size={18} className="me-2" /> Mis Cursos
+                </Link>
+              </li>
+
+
+              <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
                 </Link>
@@ -331,6 +346,11 @@ function AppContent() {
             <Route path="/planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
             <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
             <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
+            {/* Añadir la ruta dentro del componente TeacherDashboardLayout*/}
+            <Route path="/mis-cursos" element={<TeacherCoursesManager />} />
+
+            {/* Y luego añadir esta ruta dentro del componente Routes:*/}
+            <Route path="/evaluacion-fase" element={<PhaseEvaluation />} />
             
             {/* Rutas para cuestionarios */}
             <Route path="/cuestionarios" element={<QuestionnairesList />} />
@@ -477,6 +497,12 @@ function AppContent() {
             {user && user.role === 'estudiante' ? <StudentDashboardLayout /> : null}
           </ProtectedRoute>
         } />
+
+        <Route path="/evaluacion-fase" element={
+          <ProtectedRoute allowedRoles={['docente']}>
+            <PhaseEvaluation />
+          </ProtectedRoute>
+        } />
         
         {/* Ruta por defecto */}
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -494,3 +520,4 @@ function App() {
 }
 
 export default App;
+// Asegúrate de que el archivo de estilos esté correctamente importado
