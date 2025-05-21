@@ -19,6 +19,7 @@ import ResultsPage from './pages/ResultsPage.js';
 import ImprovementPage from './pages/ImprovementPage.js';
 import SubjectCategoryForm from './pages/subjects/SubjectCategoryForm.js';
 import PhaseEvaluation from './pages/phase-evaluation/PhaseEvaluation';
+import EditarPreguntas from './components/EditarPreguntas.js';
 import { useIdleTimer } from 'react-idle-timer';
 import Swal from 'sweetalert2';
 
@@ -319,6 +320,7 @@ function AppContent() {
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
+            <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
             {/* Nueva ruta para gestionar materias y categorías */}
             <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
             
@@ -357,6 +359,8 @@ function AppContent() {
             <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
+            
+
           </Routes>
         </div>
       </div>

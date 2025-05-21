@@ -84,6 +84,42 @@ router.delete('/questions/:id', async (req, res) => {
   }
 });
 
+// Obtener una pregunta específica por ID
+router.get('/questions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Intentando obtener pregunta con ID: ${id}`);
+    
+    // Consulta simplificada para evitar problemas con los JOIN
+    const [rows] = await pool.query(
+      `SELECT * FROM questions WHERE id = ?`,
+      [id]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Pregunta no encontrada' });
+    }
+    
+    // Si la pregunta tiene un questionnaire_id, obtener el título del cuestionario
+    if (rows[0].questionnaire_id) {
+      const [questionnaires] = await pool.query(
+        `SELECT title FROM questionnaires WHERE id = ?`,
+        [rows[0].questionnaire_id]
+      );
+      
+      if (questionnaires.length > 0) {
+        rows[0].questionnaire_title = questionnaires[0].title;
+      }
+    }
+    
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error al obtener pregunta:', error);
+    res.status(500).json({ message: 'Error al obtener pregunta', error: error.message });
+  }
+});
+
+
 // ✅ Actualizar una pregunta
 // ✅ Actualizar una pregunta existente
 router.put('/questions/:id', upload.single('image'), async (req, res) => {

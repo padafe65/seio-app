@@ -41,6 +41,7 @@ const Dashboard = () => {
           try {
             const questionnairesResponse = await axios.get(`${API_URL}/api/questionnaires?created_by=${user.id}`);
             setTeacherQuestionnaires(questionnairesResponse.data.slice(0, 5)); // Mostrar solo los primeros 5
+            console.log('Cuestionarios del docente:', questionnairesResponse.data);
           } catch (error) {
             console.error('Error al cargar cuestionarios del docente:', error);
           }
@@ -257,6 +258,7 @@ const Dashboard = () => {
                         <Link to={`/preguntas/${question.id}/editar`} className="btn btn-sm btn-outline-primary me-2">
                           Editar
                         </Link>
+
                       </td>
                     </tr>
                   ))}
