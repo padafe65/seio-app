@@ -84,83 +84,47 @@ const StudentForm = ({ isViewMode = false }) => {
   };
 
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  
-  try {
-    console.log("Enviando datos:", formData);
-    
-    if (!id) {
-      // Para crear un nuevo estudiante, primero crea el usuario
-      const userData = {
-        name: formData.name,
-        email: formData.contact_email,
-        phone: formData.contact_phone,
-        password: "password123", // Contraseña temporal
-        role: "estudiante"
-      };
-      
-      // Primero crear el usuario
-      const userResponse = await axios.post(`${API_URL}/api/auth/register`, userData);
-      
-      if (userResponse.data && userResponse.data.user && userResponse.data.user.id) {
-        // Luego crear el estudiante con el user_id obtenido
-        const studentData = {
-          user_id: userResponse.data.user.id,
-          contact_email: formData.contact_email,
-          contact_phone: formData.contact_phone,
-          age: formData.age,
-          grade: formData.grade,
-          course_id: formData.course_id,
-          teacher_id: formData.teacher_id
-        };
-        
-        const response = await axios.post(`${API_URL}/api/students`, studentData);
-        console.log("Respuesta:", response.data);
-        
+    e.preventDefault();
+
+    try {
+      console.log("Enviando datos:", formData);
+
+      if (!id) {
+        // CREAR: Enviar todos los datos a la ruta de creación de estudiantes.
+        // El backend se encargará de crear el usuario y el estudiante en una sola transacción.
+        const response = await axios.post(`${API_URL}/api/students`, formData);
+        console.log("Respuesta de creación:", response.data);
+
         Swal.fire({
           icon: 'success',
           title: 'Creado',
           text: 'Estudiante creado correctamente'
         });
-        
+
+        navigate('/estudiantes');
+      } else {
+        // ACTUALIZAR: La lógica de actualización ya es correcta.
+        const response = await axios.put(`${API_URL}/api/students/${id}`, formData);
+        console.log("Respuesta de actualización:", response.data);
+
+        Swal.fire({
+          icon: 'success',
+          title: 'Actualizado',
+          text: 'Estudiante actualizado correctamente'
+        });
+
         navigate('/estudiantes');
       }
-    } else {
-      // Actualizar estudiante existente
-      const updateData = {
-        name: formData.name,
-        phone: formData.phone,
-        email: formData.email,
-        contact_email: formData.contact_email,
-        contact_phone: formData.contact_phone,
-        age: formData.age,
-        grade: formData.grade,
-        course_id: formData.course_id,
-        teacher_id: formData.teacher_id
-      };
-      
-      const response = await axios.put(`${API_URL}/api/students/${id}`, updateData);
-      console.log("Respuesta de actualización:", response.data);
-      
+    } catch (error) {
+      console.error('Error completo:', error);
+
       Swal.fire({
-        icon: 'success',
-        title: 'Actualizado',
-        text: 'Estudiante actualizado correctamente'
+        icon: 'error',
+        title: 'Error',
+        text: error.response?.data?.message || 'Hubo un problema al guardar los datos'
       });
-      
-      navigate('/estudiantes');
     }
-  } catch (error) {
-    console.error('Error completo:', error);
-    
-    // Mostrar mensaje de error más detallado
-    Swal.fire({
-      icon: 'error',
-      title: 'Error',
-      text: error.response?.data?.message || 'Hubo un problema al guardar los datos'
-    });
-  }
-};
+  };
 
 
 
@@ -221,12 +185,12 @@ const StudentForm = ({ isViewMode = false }) => {
             <div className="row">
 
               <div className="col-md-6 mb-3">
-                              <label htmlFor="contact_phone" className="form-label">Teléfono estudiante</label>
+                              <label htmlFor="phone" className="form-label">Teléfono estudiante</label>
                               <input
                                 type="text"
                                 className="form-control"
-                                id="contact_phone"
-                                name="contact_phone"
+                                id="phone"
+                                name="phone"
                                 value={formData.phone}
                                 onChange={handleChange}
                                 required
@@ -249,7 +213,7 @@ const StudentForm = ({ isViewMode = false }) => {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="contact_email" className="form-label">Correo electrónico estudiante</label>
+                <label htmlFor="email" className="form-label">Correo electrónico estudiante</label>
                 <input
                   type="email"
                   className="form-control"

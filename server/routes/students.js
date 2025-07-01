@@ -43,18 +43,20 @@ router.get('/:id', async (req, res) => {
 
 // Crear un nuevo estudiante
 router.post('/', async (req, res) => {
-  const { name, contact_email, contact_phone, grade, course_id, age, teacher_id } = req.body;
+  // CORREGIDO: Se añaden 'phone' y 'email' del estudiante
+  const { name, phone, email, contact_email, contact_phone, grade, course_id, age, teacher_id } = req.body;
   
   try {
-    // Primero crear el usuario
+    // Primero crear el usuario con sus datos correctos
     const [userResult] = await pool.query(
       'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, ?)',
-      [name, contact_email, contact_phone, '$2b$10$Y.jOcb0rM2Y1GS.cLyBGjOmWlp76XRy2.glIK/jlanPpPEO0M2fUu', 'estudiante']
+      // CORREGIDO: Se usan 'email' y 'phone' del estudiante
+      [name, email, phone, '$2b$10$Y.jOcb0rM2Y1GS.cLyBGjOmWlp76XRy2.glIK/jlanPpPEO0M2fUu', 'estudiante']
     );
     
     const userId = userResult.insertId;
     
-    // Luego crear el estudiante
+    // Luego crear el estudiante con los datos de contacto
     const [studentResult] = await pool.query(
       'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
       [userId, contact_phone, contact_email, age, grade, course_id]
@@ -82,7 +84,8 @@ router.post('/', async (req, res) => {
 
 // Actualizar un estudiante
 router.put('/:id', async (req, res) => {
-  const { name, contact_email, contact_phone, grade, course_id, age, teacher_id } = req.body;
+  // CORREGIDO: Se añaden 'phone' y 'email' del estudiante
+  const { name, phone, email, contact_email, contact_phone, grade, course_id, age, teacher_id } = req.body;
   const { id } = req.params;
   
   try {
@@ -98,13 +101,14 @@ router.put('/:id', async (req, res) => {
     
     const userId = studentRows[0].user_id;
     
-    // Actualizar el usuario
+    // Actualizar el usuario con sus datos correctos
     await pool.query(
       'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
-      [name, contact_email, contact_phone, userId]
+      // CORREGIDO: Se usan 'email' y 'phone' del estudiante
+      [name, email, phone, userId]
     );
     
-    // Actualizar el estudiante
+    // Actualizar el estudiante con los datos de contacto
     await pool.query(
       'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
       [contact_phone, contact_email, age, grade, course_id, id]

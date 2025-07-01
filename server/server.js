@@ -25,18 +25,19 @@ import studentRoutes from './routes/students.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/adminRoutes.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Cargar variables de entorno desde la carpeta raíz del proyecto
+dotenv.config({ path: path.join(__dirname, '../.env') });
 
 // Verifica que las variables de entorno estén siendo cargadas correctamente
 console.log("🔍 Verificando variables de entorno:");
 console.log("DB_HOST:", process.env.DB_HOST);
 console.log("DB_USER:", process.env.DB_USER);
-console.log("DB_PASSWORD:", process.env.DB_PASSWORD === '' ? '(vacío)' : process.env.DB_PASSWORD === 'empty' ? '(interpreta como vacío)' : '(oculta)');
+console.log("DB_PASSWORD:", process.env.DB_PASSWORD ? '(cargada)' : '(no cargada)');
 console.log("DB_NAME:", process.env.DB_NAME);
 console.log("JWT_SECRET:", process.env.JWT_SECRET ? '(cargado)' : '(no cargado)');
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // Conexión a MySQL
 const db = mysql.createPool({
@@ -260,39 +261,41 @@ app.get('/api/courses', async (req, res) => {
 // En server.js, modificar la ruta /api/students:
 app.post('/api/students', async (req, res) => {
   try {
-    const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
-    
+    // MODIFICADO: Añadimos 'phone' y 'email' para el estudiante
+    const { user_id, name, phone, email, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
+
     console.log("Datos recibidos para estudiante:", req.body);
-    
+
     // Si no hay user_id pero hay name, crear primero el usuario
     let userId = user_id;
-    
+
     if (!userId && name) {
       // Crear un nuevo usuario
       const hashedPassword = await bcrypt.hash('password123', 10);
-      
+
+      // MODIFICADO: Usamos 'email' y 'phone' del estudiante, no del contacto
       const [userResult] = await db.query(
         'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, ?)',
-        [name, contact_email, contact_phone, hashedPassword, 'estudiante']
+        [name, email, phone, hashedPassword, 'estudiante']
       );
-      
+
       userId = userResult.insertId;
       console.log("Usuario creado con ID:", userId);
     }
-    
+
     // Verificar que user_id no sea nulo
     if (!userId) {
       return res.status(400).json({ message: 'El campo user_id es obligatorio' });
     }
-    
+
     // Guardar los datos en la tabla 'students'
     const [result] = await db.query(
       'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
       [userId, contact_phone, contact_email, age, grade, course_id]
     );
-    
+
     const studentId = result.insertId;
-    
+
     // Si se proporcionó un teacher_id, crear la relación en teacher_students
     if (teacher_id) {
       await db.query(
@@ -300,7 +303,7 @@ app.post('/api/students', async (req, res) => {
         [teacher_id, studentId]
       );
     }
-    
+
     res.status(201).json({ message: 'Estudiante registrado correctamente', studentId: studentId });
   } catch (error) {
     console.error('❌ Error registrando estudiante:', error);
@@ -377,65 +380,7 @@ app.get('/api/students/:id', async (req, res) => {
   }
 });
 
-// Ruta para actualizar datos de estudiante
-app.put('/api/students/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { contact_phone, contact_email, age, grade, course_id, name, email, phone, teacher_id } = req.body;
 
-    // Obtener el user_id del estudiante
-    const [studentRows] = await db.query(
-      'SELECT user_id FROM students WHERE id = ?',
-      [id]
-    );
-    
-    if (studentRows.length === 0) {
-      return res.status(404).json({ message: 'Estudiante no encontrado' });
-    }
-    
-    const userId = studentRows[0].user_id;
-    
-    // Actualizar datos en la tabla users
-    await db.query(
-      'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
-      [name, email, phone, userId]
-    );
-    
-    // Actualizar datos en la tabla students
-    await db.query(
-      'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
-      [contact_phone, contact_email, age, grade, course_id, id]
-    );
-    
-    // Si se proporcionó un teacher_id, actualizar la relación en teacher_students
-    if (teacher_id) {
-      // Verificar si ya existe una relación
-      const [existingRelation] = await db.query(
-        'SELECT * FROM teacher_students WHERE student_id = ?',
-        [id]
-      );
-      
-      if (existingRelation.length > 0) {
-        // Actualizar la relación existente
-        await db.query(
-          'UPDATE teacher_students SET teacher_id = ? WHERE student_id = ?',
-          [teacher_id, id]
-        );
-      } else {
-        // Crear una nueva relación
-        await db.query(
-          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-          [teacher_id, id]
-        );
-      }
-    }
-    
-    res.json({ message: 'Datos de estudiante actualizados correctamente' });
-  } catch (error) {
-    console.error('❌ Error al actualizar estudiante:', error);
-    res.status(500).json({ message: 'Error al actualizar estudiante' });
-  }
-});
 
 // Ruta para eliminar estudiante
 app.delete('/api/students/:id', async (req, res) => {
