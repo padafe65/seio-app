@@ -8,27 +8,33 @@ import Swal from 'sweetalert2';
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const MisEstudiantes = () => {
-  const { user } = useAuth();
+  const { user, teacherId } = useAuth();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStudents = async () => {
+      if (!teacherId) return;
       try {
-        // Usar la nueva ruta para obtener solo los estudiantes del profesor
-        const response = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
+        setLoading(true);
+                const response = await axios.get(`${API_URL}/api/students/teacher/${teacherId}`);
         setStudents(response.data);
-        setLoading(false);
       } catch (error) {
         console.error('Error al cargar estudiantes:', error);
+        Swal.fire(
+          'Error',
+          'No se pudieron cargar los estudiantes. Por favor, intenta de nuevo.',
+          'error'
+        );
+      } finally {
         setLoading(false);
       }
     };
 
-    if (user && user.id) {
+    if (teacherId) {
       fetchStudents();
     }
-  }, [user]);
+  }, [teacherId]);
 
   const handleDelete = (id, name) => {
     Swal.fire({

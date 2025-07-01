@@ -21,7 +21,9 @@ import improvementPlansRoutes from './routes/improvementPlans.js';
 import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
 // Importar las rutas de teacher_courses
 import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
-
+import studentRoutes from './routes/students.js';
+import authRoutes from './routes/auth.js';
+import adminRoutes from './routes/adminRoutes.js';
 
 dotenv.config();
 
@@ -68,6 +70,9 @@ app.use('/api', evaluationResultsRoutes);
 app.use('/api', improvementPlansRoutes);
 app.use('/api', phaseEvaluationRoutes);
 app.use('/api/teacher-courses', teacherCoursesRoutes);
+app.use('/api/students', studentRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -118,22 +123,33 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: "Contraseña incorrecta" });
     }
 
-    const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '2h' });
+    // Prepara los datos del usuario para la respuesta
+    const userData = {
+      id: user.id,
+      name: user.name,
+      phone: user.phone,
+      email: user.email,
+      role: user.role,
+      create_at: user.create_at
+    };
+
+    // Si el usuario es docente o super_administrador, obtenemos su teacher_id
+    if (user.role === 'docente' || user.role === 'super_administrador') {
+      const [teacherRows] = await db.query("SELECT id FROM teachers WHERE user_id = ?", [user.id]);
+      if (teacherRows.length > 0) {
+        userData.teacher_id = teacherRows[0].id;
+      }
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '2h' });
 
     res.json({
       message: "Inicio de sesión exitoso",
       token,
-      usuario: {
-        id: user.id,
-        name: user.name,
-        phone: user.phone,
-        email: user.email,
-        password: user.password,
-        role: user.role,
-        create_at: user.create_at
-      }
+      usuario: userData
     });
   } catch (error) {
+    console.error('❌ Error en el login:', error);
     res.status(500).json({ error: "Error en el servidor" });
   }
 });

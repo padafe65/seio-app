@@ -1,6 +1,6 @@
 // App.js
 import React, { useEffect, useState, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, Outlet } from 'react-router-dom';
 import { Offcanvas } from 'react-bootstrap';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import Navbar from './components/Navbar.js';
@@ -26,7 +26,7 @@ import Swal from 'sweetalert2';
 // Importar iconos de Lucide React
 import { 
   Home, Users, FileText, BarChart2, 
-  PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen 
+  PlusCircle, CheckSquare, Award, Menu, BookOpen 
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -46,6 +46,7 @@ import ImprovementPlansList from './pages/improvement-plans/ImprovementPlansList
 import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.js';
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
 import TeacherCoursesManager from './pages/courses/TeacherCoursesManager';
+import SuperAdminDashboard from './pages/SuperAdminDashboard.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -116,8 +117,8 @@ function IdleTimerContainer() {
 }
 
 // Componente de ruta protegida
-function ProtectedRoute({ children }) {
-  const { authToken, isAuthReady, verifyToken } = useAuth();
+function ProtectedRoute({ children, allowedRoles }) {
+  const { user, authToken, isAuthReady, verifyToken } = useAuth();
   const [isVerifying, setIsVerifying] = useState(true);
   
   useEffect(() => {
@@ -142,6 +143,12 @@ function ProtectedRoute({ children }) {
   }
   
   if (!authToken) {
+    return <Navigate to="/" replace />;
+  }
+
+  // Si se especifican roles, verificar que el usuario tenga uno de los roles permitidos
+  if (allowedRoles && !allowedRoles.includes(user?.role)) {
+    // Redirigir si el rol no está permitido
     return <Navigate to="/" replace />;
   }
   
@@ -180,7 +187,7 @@ function AppContent() {
     );
   }
 
-  // Componente Layout para rutas protegidas con Sidebar para docentes
+  // Componente Layout para rutas protegidas con Sidebar para docentes y admin
   function TeacherDashboardLayout() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
@@ -202,166 +209,55 @@ function AppContent() {
           <div className="p-3">
             <h5 className="mb-3">Panel de Control</h5>
             <ul className="nav flex-column">
-              <li className="nav-item mb-2">
-                <Link to="/dashboard" className="nav-link text-white d-flex align-items-center">
+                            <li className="nav-item mb-2">
+                <Link to={user?.role === 'super_administrador' ? "/super-admin-dashboard" : "/dashboard"} className="nav-link text-white d-flex align-items-center">
                   <Home size={18} className="me-2" /> Dashboard
                 </Link>
               </li>
-              <li className="nav-item mb-2">
-                <Link to="/estudiantes" className="nav-link text-white d-flex align-items-center">
-                  <Users size={18} className="me-2" /> Estudiantes
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/mis-estudiantes" className="nav-link text-white d-flex align-items-center">
-                  <Users size={18} className="me-2" /> Mis Estudiantes
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/cuestionarios" className="nav-link text-white d-flex align-items-center">
-                  <FileText size={18} className="me-2" /> Cuestionarios
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/indicadores" className="nav-link text-white d-flex align-items-center">
-                  <CheckSquare size={18} className="me-2" /> Indicadores
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/resultados" className="nav-link text-white d-flex align-items-center">
-                  <BarChart2 size={18} className="me-2" /> Resultados
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center">
-                  <Award size={18} className="me-2" /> Planes de Mejoramiento
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/evaluacion-fase" className="nav-link text-white d-flex align-items-center">
-                  <CheckSquare size={18} className="me-2" /> Evaluación de Fase
-                </Link>
-              </li>
-
-              <li className="nav-item mb-2">
-                <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center">
-                  <BookOpen size={18} className="me-2" /> Mis Cursos
-                </Link>
-              </li>
-
-
-              <li className="nav-item mb-2">
-                <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
-                  <PlusCircle size={18} className="me-2" /> Crear Pregunta
-                </Link>
-              </li>
+              {user?.role === 'super_administrador' && (
+                <li className="nav-item mb-2"><Link to="/estudiantes" className="nav-link text-white d-flex align-items-center"><Users size={18} className="me-2" /> Estudiantes</Link></li>
+              )}
+              {user?.role === 'docente' && (
+                <li className="nav-item mb-2"><Link to="/mis-estudiantes" className="nav-link text-white d-flex align-items-center"><Users size={18} className="me-2" /> Mis Estudiantes</Link></li>
+              )}
+              <li className="nav-item mb-2"><Link to="/cuestionarios" className="nav-link text-white d-flex align-items-center"><FileText size={18} className="me-2" /> Cuestionarios</Link></li>
+              <li className="nav-item mb-2"><Link to="/indicadores" className="nav-link text-white d-flex align-items-center"><CheckSquare size={18} className="me-2" /> Indicadores</Link></li>
+              <li className="nav-item mb-2"><Link to="/resultados" className="nav-link text-white d-flex align-items-center"><BarChart2 size={18} className="me-2" /> Resultados</Link></li>
+              <li className="nav-item mb-2"><Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center"><Award size={18} className="me-2" /> Planes de Mejoramiento</Link></li>
+              <li className="nav-item mb-2"><Link to="/evaluacion-fase" className="nav-link text-white d-flex align-items-center"><CheckSquare size={18} className="me-2" /> Evaluación de Fase</Link></li>
+              <li className="nav-item mb-2"><Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center"><BookOpen size={18} className="me-2" /> Mis Cursos</Link></li>
+              <li className="nav-item mb-2"><Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center"><PlusCircle size={18} className="me-2" /> Crear Pregunta</Link></li>
             </ul>
           </div>
         </div>
         
         {/* Offcanvas para móviles */}
         <Offcanvas show={show} onHide={handleClose} className="bg-dark text-white">
-          <Offcanvas.Header closeButton className="border-bottom">
-            <Offcanvas.Title>Panel de Control</Offcanvas.Title>
-          </Offcanvas.Header>
+          <Offcanvas.Header closeButton className="border-bottom"><Offcanvas.Title>Panel de Control</Offcanvas.Title></Offcanvas.Header>
           <Offcanvas.Body>
             <ul className="nav flex-column">
-              <li className="nav-item mb-2">
-                <Link to="/dashboard" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <Home size={18} className="me-2" /> Dashboard
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/estudiantes" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <Users size={18} className="me-2" /> Estudiantes
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/mis-estudiantes" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <Users size={18} className="me-2" /> Mis Estudiantes
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/cuestionarios" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <FileText size={18} className="me-2" /> Cuestionarios
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/indicadores" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <CheckSquare size={18} className="me-2" /> Indicadores
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <BarChart2 size={18} className="me-2" /> Resultados
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
-                  <Award size={18} className="me-2" /> Planes de Mejoramiento
-                </Link>
-              </li>
-              <li className="nav-item mb-2">
-                <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center" onClick={handleClose}>
-                  <PlusCircle size={18} className="me-2" /> Crear Pregunta
-                </Link>
-              </li>
+                                <li className="nav-item mb-2">
+                  <Link to={user?.role === 'super_administrador' ? "/super-admin-dashboard" : "/dashboard"} className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                    <Home size={18} className="me-2" /> Dashboard
+                  </Link>
+                </li>
+                {user?.role === 'super_administrador' && (
+                    <li className="nav-item mb-2"><Link to="/estudiantes" className="nav-link text-white d-flex align-items-center" onClick={handleClose}><Users size={18} className="me-2" /> Estudiantes</Link></li>
+                )}
+                {user?.role === 'docente' && (
+                    <li className="nav-item mb-2"><Link to="/mis-estudiantes" className="nav-link text-white d-flex align-items-center" onClick={handleClose}><Users size={18} className="me-2" /> Mis Estudiantes</Link></li>
+                )}
+                <li className="nav-item mb-2"><Link to="/cuestionarios" className="nav-link text-white d-flex align-items-center" onClick={handleClose}><FileText size={18} className="me-2" /> Cuestionarios</Link></li>
+                <li className="nav-item mb-2"><Link to="/indicadores" className="nav-link text-white d-flex align-items-center" onClick={handleClose}><CheckSquare size={18} className="me-2" /> Indicadores</Link></li>
+                <li className="nav-item mb-2"><Link to="/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}><BarChart2 size={18} className="me-2" /> Resultados</Link></li>
+                <li className="nav-item mb-2"><Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center" onClick={handleClose}><Award size={18} className="me-2" /> Planes de Mejoramiento</Link></li>
+                <li className="nav-item mb-2"><Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center" onClick={handleClose}><PlusCircle size={18} className="me-2" /> Crear Pregunta</Link></li>
             </ul>
           </Offcanvas.Body>
         </Offcanvas>
         
-        {/* Contenido principal */}
-        <div style={{ 
-          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
-          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
-          padding: '20px', 
-          marginTop: '56px' 
-        }}>
-          <Routes>
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
-            <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
-            {/* Nueva ruta para gestionar materias y categorías */}
-            <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
-            
-            {/* Rutas para estudiantes */}
-            <Route path="/estudiantes" element={<StudentsList />} />
-            <Route path="/estudiantes/nuevo" element={<StudentForm />} />
-            <Route path="/estudiantes/:id" element={<StudentDetail />} />
-            <Route path="/estudiantes/:id/editar" element={<StudentForm />} />
-            
-            {/* Rutas para estudiantes del docente */}
-            <Route path="/mis-estudiantes" element={<TeacherStudentsList />} />
-            <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
-            
-            {/* Rutas para indicadores */}
-            <Route path="/indicadores" element={<IndicatorsList />} />
-            <Route path="/indicadores/nuevo" element={<IndicatorForm />} />
-            <Route path="/indicadores/:id/editar" element={<IndicatorForm />} />
-            
-            {/* Rutas para resultados */}
-            <Route path="/resultados" element={<ResultsList />} />
-            <Route path="/resultados/:id" element={<ResultDetail />} />
-            
-            {/* Rutas para planes de mejoramiento */}
-            <Route path="/planes-mejoramiento" element={<ImprovementPlansList />} />
-            <Route path="/planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
-            <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
-            <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
-            {/* Añadir la ruta dentro del componente TeacherDashboardLayout*/}
-            <Route path="/mis-cursos" element={<TeacherCoursesManager />} />
-
-            {/* Y luego añadir esta ruta dentro del componente Routes:*/}
-            <Route path="/evaluacion-fase" element={<PhaseEvaluation />} />
-            
-            {/* Rutas para cuestionarios */}
-            <Route path="/cuestionarios" element={<QuestionnairesList />} />
-            <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
-            <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
-            <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
-            
-
-          </Routes>
+        <div style={{ marginLeft: window.innerWidth >= 768 ? '250px' : '0', width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', padding: '20px', marginTop: '56px' }}>
+          <Outlet />
         </div>
       </div>
     );
@@ -455,20 +351,8 @@ function AppContent() {
         </Offcanvas>
         
         {/* Contenido principal */}
-        <div style={{ 
-          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
-          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
-          padding: '20px', 
-          marginTop: '56px' 
-        }}>
-          <Routes>
-            <Route path="/dashboard" element={<StudentDashboardPage />} />
-            <Route path="/take-quiz" element={<TakeQuizPage />} />
-            <Route path="/results" element={<ResultsPage />} />
-            <Route path="/indicators" element={<StudentIndicators />} />
-            <Route path="/improvement" element={<ImprovementPage />} />
-            <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
-          </Routes>
+        <div style={{ marginLeft: window.innerWidth >= 768 ? '250px' : '0', width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', padding: '20px', marginTop: '56px' }}>
+          <Outlet />
         </div>
       </div>
     );
@@ -478,36 +362,71 @@ function AppContent() {
     <Router>
       <Navbar />
       <Routes>
-        {/* Rutas públicas */}
         <Route path="/" element={<Login />} />
         <Route path="/registro" element={<Registro />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/CompleteStudent" element={<CompleteStudent />} />
         <Route path="/CompleteTeacher" element={<CompleteTeacher />} />
-        
-        {/* Rutas de admin */}
-        <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-        
-        {/* Rutas de docente con sidebar */}
-        <Route path="/*" element={
-          <ProtectedRoute>
-            {user && user.role === 'docente' ? <TeacherDashboardLayout /> : null}
-          </ProtectedRoute>
-        } />
-        
-        {/* Rutas de estudiante con sidebar */}
-        <Route path="/student/*" element={
-          <ProtectedRoute>
-            {user && user.role === 'estudiante' ? <StudentDashboardLayout /> : null}
-          </ProtectedRoute>
-        } />
 
-        <Route path="/evaluacion-fase" element={
-          <ProtectedRoute allowedRoles={['docente']}>
-            <PhaseEvaluation />
-          </ProtectedRoute>
-        } />
-        
+        {/* Rutas protegidas para Docentes y Super Administradores */}
+        <Route 
+          element={
+            <ProtectedRoute allowedRoles={['docente', 'super_administrador']}>
+              <TeacherDashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+                    <Route path="dashboard" element={<Dashboard />} />
+          <Route path="super-admin-dashboard" element={<SuperAdminDashboard />} />
+          <Route path="crear-pregunta" element={<CreateQuestionPage />} />
+          <Route path="preguntas/:id/editar" element={<EditarPreguntas />} />
+          <Route path="materias-categorias" element={<SubjectCategoryForm />} />
+          <Route path="estudiantes" element={<StudentsList />} />
+          <Route path="estudiantes/nuevo" element={<StudentForm />} />
+          <Route path="estudiantes/:id" element={<StudentDetail />} />
+          <Route path="estudiantes/:id/editar" element={<StudentForm />} />
+          <Route path="mis-estudiantes" element={<TeacherStudentsList />} />
+          <Route path="estudiantes/:id/calificaciones" element={<StudentGrades />} />
+          <Route path="indicadores" element={<IndicatorsList />} />
+          <Route path="indicadores/nuevo" element={<IndicatorForm />} />
+          <Route path="indicadores/:id/editar" element={<IndicatorForm />} />
+          <Route path="resultados" element={<ResultsList />} />
+          <Route path="resultados/:id" element={<ResultDetail />} />
+          <Route path="planes-mejoramiento" element={<ImprovementPlansList />} />
+          <Route path="planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
+          <Route path="planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
+          <Route path="planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
+          <Route path="mis-cursos" element={<TeacherCoursesManager />} />
+          <Route path="evaluacion-fase" element={<PhaseEvaluation />} />
+          <Route path="cuestionarios" element={<QuestionnairesList />} />
+          <Route path="cuestionarios/nuevo" element={<QuestionnaireForm />} />
+          <Route path="cuestionarios/:id/editar" element={<QuestionnaireForm />} />
+          <Route path="cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
+        </Route>
+
+        {/* Rutas protegidas para Estudiantes */}
+        <Route 
+          path="/student"
+          element={
+            <ProtectedRoute allowedRoles={['estudiante']}>
+              <StudentDashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+          <Route path="dashboard" element={<StudentDashboardPage />} />
+          <Route path="take-quiz" element={<TakeQuizPage />} />
+          <Route path="take-quiz/:id" element={<TakeQuizPage />} />
+          <Route path="results" element={<ResultsPage />} />
+          <Route path="results/:id" element={<ResultsPage />} />
+          <Route path="improvement" element={<ImprovementPage />} />
+          <Route path="improvement/:id" element={<ImprovementPage />} />
+          <Route path="indicators" element={<StudentIndicators />} />
+          <Route path="indicators/:id" element={<StudentIndicators />} />
+        </Route>
+
+        {/* Ruta de Admin (si es diferente del layout de docente) */}
+        <Route path="/admin" element={<ProtectedRoute allowedRoles={['super_administrador']}><Admin /></ProtectedRoute>} />
+
         {/* Ruta por defecto */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

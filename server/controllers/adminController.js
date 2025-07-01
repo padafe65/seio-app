@@ -1,7 +1,7 @@
-const db = require('../config/db');
+import db from '../config/db.js';
 
 // Obtener todos los estudiantes (para super administrador)
-const getStudents = async (req, res) => {
+export const getStudents = async (req, res) => {
   try {
     const [students] = await db.query(`
       SELECT s.*, u.name, u.email, u.phone, u.estado, u.role, 
@@ -26,7 +26,7 @@ const getStudents = async (req, res) => {
 };
 
 // Obtener todos los docentes (para super administrador)
-const getTeachers = async (req, res) => {
+export const getTeachers = async (req, res) => {
   try {
     const [teachers] = await db.query(`
       SELECT t.*, u.name, u.email, u.phone, u.estado, u.role, 
@@ -50,7 +50,25 @@ const getTeachers = async (req, res) => {
   }
 };
 
-module.exports = {
-  getStudents,
-  getTeachers
+export const getAdminStats = async (req, res) => {
+  try {
+    const [[{ totalUsers }]] = await db.query('SELECT COUNT(*) as totalUsers FROM users');
+    const [[{ totalTeachers }]] = await db.query('SELECT COUNT(*) as totalTeachers FROM teachers');
+    const [[{ totalStudents }]] = await db.query('SELECT COUNT(*) as totalStudents FROM students');
+
+    res.json({
+      totalUsers,
+      totalTeachers,
+      totalStudents,
+    });
+  } catch (error) {
+    console.error('Error al obtener estadísticas de administrador:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener estadísticas',
+      error: error.message
+    });
+  }
 };
+
+

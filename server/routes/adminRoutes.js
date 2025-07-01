@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import * as adminController from '../controllers/adminController.js';
+import { verifyToken, checkRole } from '../middleware/authMiddleware.js';
+
 const router = express.Router();
-const adminController = require('../controllers/adminController');
-const { verifyToken, checkRole } = require('../middleware/authMiddleware');
 
 // Ruta para obtener estadísticas del administrador
 router.get('/stats', 
@@ -24,4 +25,4 @@ router.get('/teachers',
   adminController.getTeachers
 );
 
-module.exports = router;
+export default router;

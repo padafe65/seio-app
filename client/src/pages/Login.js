@@ -37,7 +37,9 @@ const Login = () => {
         
       }).then(() => {
         const role = success?.role?.toLowerCase();
-        if (role === 'docente') {
+                if (role === 'super_administrador') {
+          navigate('/super-admin-dashboard');
+        } else if (role === 'docente') {
           navigate('/dashboard');
         } else if (role === 'estudiante') {
           navigate('/student/dashboard');

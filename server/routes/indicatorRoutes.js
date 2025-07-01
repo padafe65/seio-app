@@ -7,16 +7,13 @@ const router = express.Router();
 // Obtener todos los indicadores (con filtros opcionales)
 router.get('/', async (req, res) => {
   try {
-    const { teacher_id, student_id, subject, phase, questionnaire_id } = req.query;
+    const { teacher_id, student_id, subject, phase } = req.query;
     
     let query = `
-      SELECT i.*, t.subject as teacher_subject, u.name as teacher_name,
-             q.title as questionnaire_title, q.grade as questionnaire_grade, 
-             q.phase as questionnaire_phase
+      SELECT i.*, t.subject as teacher_subject, u.name as teacher_name
       FROM indicators i
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
-      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       WHERE 1=1
     `;
     
@@ -42,11 +39,6 @@ router.get('/', async (req, res) => {
       params.push(phase);
     }
     
-    if (questionnaire_id) {
-      query += ' AND i.questionnaire_id = ?';
-      params.push(questionnaire_id);
-    }
-    
     query += ' ORDER BY i.phase, i.created_at DESC';
     
     const [rows] = await pool.query(query, params);
@@ -63,13 +55,10 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     
     const [rows] = await pool.query(`
-      SELECT i.*, t.subject as teacher_subject, u.name as teacher_name,
-             q.title as questionnaire_title, q.grade as questionnaire_grade, 
-             q.phase as questionnaire_phase, q.id as questionnaire_id
+      SELECT i.*, t.subject as teacher_subject, u.name as teacher_name
       FROM indicators i
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
-      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       WHERE i.id = ?
     `, [id]);
     

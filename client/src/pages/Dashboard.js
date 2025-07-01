@@ -7,7 +7,7 @@ import axios from 'axios';
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, teacherId } = useAuth();
   const [loading, setLoading] = useState(true);
   const [teacherStudents, setTeacherStudents] = useState([]);
   const [studentGrades, setStudentGrades] = useState([]);
@@ -22,46 +22,51 @@ const Dashboard = () => {
   
   useEffect(() => {
     const fetchData = async () => {
-      if (user && user.role === 'docente') {
-        try {
-          // Obtener estudiantes del docente
-          const studentsResponse = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
-          setTeacherStudents(studentsResponse.data);
-          
-          // Obtener calificaciones de los estudiantes
-          const gradesResponse = await axios.get(`${API_URL}/api/teacher/student-grades/${user.id}`);
-          setStudentGrades(gradesResponse.data);
-          
-          // Obtener la materia del docente
-          const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
-          const subject = subjectResponse.data.subject || '';
-          setTeacherSubject(subject);
-          
-          // Obtener cuestionarios creados por este docente
-          try {
-            const questionnairesResponse = await axios.get(`${API_URL}/api/questionnaires?created_by=${user.id}`);
-            setTeacherQuestionnaires(questionnairesResponse.data.slice(0, 5)); // Mostrar solo los primeros 5
-            console.log('Cuestionarios del docente:', questionnairesResponse.data);
-          } catch (error) {
-            console.error('Error al cargar cuestionarios del docente:', error);
-          }
-          
-          // Obtener preguntas relacionadas con la materia del docente o creadas por él
-          try {
-            const questionsResponse = await axios.get(`${API_URL}/api/questions?created_by=${user.id}&subject=${subject}`);
-            setTeacherQuestions(questionsResponse.data.slice(0, 5)); // Mostrar solo las primeras 5
-          } catch (error) {
-            console.error('Error al cargar preguntas del docente:', error);
-          }
-        } catch (error) {
-          console.error('Error al cargar datos del docente:', error);
-        }
+      if (!user || user.role !== 'docente' || !teacherId) {
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      try {
+        setLoading(true);
+        // Obtener estudiantes del docente
+                const studentsResponse = await axios.get(`${API_URL}/api/students/teacher/${teacherId}`);
+        setTeacherStudents(studentsResponse.data);
+        
+        // Obtener calificaciones de los estudiantes
+        const gradesResponse = await axios.get(`${API_URL}/api/teacher/student-grades/${teacherId}`);
+        setStudentGrades(gradesResponse.data);
+        
+        // Obtener la materia del docente
+        const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${teacherId}`);
+        const subject = subjectResponse.data.subject || '';
+        setTeacherSubject(subject);
+        
+        // Obtener cuestionarios creados por este docente
+        try {
+          const questionnairesResponse = await axios.get(`${API_URL}/api/questionnaires?created_by=${teacherId}`);
+          setTeacherQuestionnaires(questionnairesResponse.data.slice(0, 5)); // Mostrar solo los primeros 5
+          console.log('Cuestionarios del docente:', questionnairesResponse.data);
+        } catch (error) {
+          console.error('Error al cargar cuestionarios del docente:', error);
+        }
+        
+        // Obtener preguntas relacionadas con la materia del docente o creadas por él
+        try {
+          const questionsResponse = await axios.get(`${API_URL}/api/questions?created_by=${teacherId}&subject=${subject}`);
+          setTeacherQuestions(questionsResponse.data.slice(0, 5)); // Mostrar solo las primeras 5
+        } catch (error) {
+          console.error('Error al cargar preguntas del docente:', error);
+        }
+      } catch (error) {
+        console.error('Error al cargar datos del docente:', error);
+      } finally {
+        setLoading(false);
+      }
     };
     
     fetchData();
-  }, [user]);
+  }, [user, teacherId]);
   
   // Función auxiliar para formatear calificaciones
   const formatGrade = (value) => {

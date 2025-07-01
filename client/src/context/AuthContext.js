@@ -13,6 +13,7 @@ export const AuthProvider = ({ children }) => {
     const storedUser = localStorage.getItem("user");
     return storedUser ? JSON.parse(storedUser) : null;
   });
+  const [teacherId, setTeacherId] = useState(localStorage.getItem('teacherId') || null);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   // Verificar si el token ha expirado
@@ -106,11 +107,20 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('authToken');
       localStorage.removeItem('userRole');
       localStorage.removeItem("user");
+      localStorage.removeItem('teacherId');
       localStorage.removeItem('user_id');
       localStorage.removeItem('temp_user_id');
       localStorage.removeItem('is_teacher_registration');
     }
   }, [authToken, userRole, user]);
+
+  useEffect(() => {
+    if (teacherId) {
+      localStorage.setItem('teacherId', teacherId);
+    } else {
+      localStorage.removeItem('teacherId');
+    }
+  }, [teacherId]);
 
   const login = async (credentials) => {
     try {
@@ -118,6 +128,9 @@ export const AuthProvider = ({ children }) => {
       setAuthToken(response.data.token);
       setUserRole(response.data.usuario.role);
       setUser(response.data.usuario);
+      if (response.data.usuario.teacher_id) {
+        setTeacherId(response.data.usuario.teacher_id);
+      }
       console.log("✅ Usuario almacenado en AuthContext:", response.data.usuario);
       return response.data.usuario;
     } catch (error) {
@@ -130,6 +143,7 @@ export const AuthProvider = ({ children }) => {
     setAuthToken(null);
     setUserRole(null);
     setUser(null);
+    setTeacherId(null);
     localStorage.removeItem("authToken");
     localStorage.removeItem("userRole");
     localStorage.removeItem("user");
@@ -143,6 +157,7 @@ export const AuthProvider = ({ children }) => {
       authToken, 
       userRole, 
       user, 
+      teacherId,
       login, 
       logout, 
       isAuthReady,

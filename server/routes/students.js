@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT s.*, c.name as course_name, u.name 
+      SELECT s.*, c.name as course_name, u.name, u.email, u.phone 
       FROM students s
       JOIN courses c ON s.course_id = c.id
       JOIN users u ON s.user_id = u.id
@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT s.*, c.name as course_name, u.name 
+      SELECT s.*, c.name as course_name, u.name, u.email, u.phone 
       FROM students s
       JOIN courses c ON s.course_id = c.id
       JOIN users u ON s.user_id = u.id
@@ -170,6 +170,26 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     console.error('Error al eliminar estudiante:', err);
     res.status(500).json({ error: 'Error al eliminar estudiante' });
+  }
+});
+
+// Obtener todos los estudiantes de un profesor específico
+router.get('/teacher/:teacherId', async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    const [rows] = await pool.query(`
+      SELECT s.*, u.name, u.email, u.phone, c.name as course_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      JOIN teacher_students ts ON s.id = ts.student_id
+      LEFT JOIN courses c ON s.course_id = c.id
+      WHERE ts.teacher_id = ?
+    `, [teacherId]);
+    
+    res.json(rows);
+  } catch (err) {
+    console.error('Error al obtener estudiantes del profesor:', err);
+    res.status(500).json({ error: 'Error al obtener estudiantes del profesor' });
   }
 });
 

@@ -8,7 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const QuestionnairesList = () => {
-  const { user } = useAuth();
+  const { user, teacherId } = useAuth();
   const [questionnaires, setQuestionnaires] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -17,28 +17,39 @@ const QuestionnairesList = () => {
   const [error, setError] = useState(null);
   
   useEffect(() => {
-  const fetchQuestionnaires = async () => {
-    try {
-      setLoading(true);
-      
-      // Construir la URL con los filtros
-      let url = `${API_URL}/api/questionnaires?created_by=${user.id}`;
-      if (filterPhase !== 'all') url += `&phase=${filterPhase}`;
-      if (filterGrade !== 'all') url += `&grade=${filterGrade}`;
-      
-      const response = await axios.get(url);
-      setQuestionnaires(response.data);
+    const fetchQuestionnaires = async () => {
+      if (!teacherId) {
+        setLoading(false);
+        setError('ID de docente no encontrado para cargar cuestionarios.');
+        return;
+      }
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Construir la URL con los filtros usando el teacherId
+        let url = `${API_URL}/api/questionnaires?created_by=${teacherId}`;
+        if (filterPhase !== 'all') url += `&phase=${filterPhase}`;
+        if (filterGrade !== 'all') url += `&grade=${filterGrade}`;
+        
+        const response = await axios.get(url);
+        setQuestionnaires(response.data);
+      } catch (error) {
+        console.error('Error al cargar cuestionarios:', error);
+        setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
+        setQuestionnaires([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (user && (user.role === 'docente' || user.role === 'super_administrador')) {
+      fetchQuestionnaires();
+    } else {
       setLoading(false);
-    } catch (error) {
-      console.error('Error al cargar cuestionarios:', error);
-      setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
       setQuestionnaires([]);
-      setLoading(false);
     }
-  };
-  
-  fetchQuestionnaires();
-}, [user.id, filterPhase, filterGrade]);
+  }, [user, teacherId, filterPhase, filterGrade]);
 
   
   const handleDelete = async (id) => {
