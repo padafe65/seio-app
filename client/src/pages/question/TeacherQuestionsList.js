@@ -13,14 +13,18 @@ const TeacherQuestionsList = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [subjects, setSubjects] = useState([]);
   const [teacherSubject, setTeacherSubject] = useState('');
   
   useEffect(() => {
     const fetchQuestions = async () => {
       try {
         // Obtener la materia del docente
-        const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
-        setTeacherSubject(subjectResponse.data.subject || '');
+        const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+        const teacherId = teacherResponse.data.id;
+        const coursesResponse = await axios.get(`${API_URL}/api/teacher-courses/teacher/${teacherId}`);
+        setSubjects(coursesResponse.data.map(course => ({ id: course.course_id, name: course.course_name })));
+        setTeacherSubject(coursesResponse.data[0].course_name);
         
         // Obtener preguntas del docente
         const response = await axios.get(`${API_URL}/api/teacher/questions/${user.id}`);
@@ -42,6 +46,15 @@ const TeacherQuestionsList = () => {
     question.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
     question.questionnaire_title.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  
+  const handleDeleteQuestion = async (questionId) => {
+    try {
+      await axios.delete(`${API_URL}/api/questions/${questionId}`);
+      setQuestions(questions.filter(question => question.id !== questionId));
+    } catch (err) {
+      console.error('Error al eliminar pregunta:', err);
+    }
+  };
   
   if (loading) {
     return (

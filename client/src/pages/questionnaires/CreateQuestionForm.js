@@ -1,8 +1,9 @@
-// src/pages/questionnaires/CreateQuestionnaireForm.js
+// src/pages/questionnaires/CreateQuestionForm.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Swal from 'sweetalert2';
+import { useAuth } from '../../context/AuthContext';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
@@ -32,14 +33,14 @@ const CreateQuestionnaireForm = () => {
           const userId = localStorage.getItem('user_id');
           if (userId) {
             // Obtener la materia del docente
-            const teacherResponse = await axios.get(`${API_URL}/api/teacher/subject/${userId}`);
-            if (teacherResponse.data && teacherResponse.data.subject) {
-              const subject = teacherResponse.data.subject;
-              
-              // Obtener categorías para esta materia
-              const categoriesResponse = await axios.get(`${API_URL}/api/categories/${encodeURIComponent(subject)}`);
-              setCategories(categoriesResponse.data);
-            } else {
+            const teacherInfoResponse = await axios.get(`${API_URL}/api/teachers/by-user/${userId}`);
+            const teacherId = teacherInfoResponse.data.id;
+            const coursesResponse = await axios.get(`${API_URL}/api/teacher-courses/teacher/${teacherId}`);
+            setCourses(coursesResponse.data.map(course => ({ id: course.course_id, name: course.course_name })));
+            
+            // Obtener categorías para esta materia
+            const categoriesResponse = await axios.get(`${API_URL}/api/categories/${encodeURIComponent(coursesResponse.data[0].course_name)}`);
+            setCategories(categoriesResponse.data);
               // Si no se puede obtener la materia específica, cargar todas las categorías
               const allCategoriesResponse = await axios.get(`${API_URL}/api/all-categories`);
               setCategories(allCategoriesResponse.data);

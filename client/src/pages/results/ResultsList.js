@@ -20,92 +20,68 @@ const ResultList = () => {
   
   useEffect(() => {
     const fetchResults = async () => {
+      if (!user) return;
+
+      setLoading(true);
+      setError(null);
       try {
-        let url = `${API_URL}/api/evaluation-results`;
-        
-        // Si es estudiante, filtrar solo sus resultados
-        if (user && user.role === 'estudiante') {
-          // Obtener el student_id asociado con el user_id
+        let url;
+        const params = new URLSearchParams();
+
+        if (user.role === 'docente' && user.teacher_id) {
+          url = `${API_URL}/api/evaluation-results`;
+          params.append('teacherId', user.teacher_id);
+          if (selectedCourse) {
+            params.append('courseId', selectedCourse);
+          }
+          url += `?${params.toString()}`;
+        } else if (user.role === 'estudiante') {
           const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
           if (studentResponse.data && studentResponse.data.id) {
             url = `${API_URL}/api/evaluation-results/student/${studentResponse.data.id}`;
+          } else {
+            setResults([]);
+            setLoading(false);
+            return;
           }
+        } else {
+          setResults([]);
+          setLoading(false);
+          return;
         }
-        // Si es docente y ha seleccionado un curso, filtrar por curso
-        else if (user && user.role === 'docente' && selectedCourse) {
-          url = `${API_URL}/api/evaluation-results/course/${selectedCourse}`;
-        }
-        
+
         const response = await axios.get(url);
         
-        // Obtener detalles de los intentos para cada resultado
-        const resultsWithDetails = await Promise.all(
-          response.data.map(async (result) => {
-            try {
-              // Obtener detalles del intento seleccionado
-              const attemptResponse = await axios.get(
-                `${API_URL}/api/quiz-attempts/${result.selected_attempt_id}`
-              );
-              
-              // Obtener detalles del cuestionario
-              let questionnaireData = null;
-              if (attemptResponse.data && attemptResponse.data.questionnaire_id) {
-                const questionnaireResponse = await axios.get(
-                  `${API_URL}/api/questionnaires/${attemptResponse.data.questionnaire_id}`
-                );
-                questionnaireData = questionnaireResponse.data.questionnaire || questionnaireResponse.data;
-              }
-              
-              // Obtener detalles del estudiante
-              let studentData = null;
-              if (attemptResponse.data && attemptResponse.data.student_id) {
-                const studentResponse = await axios.get(
-                  `${API_URL}/api/students/${attemptResponse.data.student_id}`
-                );
-                studentData = studentResponse.data;
-              }
-              
-              return {
-                ...result,
-                attempt: attemptResponse.data,
-                questionnaire: questionnaireData,
-                student: studentData
-              };
-            } catch (err) {
-              console.error('Error al obtener detalles:', err);
-              return result;
-            }
-          })
-        );
-        
+        // Mapear los resultados para que coincidan con la estructura que espera el componente
+        const resultsWithDetails = response.data.map(result => ({
+          ...result,
+          student: { name: result.student_name, course_name: result.course_name },
+          questionnaire: { title: result.questionnaire_title },
+          attempt: { phase: result.phase }
+        }));
+
         setResults(resultsWithDetails);
         
-        // Extraer fases únicas de los resultados
-        const uniquePhases = [...new Set(resultsWithDetails.map(r => r.attempt?.phase).filter(Boolean))];
+        const uniquePhases = [...new Set(response.data.map(r => r.phase).filter(Boolean))];
         setPhases(uniquePhases.sort((a, b) => a - b));
         
-        setLoading(false);
       } catch (error) {
         console.error('Error al cargar resultados:', error);
         setError('No se pudieron cargar los resultados. Por favor, intenta de nuevo.');
+      } finally {
         setLoading(false);
       }
     };
-    
+
     const fetchCourses = async () => {
+      if (!user || user.role !== 'docente') return;
       try {
-        // Si es docente, obtener solo sus cursos asignados
-        let url = `${API_URL}/api/courses`;
-        if (user && user.role === 'docente') {
-          // Obtener el teacher_id asociado con el user_id
-          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
-          if (teacherResponse.data && teacherResponse.data.id) {
-            url = `${API_URL}/api/teachers/${teacherResponse.data.id}/courses`;
-          }
+        const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+        if (teacherResponse.data && teacherResponse.data.id) {
+          const url = `${API_URL}/api/teachers/${teacherResponse.data.id}/courses`;
+          const response = await axios.get(url);
+          setCourses(response.data);
         }
-        
-        const response = await axios.get(url);
-        setCourses(response.data);
       } catch (error) {
         console.error('Error al cargar cursos:', error);
       }
@@ -113,7 +89,7 @@ const ResultList = () => {
     
     fetchResults();
     fetchCourses();
-  }, [user, selectedCourse, selectedPhase]);
+  }, [user, selectedCourse]);
   
   // Filtrar resultados por término de búsqueda y fase
   const filteredResults = results.filter(result => {

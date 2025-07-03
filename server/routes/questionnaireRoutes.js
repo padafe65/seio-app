@@ -1,11 +1,12 @@
 // routes/questionnaireRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Obtener todos los cuestionarios
-router.get('/', async (req, res) => {
+// Obtener todos los cuestionarios (protegido y filtrado por rol)
+router.get('/', verifyToken, async (req, res) => {
   try {
     const { created_by, phase, grade, studentId, description } = req.query;
     let params = [];
@@ -17,7 +18,8 @@ router.get('/', async (req, res) => {
         c.name as course_name,
         (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
       FROM questionnaires q
-      JOIN users u ON q.created_by = u.id
+      JOIN teachers t ON q.created_by = t.id
+      JOIN users u ON t.user_id = u.id
       JOIN courses c ON q.course_id = c.id
     `;
     
@@ -42,17 +44,8 @@ router.get('/', async (req, res) => {
     }
     
     if (created_by) {
-      // Obtener el ID del profesor a partir del ID de usuario
-      const [teacherRows] = await pool.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
-        [created_by]
-      );
-      
-      if (teacherRows.length > 0) {
-        const teacherId = teacherRows[0].id;
-        conditions.push('q.created_by = ?');
-        params.push(teacherId);
-      }
+      conditions.push('q.created_by = ?');
+      params.push(created_by);
     }
     
     if (phase) {
@@ -70,6 +63,18 @@ router.get('/', async (req, res) => {
       params.push(grade);
     }
     
+    // Filtro por rol
+    if (req.user.role === 'docente') {
+      // 1. Encontrar el teacher.id a partir del user.id
+      const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0) {
+        return res.json([]); // Si no es un profesor, no puede tener cuestionarios
+      }
+      const teacherId = teacherRows[0].id;
+      conditions.push('q.created_by = ?');
+      params.push(teacherId);
+    }
+
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -94,8 +99,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Obtener un cuestionario específico por ID
-router.get('/:id', async (req, res) => {
+// Obtener un cuestionario específico por ID (protegido)
+router.get('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await pool.query(`
@@ -104,7 +109,8 @@ router.get('/:id', async (req, res) => {
         u.name as created_by_name,
         c.name as course_name
       FROM questionnaires q
-      JOIN users u ON q.created_by = u.id
+      JOIN teachers t ON q.created_by = t.id
+      JOIN users u ON t.user_id = u.id
       JOIN courses c ON q.course_id = c.id
       WHERE q.id = ?
     `, [id]);
@@ -129,8 +135,8 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Crear un nuevo cuestionario
-router.post('/', async (req, res) => {
+// Crear un nuevo cuestionario (protegido)
+router.post('/', verifyToken, async (req, res) => {
   try {
     const { title, category, grade, phase, course_id, created_by, description } = req.body;
     
@@ -176,8 +182,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Actualizar un cuestionario existente
-router.put('/:id', async (req, res) => {
+// Actualizar un cuestionario existente (protegido)
+router.put('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, category, grade, phase, course_id, description } = req.body;
@@ -200,8 +206,8 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Eliminar un cuestionario
-router.delete('/:id', async (req, res) => {
+// Eliminar un cuestionario (protegido)
+router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     

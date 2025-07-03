@@ -72,8 +72,12 @@ const QuestionnaireForm = () => {
       setLoading(true);
       try {
         // Cargar cursos
-        const coursesResponse = await axios.get(`${API_URL}/api/courses`);
-        setCourses(coursesResponse.data);
+        if (user?.id) {
+          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+          const teacherId = teacherResponse.data.id;
+          const coursesResponse = await axios.get(`${API_URL}/api/teacher-courses/teacher/${teacherId}`);
+          setCourses(coursesResponse.data.map(course => ({ id: course.course_id, name: course.course_name })));
+        }
         
         // Cargar materia del docente
         if (user?.id) {

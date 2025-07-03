@@ -16,6 +16,7 @@ const StudentDetail = () => {
       try {
         const response = await axios.get(`${API_URL}/api/students/${id}`);
         setStudent(response.data);
+        console.log(response.data);
         setLoading(false);
       } catch (error) {
         console.error('Error al cargar estudiante:', error);
@@ -62,7 +63,7 @@ const StudentDetail = () => {
           <Link to={`/estudiantes/${id}/editar`} className="btn btn-primary me-2">
             Editar
           </Link>
-          <Link to="/estudiantes" className="btn btn-outline-secondary">
+          <Link to="/mis-estudiantes" className="btn btn-outline-secondary">
             Volver
           </Link>
         </div>

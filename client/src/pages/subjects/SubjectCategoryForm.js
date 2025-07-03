@@ -34,25 +34,27 @@ const SubjectCategoryForm = () => {
         // Cargar materias
         const subjectsResponse = await axios.get(`${API_URL}/api/subjects`);
         setSubjects(subjectsResponse.data);
-        
+
         // Si el docente ya tiene una materia asignada, cargarla por defecto
         if (user?.id) {
-          const teacherResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
-          if (teacherResponse.data.subject) {
-            setSelectedSubject(teacherResponse.data.subject);
-            
+          const teacherInfoResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+          const teacherId = teacherInfoResponse.data.id;
+          const coursesResponse = await axios.get(`${API_URL}/api/teacher-courses/teacher/${teacherId}`);
+
+          if (coursesResponse.data && coursesResponse.data.length > 0) {
+            setSubjects(coursesResponse.data.map(course => ({ id: course.course_id, name: course.course_name })));
+
             // Cargar categorías de esa materia
             const categoriesResponse = await axios.get(
-              `${API_URL}/api/subject-categories/${teacherResponse.data.subject}`
+              `${API_URL}/api/subject-categories/${coursesResponse.data[0].name}`
             );
             setCategories(categoriesResponse.data);
           }
         }
-        
-        setLoading(false);
       } catch (err) {
         console.error('Error al cargar datos:', err);
         setError('Error al cargar los datos necesarios');
+      } finally {
         setLoading(false);
       }
     };

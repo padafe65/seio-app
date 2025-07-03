@@ -3,57 +3,54 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import pool from '../config/db.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Configuración de Multer para subir imágenes
+// Configuración de Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, 'uploads/'); // Carpeta donde se guardan las imágenes
+    cb(null, 'uploads/');
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname)); // Nombre único
+    cb(null, Date.now() + path.extname(file.originalname));
   }
 });
 const upload = multer({ storage });
 
-// ✅ Crear nueva pregunta
-// En questionRoutes.js, modifica la ruta POST /questions
-router.post('/questions', upload.single('image'), async (req, res) => {
-  try {
-    let {
-      questionnaire_id,
-      question_text,
-      option1,
-      option2,
-      option3,
-      option4,
-      correct_answer,
-      category
-    } = req.body;
+// Helper para verificar si un docente es propietario de un cuestionario
+const checkOwnership = async (questionnaireId, userId) => {
+  const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [userId]);
+  if (teacherRows.length === 0) return false; // No es un profesor
+  const teacherId = teacherRows[0].id;
 
-    // Si no se proporciona una categoría, obtenerla del cuestionario
-    if (!category) {
-      const [questionnaireRows] = await pool.query(
-        'SELECT category FROM questionnaires WHERE id = ?',
-        [questionnaire_id]
-      );
-      
-      if (questionnaireRows.length > 0) {
-        category = questionnaireRows[0].category;
-      } else {
-        return res.status(400).json({ message: 'Se requiere una categoría' });
+  const [qRows] = await pool.query('SELECT id FROM questionnaires WHERE id = ? AND created_by = ?', [questionnaireId, teacherId]);
+  return qRows.length > 0;
+};
+
+// Crear nueva pregunta
+router.post('/', verifyToken, upload.single('image'), async (req, res) => {
+  try {
+    let { questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category } = req.body;
+
+    if (req.user.role === 'docente') {
+      const isOwner = await checkOwnership(questionnaire_id, req.user.id);
+      if (!isOwner) {
+        return res.status(403).json({ message: 'Acceso denegado: no puedes añadir preguntas a un cuestionario que no te pertenece.' });
       }
     }
 
-    const image_url = req.file ? `/uploads/${req.file.filename}` : null;
+    if (!category) {
+      const [qRows] = await pool.query('SELECT category FROM questionnaires WHERE id = ?', [questionnaire_id]);
+      category = qRows.length > 0 ? qRows[0].category : null;
+    }
 
+    const image_url = req.file ? `/uploads/${req.file.filename}` : null;
     const [result] = await pool.query(
       `INSERT INTO questions (questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
       [questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url]
     );
-
     res.status(201).json({ message: 'Pregunta creada', id: result.insertId });
   } catch (error) {
     console.error('❌ Error al crear pregunta:', error);
@@ -61,10 +58,32 @@ router.post('/questions', upload.single('image'), async (req, res) => {
   }
 });
 
-// ✅ Obtener todas las preguntas
-router.get('/questions', async (req, res) => {
+// Obtener todas las preguntas (filtrado por rol)
+router.get('/', verifyToken, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM questions');
+    const { questionnaire_id } = req.query;
+    let query = 'SELECT q.* FROM questions q';
+    const params = [];
+
+    if (req.user.role === 'docente') {
+      const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0) return res.json([]);
+      const teacherId = teacherRows[0].id;
+
+      query += ' JOIN questionnaires qn ON q.questionnaire_id = qn.id WHERE qn.created_by = ?';
+      params.push(teacherId);
+
+      if (questionnaire_id) {
+        query += ' AND q.questionnaire_id = ?';
+        params.push(questionnaire_id);
+      }
+    } else if (questionnaire_id) {
+      query += ' WHERE q.questionnaire_id = ?';
+      params.push(questionnaire_id);
+    }
+    
+    query += ' ORDER BY q.id DESC';
+    const [rows] = await pool.query(query, params);
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener preguntas:', error);
@@ -72,10 +91,65 @@ router.get('/questions', async (req, res) => {
   }
 });
 
-// ✅ Eliminar una pregunta
-router.delete('/questions/:id', async (req, res) => {
+// Obtener una pregunta específica por ID
+router.get('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
+    const [rows] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
+    if (rows.length === 0) return res.status(404).json({ message: 'Pregunta no encontrada' });
+
+    if (req.user.role === 'docente') {
+      const isOwner = await checkOwnership(rows[0].questionnaire_id, req.user.id);
+      if (!isOwner) return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+    
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Error al obtener pregunta:', error);
+    res.status(500).json({ message: 'Error al obtener pregunta' });
+  }
+});
+
+// Actualizar una pregunta existente
+router.put('/:id', verifyToken, upload.single('image'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category } = req.body;
+
+    const [qRows] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
+    if (qRows.length === 0) return res.status(404).json({ message: 'Pregunta no encontrada.' });
+
+    if (req.user.role === 'docente') {
+      const isOwner = await checkOwnership(qRows[0].questionnaire_id, req.user.id);
+      if (!isOwner) return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+
+    const image_url = req.file ? `/uploads/${req.file.filename}` : (req.body.image_url || qRows[0].image_url);
+
+    await pool.query(
+      `UPDATE questions SET questionnaire_id = ?, question_text = ?, option1 = ?, option2 = ?, option3 = ?, option4 = ?, correct_answer = ?, category = ?, image_url = ? WHERE id = ?`,
+      [questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url, id]
+    );
+    res.json({ message: 'Pregunta actualizada' });
+  } catch (error) {
+    console.error('❌ Error al actualizar la pregunta:', error);
+    res.status(500).json({ message: 'Error al actualizar la pregunta' });
+  }
+});
+
+// Eliminar una pregunta
+router.delete('/:id', verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [qRows] = await pool.query('SELECT questionnaire_id FROM questions WHERE id = ?', [id]);
+    if (qRows.length === 0) return res.status(404).json({ message: 'Pregunta no encontrada.' });
+
+    if (req.user.role === 'docente') {
+      const isOwner = await checkOwnership(qRows[0].questionnaire_id, req.user.id);
+      if (!isOwner) return res.status(403).json({ message: 'Acceso denegado.' });
+    }
+
     await pool.query('DELETE FROM questions WHERE id = ?', [id]);
     res.json({ message: 'Pregunta eliminada' });
   } catch (error) {
@@ -83,102 +157,5 @@ router.delete('/questions/:id', async (req, res) => {
     res.status(500).json({ message: 'Error al eliminar la pregunta' });
   }
 });
-
-// Obtener una pregunta específica por ID
-router.get('/questions/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log(`Intentando obtener pregunta con ID: ${id}`);
-    
-    // Consulta simplificada para evitar problemas con los JOIN
-    const [rows] = await pool.query(
-      `SELECT * FROM questions WHERE id = ?`,
-      [id]
-    );
-    
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Pregunta no encontrada' });
-    }
-    
-    // Si la pregunta tiene un questionnaire_id, obtener el título del cuestionario
-    if (rows[0].questionnaire_id) {
-      const [questionnaires] = await pool.query(
-        `SELECT title FROM questionnaires WHERE id = ?`,
-        [rows[0].questionnaire_id]
-      );
-      
-      if (questionnaires.length > 0) {
-        rows[0].questionnaire_title = questionnaires[0].title;
-      }
-    }
-    
-    res.json(rows[0]);
-  } catch (error) {
-    console.error('Error al obtener pregunta:', error);
-    res.status(500).json({ message: 'Error al obtener pregunta', error: error.message });
-  }
-});
-
-
-// ✅ Actualizar una pregunta
-// ✅ Actualizar una pregunta existente
-router.put('/questions/:id', upload.single('image'), async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const {
-      questionnaire_id,
-      question_text,
-      option1,
-      option2,
-      option3,
-      option4,
-      correct_answer,
-      category
-    } = req.body;
-
-    const image_url = req.file ? `/uploads/${req.file.filename}` : null;
-
-    const fields = [
-      'questionnaire_id = ?',
-      'question_text = ?',
-      'option1 = ?',
-      'option2 = ?',
-      'option3 = ?',
-      'option4 = ?',
-      'correct_answer = ?',
-      'category = ?',
-    ];
-
-    const values = [
-      questionnaire_id,
-      question_text,
-      option1,
-      option2,
-      option3,
-      option4,
-      correct_answer,
-      category
-    ];
-
-    if (image_url) {
-      fields.push('image_url = ?');
-      values.push(image_url);
-    }
-
-    values.push(id); // Para la cláusula WHERE
-
-    const sql = `UPDATE questions SET ${fields.join(', ')} WHERE id = ?`;
-
-    const [result] = await pool.query(sql, values);
-
-    res.json({ message: 'Pregunta actualizada', affectedRows: result.affectedRows });
-  } catch (error) {
-    console.error('❌ Error al actualizar la pregunta:', error);
-    res.status(500).json({ message: 'Error al actualizar la pregunta' });
-  }
-});
-
-
 
 export default router;

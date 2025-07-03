@@ -7,10 +7,13 @@ const router = express.Router();
 // Obtener todos los resultados de evaluación
 router.get('/evaluation-results', async (req, res) => {
   try {
-    const [results] = await db.query(`
+    const { teacherId, courseId } = req.query;
+
+    let query = `
       SELECT er.*, 
              s.name as student_name,
              q.title as questionnaire_title,
+             q.phase,
              c.name as course_name
       FROM evaluation_results er
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
@@ -18,8 +21,31 @@ router.get('/evaluation-results', async (req, res) => {
       JOIN users s ON st.user_id = s.id
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       LEFT JOIN courses c ON st.course_id = c.id
-      ORDER BY er.recorded_at DESC
-    `);
+    `;
+    
+    const params = [];
+    let conditions = [];
+
+    if (teacherId) {
+      // Asegura que solo se obtengan estudiantes del profesor
+      query += ` JOIN teacher_students ts ON st.id = ts.student_id`;
+      conditions.push(`ts.teacher_id = ?`);
+      params.push(teacherId);
+    }
+
+    if (courseId) {
+      // Filtra por curso si se proporciona
+      conditions.push(`st.course_id = ?`);
+      params.push(courseId);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY er.recorded_at DESC`;
+
+    const [results] = await db.query(query, params);
     res.json(results);
   } catch (error) {
     console.error('Error al obtener resultados:', error);

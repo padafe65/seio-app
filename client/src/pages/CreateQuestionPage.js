@@ -154,22 +154,24 @@ const CreateQuestionPage = () => {
     }
 
     try {
+      const successMessage = editingId ? 'Pregunta actualizada' : 'Pregunta creada';
+
       if (editingId) {
         await axios.put(`${API_URL}/api/questions/${editingId}`, data);
-        Swal.fire('Pregunta actualizada', '', 'success');
       } else {
         await axios.post(`${API_URL}/api/questions`, data);
-        Swal.fire('Pregunta creada', '', 'success');
       }
-      resetForm();
-      
-      if (questionnaireIdFromUrl) {
-        // Recargar solo las preguntas del cuestionario actual
-        const questionsResponse = await axios.get(`${API_URL}/api/questions?questionnaire_id=${questionnaireIdFromUrl}`);
-        setQuestions(questionsResponse.data);
-      } else {
-        fetchQuestions();
-      }
+
+      Swal.fire(successMessage, '', 'success').then(() => {
+        // Si estamos en la página de un cuestionario específico, volvemos a la lista de cuestionarios.
+        // Si no, simplemente reseteamos el formulario para poder crear otra pregunta de otro cuestionario.
+        if (questionnaireIdFromUrl) {
+          navigate('/cuestionarios');
+        } else {
+          resetForm();
+          fetchQuestions(); // Recargar la lista general si aplica
+        }
+      });
     } catch (error) {
       console.error(error);
       Swal.fire('Error al guardar la pregunta', '', 'error');
