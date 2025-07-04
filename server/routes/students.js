@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT s.*, c.name as course_name, u.name, u.email, u.phone 
+      SELECT s.*, c.name as course_name, u.name, u.email, u.phone, u.role 
       FROM students s
       JOIN courses c ON s.course_id = c.id
       JOIN users u ON s.user_id = u.id
@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT s.*, c.name as course_name, u.name, u.email, u.phone 
+      SELECT s.*, c.name as course_name, u.name, u.email, u.phone, u.role 
       FROM students s
       JOIN courses c ON s.course_id = c.id
       JOIN users u ON s.user_id = u.id
@@ -182,7 +182,7 @@ router.get('/teacher/:teacherId', async (req, res) => {
   try {
     const { teacherId } = req.params;
     const [rows] = await pool.query(`
-      SELECT s.*, u.name, u.email, u.phone, c.name as course_name
+      SELECT DISTINCT s.*, u.name, u.email, u.phone, u.role, c.name as course_name
       FROM students s
       JOIN users u ON s.user_id = u.id
       JOIN teacher_students ts ON s.id = ts.student_id

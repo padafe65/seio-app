@@ -1,14 +1,24 @@
   import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 import { PlusCircle, Edit, Trash2, Search } from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const StudentsList = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    // Redirigir si el usuario es un docente, ya que esta es la lista del superadmin
+    if (user && user.role === 'docente') {
+      navigate('/mis-estudiantes');
+    }
+  }, [user, navigate]);
   
   useEffect(() => {
     const fetchStudents = async () => {

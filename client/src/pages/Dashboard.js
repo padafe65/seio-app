@@ -37,10 +37,14 @@ const Dashboard = () => {
         const gradesResponse = await axios.get(`${API_URL}/api/teacher/student-grades/${teacherId}`);
         setStudentGrades(gradesResponse.data);
         
-        // Obtener la materia del docente
-        const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${teacherId}`);
-        const subject = subjectResponse.data.subject || '';
-        setTeacherSubject(subject);
+        // Obtener los cursos del docente para determinar la materia
+        const coursesResponse = await axios.get(`${API_URL}/api/teacher-courses/teacher/${teacherId}`);
+        let subject = '';
+        if (coursesResponse.data.length > 0) {
+          // Asumimos que la materia principal es el nombre del primer curso
+          subject = coursesResponse.data[0].course_name;
+          setTeacherSubject(subject);
+        }
         
         // Obtener cuestionarios creados por este docente
         try {

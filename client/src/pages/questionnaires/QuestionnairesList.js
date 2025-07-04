@@ -18,20 +18,32 @@ const QuestionnairesList = () => {
   
   useEffect(() => {
     const fetchQuestionnaires = async () => {
-      if (!teacherId) {
-        setLoading(false);
-        setError('ID de docente no encontrado para cargar cuestionarios.');
-        return;
-      }
       try {
         setLoading(true);
         setError(null);
         
-        // Construir la URL con los filtros usando el teacherId
-        let url = `${API_URL}/api/questionnaires?created_by=${teacherId}`;
-        if (filterPhase !== 'all') url += `&phase=${filterPhase}`;
-        if (filterGrade !== 'all') url += `&grade=${filterGrade}`;
+        let url = `${API_URL}/api/questionnaires?`;
+
+        // Si el rol es 'super_administrador', no se filtra por 'created_by'.
+        // Si el rol es 'docente', se filtra por su ID.
+        if (user.role === 'docente') {
+          if (!teacherId) {
+            setError('ID de docente no disponible.');
+            setLoading(false);
+            return;
+          }
+          url += `created_by=${teacherId}&`;
+        }
+
+        // Añadir filtros de fase y grado
+        if (filterPhase !== 'all') url += `phase=${filterPhase}&`;
+        if (filterGrade !== 'all') url += `grade=${filterGrade}&`;
         
+        // Limpiar el último '&' o '?' si es necesario
+        if (url.endsWith('&') || url.endsWith('?')) {
+          url = url.slice(0, -1);
+        }
+
         const response = await axios.get(url);
         setQuestionnaires(response.data);
       } catch (error) {

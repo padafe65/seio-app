@@ -8,12 +8,11 @@ const router = express.Router();
 router.get('/improvement-plans', async (req, res) => {
   try {
     const [plans] = await db.query(`
-      SELECT ip.*, 
-             s.user_id as student_user_id, 
-             t.user_id as teacher_user_id,
-             us.name as student_name,
-             ut.name as teacher_name,
-             c.name as course_name
+      SELECT DISTINCT
+        ip.id, ip.title, ip.description, ip.start_date, ip.end_date, ip.status,
+        s.id as student_id, us.name as student_name,
+        t.id as teacher_id, ut.name as teacher_name,
+        c.name as course_name
       FROM improvement_plans ip
       JOIN students s ON ip.student_id = s.id
       JOIN teachers t ON ip.teacher_id = t.id
