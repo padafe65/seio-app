@@ -15,6 +15,9 @@ const StudentDetail = () => {
     const fetchStudent = async () => {
       try {
         const response = await axios.get(`${API_URL}/api/students/${id}`);
+        console.log('Datos del estudiante:', response.data);
+        console.log("Student en render:", student);
+
         setStudent(response.data);
         setLoading(false);
       } catch (error) {
@@ -62,7 +65,7 @@ const StudentDetail = () => {
           <Link to={`/estudiantes/${id}/editar`} className="btn btn-primary me-2">
             Editar
           </Link>
-          <Link to="/estudiantes" className="btn btn-outline-secondary">
+          <Link to="/mis-estudiantes" className="btn btn-outline-secondary">
             Volver
           </Link>
         </div>

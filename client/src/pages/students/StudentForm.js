@@ -311,12 +311,13 @@ const StudentForm = ({ isViewMode = false }) => {
                 <button 
                   type="button" 
                   className="btn btn-outline-secondary me-2"
-                  onClick={() => navigate('/estudiantes')}
+                  onClick={() => navigate('/mis-estudiantes')}
                 >
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary">
+                <button type="submit" className="btn btn-primary" onClick={() => navigate('/mis-estudiantes')}>
                   {id ? 'Actualizar' : 'Registrar'}
+                  
                 </button>
               </div>
             )}

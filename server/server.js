@@ -424,9 +424,7 @@ app.get('/api/students/by-user/:userId', async (req, res) => {
     const [rows] = await db.query(`
       SELECT 
         s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
-        u.name, u.email, u.phone, u.role,
-        c.name as course_name,
-        g.phase1, g.phase2, g.phase3, g.phase4, g.average
+        u.name, u.email, u.phone, u.role, c.name as course_name, g.phase1, g.phase2, g.phase3, g.phase4, g.average
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN courses c ON s.course_id = c.id
@@ -437,7 +435,7 @@ app.get('/api/students/by-user/:userId', async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Estudiante no encontrado' });
     }
-    
+    console.log(rows[0]);
     res.json(rows[0]);
   } catch (error) {
     console.error('❌ Error al obtener estudiante:', error);

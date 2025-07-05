@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT s.*, c.name as course_name, u.name, u.email, u.phone 
+      SELECT s.*, c.name as course_name, u.name, u.email, u.phone, u.role
       FROM students s
       JOIN courses c ON s.course_id = c.id
       JOIN users u ON s.user_id = u.id
