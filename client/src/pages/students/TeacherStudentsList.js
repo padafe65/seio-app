@@ -15,15 +15,73 @@ const TeacherStudentsList = () => {
   
   useEffect(() => {
     const fetchStudents = async () => {
-      if (!user || user.role !== 'docente') return;
+      if (!user) {
+        console.log('🔴 Usuario no autenticado');
+        setLoading(false);
+        return;
+      }
+      
+      if (user.role !== 'docente') {
+        console.log(`🔴 El usuario no es un docente (rol: ${user.role})`);
+        setLoading(false);
+        return;
+      }
       
       try {
-        const response = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
-        setStudents(response.data);
-        setLoading(false);
-        console.log('Estudiantes del docente:', response.data);
+        setLoading(true);
+        const token = localStorage.getItem('authToken');
+        console.log('🔑 Token obtenido:', token ? 'Token presente' : 'Token no encontrado');
+        
+        // Usar la ruta corregida
+        const response = await axios.get(`${API_URL}/api/students/teacher/${user.teacher_id}`, {
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          withCredentials: true
+        });
+        
+        console.log('📊 Respuesta del servidor:', response.data);
+        
+        if (response.data && response.data.success) {
+          setStudents(response.data.data || []);
+          console.log(`✅ Se cargaron ${response.data.data?.length || 0} estudiantes`);
+        } else {
+          console.error('❌ La respuesta del servidor no tiene el formato esperado');
+          setStudents([]);
+        }
+        
       } catch (error) {
-        console.error('Error al cargar estudiantes del docente:', error);
+        console.error('❌ Error al cargar estudiantes del docente:', error);
+        
+        if (error.response) {
+          // El servidor respondió con un código de estado fuera del rango 2xx
+          console.error('📌 Datos de la respuesta de error:', {
+            status: error.response.status,
+            data: error.response.data,
+            headers: error.response.headers
+          });
+          
+          if (error.response.status === 401) {
+            console.error('🔒 Error de autenticación. Por favor, inicia sesión nuevamente.');
+            // Aquí podrías redirigir al login o mostrar un mensaje al usuario
+          } else if (error.response.status === 403) {
+            console.error('🚫 No tienes permiso para ver estos estudiantes');
+          } else if (error.response.status === 404) {
+            console.error('🔍 No se encontró el perfil de docente');
+          } else {
+            console.error(`⚠️ Error del servidor: ${error.response.status}`);
+          }
+        } else if (error.request) {
+          // La solicitud fue hecha pero no se recibió respuesta
+          console.error('🔌 No se pudo conectar con el servidor. Verifica tu conexión a internet.');
+        } else {
+          // Algo pasó en la configuración de la solicitud que provocó un error
+          console.error('❌ Error al configurar la solicitud:', error.message);
+        }
+        
+        setStudents([]);
+      } finally {
         setLoading(false);
       }
     };

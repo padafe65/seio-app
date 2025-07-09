@@ -49,7 +49,7 @@ const StudentForm = ({ isViewMode = false }) => {
           const student = response.data;
           
           // También obtener el profesor asignado si existe
-          const teacherResponse = await axios.get(`${API_URL}/api/teacher/student-teacher/${id}`);
+          const teacherResponse = await axios.get(`${API_URL}/api/teachers/student-teacher/${id}`);
           const teacherId = teacherResponse.data.teacher_id || '';
           
           setFormData({

@@ -5,7 +5,7 @@ import db from '../config/db.js';
 const router = express.Router();
 
 // Obtener todos los resultados de evaluación
-router.get('/evaluation-results', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { teacherId, courseId } = req.query;
 
@@ -14,7 +14,8 @@ router.get('/evaluation-results', async (req, res) => {
              s.name as student_name,
              q.title as questionnaire_title,
              q.phase,
-             c.name as course_name
+             c.name as course_name,
+             er.status as evaluation_status
       FROM evaluation_results er
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       JOIN students st ON qa.student_id = st.id
@@ -137,7 +138,7 @@ router.get('/evaluation-results/user/:userId', async (req, res) => {
 });
 
 // Obtener resultados por curso
-router.get('/evaluation-results/course/:id', async (req, res) => {
+router.get('/course/:id', async (req, res) => {
   try {
     const [results] = await db.query(`
       SELECT er.*, 
@@ -161,7 +162,7 @@ router.get('/evaluation-results/course/:id', async (req, res) => {
 });
 
 // Obtener resultados para un profesor (por sus cursos asignados)
-router.get('/evaluation-results/teacher/:userId', async (req, res) => {
+router.get('/teacher/:userId', async (req, res) => {
   try {
     // Primero obtenemos el teacher_id asociado con este user_id
     const [teachers] = await db.query(`

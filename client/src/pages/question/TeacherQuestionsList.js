@@ -27,7 +27,7 @@ const TeacherQuestionsList = () => {
         setTeacherSubject(coursesResponse.data[0].course_name);
         
         // Obtener preguntas del docente
-        const response = await axios.get(`${API_URL}/api/teacher/questions/${user.id}`);
+        const response = await axios.get(`${API_URL}/api/teachers/questions/${user.id}`);
         setQuestions(response.data);
         setLoading(false);
       } catch (err) {

@@ -2,10 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Edit, Trash2, Search, List } from 'lucide-react';
-import axios from 'axios';
+import api from '../../config/axios';
 import { useAuth } from '../../context/AuthContext';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const QuestionnairesList = () => {
   const { user, teacherId } = useAuth();
@@ -18,25 +16,38 @@ const QuestionnairesList = () => {
   
   useEffect(() => {
     const fetchQuestionnaires = async () => {
-      if (!teacherId) {
-        setLoading(false);
-        setError('ID de docente no encontrado para cargar cuestionarios.');
-        return;
-      }
       try {
         setLoading(true);
         setError(null);
         
-        // Construir la URL con los filtros usando el teacherId
-        let url = `${API_URL}/api/questionnaires?created_by=${teacherId}`;
-        if (filterPhase !== 'all') url += `&phase=${filterPhase}`;
-        if (filterGrade !== 'all') url += `&grade=${filterGrade}`;
+        // Configurar parámetros de la consulta
+        const params = {};
         
-        const response = await axios.get(url);
-        setQuestionnaires(response.data);
+        // Agregar filtros adicionales si existen
+        if (filterPhase !== 'all') {
+          params.phase = filterPhase;
+        }
+        if (filterGrade !== 'all') {
+          params.grade = filterGrade;
+        }
+        
+        console.log('Solicitando cuestionarios con parámetros:', params);
+        
+        // Realizar la petición con la instancia de Axios configurada
+        const response = await api.get('/api/questionnaires', { params });
+        
+        console.log('Respuesta de la API:', response.data);
+        
+        // Verificar si la respuesta tiene la estructura esperada
+        if (response.data && response.data.success !== false) {
+          setQuestionnaires(response.data.data || response.data);
+        } else {
+          setError(response.data?.message || 'Error al cargar los cuestionarios');
+          setQuestionnaires([]);
+        }
       } catch (error) {
         console.error('Error al cargar cuestionarios:', error);
-        setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
+        setError(error.response?.data?.message || 'No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
         setQuestionnaires([]);
       } finally {
         setLoading(false);
@@ -55,7 +66,7 @@ const QuestionnairesList = () => {
   const handleDelete = async (id) => {
     if (window.confirm('¿Estás seguro de que deseas eliminar este cuestionario? Esta acción también eliminará todas las preguntas asociadas.')) {
       try {
-        await axios.delete(`${API_URL}/api/questionnaires/${id}`);
+        await api.delete(`/api/questionnaires/${id}`);
         setQuestionnaires(questionnaires.filter(q => q.id !== id));
         alert('Cuestionario eliminado correctamente');
       } catch (error) {

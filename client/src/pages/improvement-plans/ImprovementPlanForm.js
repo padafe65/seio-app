@@ -54,7 +54,7 @@ const ImprovementPlanForm = () => {
     
     const fetchStudents = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
+        const response = await axios.get(`${API_URL}/api/teachers/students/${user.id}`);
         setStudents(response.data);
       } catch (error) {
         console.error('Error al cargar estudiantes:', error);

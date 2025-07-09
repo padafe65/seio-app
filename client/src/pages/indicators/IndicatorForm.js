@@ -44,7 +44,7 @@ const IndicatorForm = () => {
             setFormData(prev => ({ ...prev, subject: subjectResponse.data.subject }));
             
             // Obtener estudiantes asignados al profesor
-            const studentsResponse = await axios.get(`/api/teacher/students/${user.id}`);
+            const studentsResponse = await axios.get(`/api/teachers/students/${user.id}`);
             setStudents(studentsResponse.data);
             
             // Obtener cuestionarios del profesor usando user_id

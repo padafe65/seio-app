@@ -63,7 +63,7 @@ const CompletarEstudiante = () => {
       
       // Si se seleccionó un profesor, crear la relación en teacher_students
       if (student.teacher_id) {
-        await axios.post(`${API_URL}/api/teacher/assign-student`, {
+        await axios.post(`${API_URL}/api/teachers/assign-student`, {
           teacher_id: student.teacher_id,
           student_id: studentId
         });

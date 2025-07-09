@@ -50,7 +50,7 @@ const ImprovementPlansList = () => {
           // Obtener el teacher_id asociado con el user_id
           const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
           if (teacherResponse.data && teacherResponse.data.id) {
-            const studentsResponse = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
+            const studentsResponse = await axios.get(`${API_URL}/api/teachers/students/${user.id}`);
             setStudents(studentsResponse.data);
           }
         } catch (error) {

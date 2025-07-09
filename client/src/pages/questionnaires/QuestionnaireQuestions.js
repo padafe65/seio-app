@@ -1,12 +1,10 @@
 // src/pages/questionnaires/QuestionnaireQuestions.js
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../config/axios';
 import Swal from 'sweetalert2';
 import { MathJax, MathJaxContext } from 'better-react-mathjax';
 import { ArrowLeft, Save, Plus } from 'lucide-react';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const QuestionnaireQuestions = () => {
   const { id } = useParams();
@@ -32,17 +30,17 @@ const QuestionnaireQuestions = () => {
   useEffect(() => {
     const fetchQuestionnaireData = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/questionnaires/${id}`);
+        const response = await api.get(`/api/questionnaires/${id}`);
         setQuestionnaire(response.data.questionnaire);
-        setQuestions(response.data.questions);
-        setLoading(false);
+        setQuestions(response.data.questions || []);
       } catch (error) {
         console.error('Error al cargar cuestionario:', error);
         Swal.fire({
           icon: 'error',
           title: 'Error',
-          text: 'No se pudo cargar la información del cuestionario'
+          text: error.response?.data?.message || 'No se pudo cargar la información del cuestionario'
         });
+      } finally {
         setLoading(false);
       }
     };
@@ -80,7 +78,7 @@ const QuestionnaireQuestions = () => {
         formData.append('image', currentQuestion.image);
       }
       
-      const response = await axios.post(`${API_URL}/api/questions`, formData, {
+      const response = await api.post('/api/questions', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
@@ -129,7 +127,7 @@ const QuestionnaireQuestions = () => {
   
   const handleDeleteQuestion = async (questionId) => {
     try {
-      await axios.delete(`${API_URL}/api/questions/${questionId}`);
+      await api.delete(`/api/questions/${questionId}`);
       
       // Actualizar la lista de preguntas
       setQuestions(questions.filter(q => q.id !== questionId));

@@ -1,233 +1,642 @@
 // routes/questionnaireRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
-import { verifyToken } from '../middleware/authMiddleware.js';
+import { 
+  verifyToken, 
+  isTeacherOrAdmin,
+  isAdmin 
+} from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// Obtener todos los cuestionarios (protegido y filtrado por rol)
-router.get('/', verifyToken, async (req, res) => {
+// Middleware para verificar que el usuario está autenticado
+router.use(verifyToken);
+
+/**
+ * @route GET /api/questionnaires
+ * @description Obtiene la lista de cuestionarios según el rol del usuario
+ * @access Privado (docente o super_administrador)
+ * @query {string} [phase] - Filtro por fase
+ * @query {string} [grade] - Filtro por grado
+ * @query {string} [studentId] - Filtro por ID de estudiante
+ * @query {string} [description] - Búsqueda por descripción
+ */
+router.get('/', isTeacherOrAdmin, async (req, res) => {
+  console.log('=== INICIO DE SOLICITUD DE CUESTIONARIOS ===');
+  console.log('Usuario autenticado:', {
+    id: req.user.id,
+    role: req.user.role,
+    teacher_id: req.user.teacher_id
+  });
+
   try {
-    const { created_by, phase, grade, studentId, description } = req.query;
-    let params = [];
+    const { phase, grade, studentId, description } = req.query;
+    let queryParams = [];
     let conditions = [];
+    
+    // 1. Construir la consulta base según el rol del usuario
     let query = `
-      SELECT 
-        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
-        u.name as created_by_name,
-        c.name as course_name,
-        (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
+      SELECT DISTINCT q.*, 
+        u.name as teacher_name, 
+        COUNT(DISTINCT er.student_id) as assigned_students_count
       FROM questionnaires q
       JOIN teachers t ON q.created_by = t.id
       JOIN users u ON t.user_id = u.id
-      JOIN courses c ON q.course_id = c.id
+      LEFT JOIN evaluation_results er ON q.id = er.questionnaire_id
     `;
-    
-    // Si hay un studentId, filtrar por el grado del estudiante
-    if (studentId) {
-      // Obtener el grado y course_id del estudiante
-      const [studentRows] = await pool.query(
-        'SELECT grade, course_id FROM students WHERE user_id = ?',
-        [studentId]
-      );
 
-      if (studentRows.length > 0) {
-        const studentGrade = studentRows[0].grade;
-        
-        // Filtrar cuestionarios por el grado del estudiante
-        conditions.push('q.grade = ?');
-        params.push(studentGrade);
-      } else {
-        // Si no se encuentra el estudiante, devolver un array vacío
-        return res.json([]);
+    // 2. Aplicar filtros según el rol
+    if (req.user.role === 'docente') {
+      // Para docentes, solo mostrar los cuestionarios que ellos crearon
+      conditions.push('q.created_by = (SELECT id FROM teachers WHERE user_id = ?)');
+      queryParams.push(req.user.id);
+      // Para docentes, solo mostrar sus propios cuestionarios
+      const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'No se encontró el perfil de docente asociado a tu cuenta',
+          error: 'TEACHER_NOT_FOUND'
+        });
       }
-    }
-    
-    if (created_by) {
+      const teacherId = teacherRows[0].id;
       conditions.push('q.created_by = ?');
-      params.push(created_by);
+      queryParams.push(teacherId);
     }
-    
+    // Si es admin, puede ver todos los cuestionarios sin restricciones
+
+    // 3. Aplicar filtros adicionales
     if (phase) {
       conditions.push('q.phase = ?');
-      params.push(phase);
+      queryParams.push(phase);
     }
     
     if (grade) {
       conditions.push('q.grade = ?');
-      params.push(grade);
-    }
-
-    if (description) {
-      conditions.push('q.description = ?');
-      params.push(grade);
+      queryParams.push(grade);
     }
     
-    // Filtro por rol
-    if (req.user.role === 'docente') {
-      // 1. Encontrar el teacher.id a partir del user.id
-      const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
-      if (teacherRows.length === 0) {
-        return res.json([]); // Si no es un profesor, no puede tener cuestionarios
-      }
-      const teacherId = teacherRows[0].id;
-      conditions.push('q.created_by = ?');
-      params.push(teacherId);
+    if (studentId) {
+      query += ' INNER JOIN questionnaire_students qs2 ON q.id = qs2.questionnaire_id';
+      conditions.push('qs2.student_id = ?');
+      queryParams.push(studentId);
+    }
+    
+    if (description) {
+      conditions.push('q.description LIKE ?');
+      queryParams.push(`%${description}%`);
     }
 
+    // 4. Construir la cláusula WHERE
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
-    
+
+    // 5. Agrupar por cuestionario
+    query += ' GROUP BY q.id';
+
+    // 6. Ordenar por fecha de creación descendente
     query += ' ORDER BY q.created_at DESC';
+
+    console.log('Consulta SQL final:', query);
+    console.log('Parámetros:', queryParams);
+
+    // 7. Ejecutar la consulta
+    const [questionnaires] = await pool.query(query, queryParams);
+
+    console.log('Cuestionarios encontrados:', questionnaires.length);
     
-    const [rows] = await pool.query(query, params);
-    
-    // Enriquecer los resultados con el nombre de la materia
-    const enrichedRows = rows.map(q => {
-      const parts = q.category?.split('_') || [];
-      return {
-        ...q,
-        subject_name: parts[1] || '',
-      };
+    // 8. Devolver la respuesta
+    res.json({
+      success: true,
+      data: questionnaires,
+      count: questionnaires.length
     });
-    
-    res.json(enrichedRows);
+
   } catch (error) {
     console.error('❌ Error al obtener cuestionarios:', error);
-    res.status(500).json({ message: 'Error al obtener cuestionarios' });
+    
+    // Registrar el error en un sistema de monitoreo si está disponible
+    if (process.env.NODE_ENV === 'production') {
+      // Aquí podrías integrar con un servicio de monitoreo como Sentry, DataDog, etc.
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener los cuestionarios',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR'
+    });
   }
 });
 
-// Obtener un cuestionario específico por ID (protegido)
-router.get('/:id', verifyToken, async (req, res) => {
+/**
+ * @route GET /api/questionnaires/:id
+ * @description Obtiene un cuestionario específico por su ID
+ * @access Privado (docente o super_administrador)
+ * @param {string} id - ID del cuestionario
+ */
+router.get('/:id', isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const [rows] = await pool.query(`
-      SELECT 
-        q.id, q.title, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
-        u.name as created_by_name,
-        c.name as course_name
-      FROM questionnaires q
-      JOIN teachers t ON q.created_by = t.id
-      JOIN users u ON t.user_id = u.id
-      JOIN courses c ON q.course_id = c.id
-      WHERE q.id = ?
-    `, [id]);
     
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Cuestionario no encontrado' });
+    // 1. Obtener el cuestionario
+    const [questionnaires] = await pool.query(
+      `SELECT q.*, u.name as teacher_name, u.lastname as teacher_lastname
+       FROM questionnaires q
+       LEFT JOIN teachers t ON q.created_by = t.id
+       LEFT JOIN users u ON t.user_id = u.id
+       WHERE q.id = ?`, 
+      [id]
+    );
+    
+    if (questionnaires.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Cuestionario no encontrado',
+        error: 'NOT_FOUND'
+      });
     }
     
-    // Obtener las preguntas asociadas al cuestionario
+    const questionnaire = questionnaires[0];
+    
+    // 2. Verificar permisos (solo el docente creador o admin puede ver)
+    if (req.user.role === 'docente') {
+      const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0 || teacherRows[0].id !== questionnaire.created_by) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'No tienes permiso para ver este cuestionario',
+          error: 'FORBIDDEN'
+        });
+      }
+    }
+    
+    // 3. Obtener las preguntas del cuestionario
     const [questions] = await pool.query(
-      'SELECT * FROM questions WHERE questionnaire_id = ?',
+      'SELECT * FROM questions WHERE questionnaire_id = ? ORDER BY question_order',
+      [id]
+    );
+    
+    // 4. Obtener estudiantes asignados
+    const [assignedStudents] = await pool.query(
+      `SELECT s.id, u.name, u.lastname, u.email 
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       JOIN questionnaire_students qs ON s.id = qs.student_id
+       WHERE qs.questionnaire_id = ?`,
+      [id]
+    );
+    
+    // 5. Devolver la respuesta
+    res.json({
+      success: true,
+      data: {
+        ...questionnaire,
+        questions,
+        assigned_students: assignedStudents
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error al obtener el cuestionario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener el cuestionario',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR'
+    });
+  }
+});
+
+/**
+ * @route POST /api/questionnaires
+ * @description Crea un nuevo cuestionario
+ * @access Privado (docente o super_administrador)
+ * @body {Object} questionnaire - Datos del cuestionario
+ * @body {string} questionnaire.phase - Fase del cuestionario
+ * @body {string} questionnaire.grade - Grado al que va dirigido
+ * @body {string} questionnaire.description - Descripción del cuestionario
+ * @body {Array} questions - Lista de preguntas
+ * @body {Array} assigned_students - IDs de estudiantes asignados
+ */
+router.post('/', isTeacherOrAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    const { phase, grade, description, questions, assigned_students } = req.body;
+    
+    // 1. Validar datos de entrada
+    if (!phase || !grade || !description || !Array.isArray(questions) || questions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Faltan campos requeridos o la lista de preguntas está vacía',
+        error: 'VALIDATION_ERROR'
+      });
+    }
+    
+    // 2. Obtener el ID del docente (si es docente)
+    let teacherId = null;
+    if (req.user.role === 'docente') {
+      const [teacherRows] = await connection.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para crear cuestionarios',
+          error: 'FORBIDDEN'
+        });
+      }
+      teacherId = teacherRows[0].id;
+    } else if (req.body.teacher_id) {
+      // Si es admin, puede especificar el docente
+      teacherId = req.body.teacher_id;
+      
+      // Verificar que el docente exista
+      const [teacherRows] = await connection.query('SELECT id FROM teachers WHERE id = ?', [teacherId]);
+      if (teacherRows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'El docente especificado no existe',
+          error: 'TEACHER_NOT_FOUND'
+        });
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere especificar un docente',
+        error: 'TEACHER_REQUIRED'
+      });
+    }
+    
+    // 3. Insertar el cuestionario
+    const [result] = await connection.query(
+      'INSERT INTO questionnaires (phase, grade, description, created_by) VALUES (?, ?, ?, ?)',
+      [phase, grade, description, teacherId]
+    );
+    
+    const questionnaireId = result.insertId;
+    
+    // 4. Insertar preguntas
+    for (const [index, question] of questions.entries()) {
+      const { text, type, options, correct_answer, points } = question;
+      
+      if (!text || !type) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `La pregunta ${index + 1} no tiene texto o tipo`,
+          error: 'VALIDATION_ERROR'
+        });
+      }
+      
+      await connection.query(
+        'INSERT INTO questions (questionnaire_id, question_text, question_type, question_order, options, correct_answer, points) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [
+          questionnaireId,
+          text,
+          type,
+          index + 1,
+          options ? JSON.stringify(options) : null,
+          correct_answer || null,
+          points || 1
+        ]
+      );
+    }
+    
+    // 5. Asignar estudiantes si se especificaron
+    if (Array.isArray(assigned_students) && assigned_students.length > 0) {
+      // Verificar que los estudiantes existan y pertenezcan al docente (si es docente)
+      const placeholders = assigned_students.map(() => '?').join(',');
+      let studentCheckQuery = `
+        SELECT s.id 
+        FROM students s
+        WHERE s.id IN (${placeholders})
+      `;
+      
+      if (req.user.role === 'docente') {
+        studentCheckQuery += ` AND s.teacher_id = ?`;
+        const [students] = await connection.query(
+          studentCheckQuery,
+          [...assigned_students, teacherId]
+        );
+        
+        if (students.length !== assigned_students.length) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Uno o más estudiantes no existen o no tienes permiso para asignarlos',
+            error: 'INVALID_STUDENTS'
+          });
+        }
+      } else {
+        const [students] = await connection.query(studentCheckQuery, assigned_students);
+        if (students.length !== assigned_students.length) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Uno o más estudiantes no existen',
+            error: 'INVALID_STUDENTS'
+          });
+        }
+      }
+      
+      // Asignar estudiantes al cuestionario
+      const assignmentValues = assigned_students.map(studentId => [questionnaireId, studentId]);
+      await connection.query(
+        'INSERT INTO questionnaire_students (questionnaire_id, student_id) VALUES ?',
+        [assignmentValues]
+      );
+    }
+    
+    // 6. Confirmar la transacción
+    await connection.commit();
+    
+    // 7. Devolver el cuestionario creado
+    const [newQuestionnaire] = await connection.query(
+      'SELECT * FROM questionnaires WHERE id = ?',
+      [questionnaireId]
+    );
+    
+    res.status(201).json({
+      success: true,
+      message: 'Cuestionario creado exitosamente',
+      data: newQuestionnaire[0]
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    console.error('❌ Error al crear el cuestionario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al crear el cuestionario',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR'
+    });
+  } finally {
+    connection.release();
+  }
+});
+
+/**
+ * @route PUT /api/questionnaires/:id
+ * @description Actualiza un cuestionario existente
+ * @access Privado (solo el docente creador o admin)
+ * @param {string} id - ID del cuestionario a actualizar
+ * @body {Object} questionnaire - Datos actualizados del cuestionario
+ * @body {string} [questionnaire.phase] - Fase del cuestionario
+ * @body {string} [questionnaire.grade] - Grado al que va dirigido
+ * @body {string} [questionnaire.description] - Descripción del cuestionario
+ * @body {Array} [questions] - Lista actualizada de preguntas
+ * @body {Array} [assigned_students] - IDs actualizados de estudiantes asignados
+ */
+router.put('/:id', isTeacherOrAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    const { id } = req.params;
+    const { phase, grade, description, questions, assigned_students } = req.body;
+    
+    // 1. Verificar que el cuestionario exista
+    const [questionnaires] = await connection.query('SELECT * FROM questionnaires WHERE id = ?', [id]);
+    if (questionnaires.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cuestionario no encontrado',
+        error: 'NOT_FOUND'
+      });
+    }
+    
+    const questionnaire = questionnaires[0];
+    
+    // 2. Verificar permisos (solo el docente creador o admin puede actualizar)
+    if (req.user.role === 'docente') {
+      const [teacherRows] = await connection.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0 || teacherRows[0].id !== questionnaire.created_by) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para actualizar este cuestionario',
+          error: 'FORBIDDEN'
+        });
+      }
+    }
+    
+    // 3. Actualizar los campos del cuestionario si se proporcionaron
+    const updates = [];
+    const updateValues = [];
+    
+    if (phase !== undefined) {
+      updates.push('phase = ?');
+      updateValues.push(phase);
+    }
+    
+    if (grade !== undefined) {
+      updates.push('grade = ?');
+      updateValues.push(grade);
+    }
+    
+    if (description !== undefined) {
+      updates.push('description = ?');
+      updateValues.push(description);
+    }
+    
+    if (updates.length > 0) {
+      updateValues.push(id);
+      await connection.query(
+        `UPDATE questionnaires SET ${updates.join(', ')} WHERE id = ?`,
+        updateValues
+      );
+    }
+    
+    // 4. Actualizar preguntas si se proporcionaron
+    if (Array.isArray(questions)) {
+      // Eliminar preguntas existentes
+      await connection.query('DELETE FROM questions WHERE questionnaire_id = ?', [id]);
+      
+      // Insertar preguntas actualizadas
+      for (const [index, question] of questions.entries()) {
+        const { text, type, options, correct_answer, points } = question;
+        
+        if (!text || !type) {
+          await connection.rollback();
+          return res.status(400).json({
+            success: false,
+            message: `La pregunta ${index + 1} no tiene texto o tipo`,
+            error: 'VALIDATION_ERROR'
+          });
+        }
+        
+        await connection.query(
+          'INSERT INTO questions (questionnaire_id, question_text, question_type, question_order, options, correct_answer, points) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [
+            id,
+            text,
+            type,
+            index + 1,
+            options ? JSON.stringify(options) : null,
+            correct_answer || null,
+            points || 1
+          ]
+        );
+      }
+    }
+    
+    // 5. Actualizar estudiantes asignados si se proporcionaron
+    if (Array.isArray(assigned_students)) {
+      // Eliminar asignaciones existentes
+      await connection.query('DELETE FROM questionnaire_students WHERE questionnaire_id = ?', [id]);
+      
+      // Verificar que los estudiantes existan y pertenezcan al docente (si es docente)
+      if (assigned_students.length > 0) {
+        const placeholders = assigned_students.map(() => '?').join(',');
+        let studentCheckQuery = `
+          SELECT s.id 
+          FROM students s
+          WHERE s.id IN (${placeholders})
+        `;
+        
+        if (req.user.role === 'docente') {
+          const [teacherRows] = await connection.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+          const teacherId = teacherRows[0].id;
+          
+          studentCheckQuery += ` AND s.teacher_id = ?`;
+          const [students] = await connection.query(
+            studentCheckQuery,
+            [...assigned_students, teacherId]
+          );
+          
+          if (students.length !== assigned_students.length) {
+            await connection.rollback();
+            return res.status(400).json({
+              success: false,
+              message: 'Uno o más estudiantes no existen o no tienes permiso para asignarlos',
+              error: 'INVALID_STUDENTS'
+            });
+          }
+        } else {
+          const [students] = await connection.query(studentCheckQuery, assigned_students);
+          if (students.length !== assigned_students.length) {
+            await connection.rollback();
+            return res.status(400).json({
+              success: false,
+              message: 'Uno o más estudiantes no existen',
+              error: 'INVALID_STUDENTS'
+            });
+          }
+        }
+        
+        // Asignar estudiantes al cuestionario
+        const assignmentValues = assigned_students.map(studentId => [id, studentId]);
+        await connection.query(
+          'INSERT INTO questionnaire_students (questionnaire_id, student_id) VALUES ?',
+          [assignmentValues]
+        );
+      }
+    }
+    
+    // 6. Confirmar la transacción
+    await connection.commit();
+    
+    // 7. Devolver el cuestionario actualizado
+    const [updatedQuestionnaire] = await connection.query(
+      'SELECT * FROM questionnaires WHERE id = ?',
       [id]
     );
     
     res.json({
-      questionnaire: rows[0],
-      questions
+      success: true,
+      message: 'Cuestionario actualizado exitosamente',
+      data: updatedQuestionnaire[0]
     });
+    
   } catch (error) {
-    console.error('❌ Error al obtener cuestionario:', error);
-    res.status(500).json({ message: 'Error al obtener cuestionario' });
+    await connection.rollback();
+    console.error('❌ Error al actualizar el cuestionario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar el cuestionario',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR'
+    });
+  } finally {
+    connection.release();
   }
 });
 
-// Crear un nuevo cuestionario (protegido)
-router.post('/', verifyToken, async (req, res) => {
+/**
+ * @route DELETE /api/questionnaires/:id
+ * @description Elimina un cuestionario existente
+ * @access Privado (solo el docente creador o admin)
+ * @param {string} id - ID del cuestionario a eliminar
+ */
+router.delete('/:id', isTeacherOrAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
-    const { title, category, grade, phase, course_id, created_by, description } = req.body;
+    await connection.beginTransaction();
     
-    console.log('Datos recibidos para crear cuestionario:', req.body);
+    const { id } = req.params;
     
-    // Validar que todos los campos necesarios estén presentes
-    if (!title || !category || !grade || !phase || !course_id || !created_by || !description) {
-      console.log('Faltan campos requeridos:', { title, category, grade, phase, course_id, created_by, description });
-      return res.status(400).json({ 
-        message: 'Faltan campos requeridos', 
-        received: { title, category, grade, phase, course_id, created_by, description } 
+    // 1. Verificar que el cuestionario exista
+    const [questionnaires] = await connection.query('SELECT * FROM questionnaires WHERE id = ?', [id]);
+    if (questionnaires.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cuestionario no encontrado',
+        error: 'NOT_FOUND'
       });
     }
     
-    // Obtener el ID del profesor si se proporciona el ID de usuario
-    let teacherId = created_by;
+    const questionnaire = questionnaires[0];
     
-    // Verificar si created_by es un ID de usuario
-    if (created_by > 0) {
-      const [teacherRows] = await pool.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
-        [created_by]
-      );
-      
-      if (teacherRows.length > 0) {
-        teacherId = teacherRows[0].id;
+    // 2. Verificar permisos (solo el docente creador o admin puede eliminar)
+    if (req.user.role === 'docente') {
+      const [teacherRows] = await connection.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      if (teacherRows.length === 0 || teacherRows[0].id !== questionnaire.created_by) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para eliminar este cuestionario',
+          error: 'FORBIDDEN'
+        });
       }
     }
     
-    const [result] = await pool.query(
-      `INSERT INTO questionnaires (title, category, grade, phase, course_id, created_by, description) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [title, category, grade, phase, course_id, teacherId, description]
-    );
+    // 3. Eliminar registros relacionados (esto se manejará con ON DELETE CASCADE en la base de datos)
+    // 3.1. Eliminar respuestas de estudiantes (si existen)
+    await connection.query('DELETE FROM student_responses WHERE question_id IN (SELECT id FROM questions WHERE questionnaire_id = ?)', [id]);
     
-    res.status(201).json({ 
-      message: 'Cuestionario creado correctamente', 
-      id: result.insertId 
+    // 3.2. Eliminar asignaciones de estudiantes
+    await connection.query('DELETE FROM questionnaire_students WHERE questionnaire_id = ?', [id]);
+    
+    // 3.3. Eliminar preguntas
+    await connection.query('DELETE FROM questions WHERE questionnaire_id = ?', [id]);
+    
+    // 4. Eliminar el cuestionario
+    await connection.query('DELETE FROM questionnaires WHERE id = ?', [id]);
+    
+    // 5. Confirmar la transacción
+    await connection.commit();
+    
+    res.json({
+      success: true,
+      message: 'Cuestionario eliminado exitosamente'
     });
+    
   } catch (error) {
-    console.error('❌ Error al crear cuestionario:', error);
-    res.status(500).json({ message: 'Error al crear cuestionario' });
+    await connection.rollback();
+    console.error('❌ Error al eliminar el cuestionario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar el cuestionario',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor',
+      code: 'INTERNAL_SERVER_ERROR'
+    });
+  } finally {
+    connection.release();
   }
 });
-
-// Actualizar un cuestionario existente (protegido)
-router.put('/:id', verifyToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { title, category, grade, phase, course_id, description } = req.body;
-    
-    const [result] = await pool.query(
-      `UPDATE questionnaires 
-       SET title = ?, category = ?, grade = ?, phase = ?, course_id = ?, description = ? 
-       WHERE id = ?`,
-      [title, category, grade, phase, course_id, description, id]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Cuestionario no encontrado' });
-    }
-    
-    res.json({ message: 'Cuestionario actualizado correctamente' });
-  } catch (error) {
-    console.error('❌ Error al actualizar cuestionario:', error);
-    res.status(500).json({ message: 'Error al actualizar cuestionario' });
-  }
-});
-
-// Eliminar un cuestionario (protegido)
-router.delete('/:id', verifyToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Primero eliminar las preguntas asociadas
-    await pool.query('DELETE FROM questions WHERE questionnaire_id = ?', [id]);
-    
-    // Luego eliminar el cuestionario
-    const [result] = await pool.query('DELETE FROM questionnaires WHERE id = ?', [id]);
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Cuestionario no encontrado' });
-    }
-    
-    res.json({ message: 'Cuestionario y sus preguntas eliminados correctamente' });
-  } catch (error) {
-    console.error('❌ Error al eliminar cuestionario:', error);
-    res.status(500).json({ message: 'Error al eliminar cuestionario' });
-  }
-});
-
-
 
 export default router;

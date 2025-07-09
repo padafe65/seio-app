@@ -90,8 +90,8 @@ router.post('/submit', async (req, res) => {
     if (existingEval.length === 0) {
       // Nuevo resultado
       await pool.query(
-        `INSERT INTO evaluation_results (student_id, questionnaire_id, best_score, selected_attempt_id, phase)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO evaluation_results (student_id, questionnaire_id, best_score, selected_attempt_id, phase, status)
+         VALUES (?, ?, ?, ?, ?, 'completed')`,
         [realStudentId, questionnaire_id, score, attemptId, phaseNumber]
       );
     } else {
@@ -100,7 +100,7 @@ router.post('/submit', async (req, res) => {
         // Actualizar si esta nota es mejor
         await pool.query(
           `UPDATE evaluation_results 
-           SET best_score = ?, selected_attempt_id = ?, recorded_at = CURRENT_TIMESTAMP 
+           SET best_score = ?, selected_attempt_id = ?, recorded_at = CURRENT_TIMESTAMP, status = 'completed'
            WHERE id = ?`,
           [score, attemptId, current.id]
         );
@@ -411,7 +411,7 @@ router.get('/intentos-por-fase/:studentId', async (req, res) => {
   }
 });
 
-// Nueva ruta para obtener evaluaciones por fase
+// Ruta para obtener evaluaciones por fase
 router.get('/evaluations-by-phase/:studentId', async (req, res) => {
   const { studentId } = req.params;
 

@@ -1,7 +1,7 @@
 // src/components/QuestionnaireForm.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../config/axios';
 import { useAuth } from '../../context/AuthContext';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
@@ -10,7 +10,6 @@ import withReactContent from 'sweetalert2-react-content';
 import { FileText } from 'lucide-react';
 
 const MySwal = withReactContent(Swal);
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const QuestionnaireForm = () => {
   const { id } = useParams();
@@ -81,7 +80,7 @@ const QuestionnaireForm = () => {
         
         // Cargar materia del docente
         if (user?.id) {
-          const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
+          const subjectResponse = await axios.get(`${API_URL}/api/teachers/subject/${user.id}`);
           const subject = subjectResponse.data.subject || 'Matematicas';
           setSubjectName(subject);
           
@@ -181,7 +180,7 @@ const QuestionnaireForm = () => {
       const fullCategoryName = `${subjectName}_${newCategory.trim()}`;
       
       // Crear la nueva categoría
-      await axios.post(`${API_URL}/api/subject-categories`, {
+      await api.post(`/api/subject-categories`, {
         subject: subjectName,
         category: fullCategoryName
       });
@@ -230,7 +229,7 @@ const QuestionnaireForm = () => {
       const fullCategoryName = `${subjectName}_${newModalCategory.trim()}`;
       
       // Crear la nueva categoría
-      await axios.post(`${API_URL}/api/subject-categories`, {
+      await api.post(`/api/subject-categories`, {
         subject: subjectName,
         category: fullCategoryName
       });
@@ -268,33 +267,37 @@ const QuestionnaireForm = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
     
     try {
       if (isEditing) {
-        await axios.put(`${API_URL}/api/questionnaires/${id}`, formData);
+        // Actualizar cuestionario existente
+        await api.put(`/api/questionnaires/${id}`, formData);
+        
         MySwal.fire({
+          title: '¡Éxito!',
+          text: 'El cuestionario se ha actualizado correctamente',
           icon: 'success',
-          title: 'Cuestionario actualizado',
-          text: 'El cuestionario ha sido actualizado correctamente'
+          confirmButtonText: 'Aceptar'
+        }).then(() => {
+          navigate('/cuestionarios');
         });
       } else {
-        await axios.post(`${API_URL}/api/questionnaires`, formData);
+        // Crear nuevo cuestionario
+        await api.post('/api/questionnaires', formData);
+        
         MySwal.fire({
+          title: '¡Éxito!',
+          text: 'El cuestionario se ha creado correctamente',
           icon: 'success',
-          title: 'Cuestionario creado',
-          text: 'El cuestionario ha sido creado correctamente'
+          confirmButtonText: 'Aceptar'
+        }).then(() => {
+          navigate('/cuestionarios');
         });
       }
-      
-      // Redirigir a la lista de cuestionarios
-      navigate('/cuestionarios');
-    } catch (err) {
-      console.error('Error al guardar cuestionario:', err);
-      MySwal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'Hubo un problema al guardar el cuestionario'
-      });
+    } catch (error) {
+      console.error('Error al guardar el cuestionario:', error);
+      setError(error.response?.data?.message || 'Error al guardar el cuestionario. Por favor, inténtalo de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -319,7 +322,7 @@ const QuestionnaireForm = () => {
       }
       
       // Crear cuestionario
-      const response = await axios.post(`${API_URL}/api/questionnaires`, newQuestionnaireData);
+      const response = await api.post('/api/questionnaires', newQuestionnaireData);
       const newQuestionnaire = response.data;
       
       // Mostrar mensaje de éxito

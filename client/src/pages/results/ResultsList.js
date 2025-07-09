@@ -221,6 +221,7 @@ const ResultList = () => {
                       <th>Curso</th> {/* Nueva columna */}
                       <th>Fase</th>
                       <th>Mejor Puntaje</th>
+                      <th>Estado</th>
                       <th>Fecha</th>
                       <th className="text-end">Acciones</th>
                     </tr>
@@ -236,6 +237,15 @@ const ResultList = () => {
                       <td>
                         <span className={`badge ${parseFloat(result.best_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
                           {formatScore(result.best_score)}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${
+                          result.status === 'completed' ? 'bg-success' : 
+                          result.status === 'in_progress' ? 'bg-warning text-dark' : 'bg-secondary'
+                        }`}>
+                          {result.status === 'completed' ? 'Completado' : 
+                           result.status === 'in_progress' ? 'En progreso' : 'Pendiente'}
                         </span>
                       </td>
                       <td>{formatDate(result.recorded_at)}</td>

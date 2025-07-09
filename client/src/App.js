@@ -1,6 +1,6 @@
 // App.js
 import React, { useEffect, useState, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Link, useNavigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Link, useNavigate, Outlet } from 'react-router-dom';
 import { Offcanvas } from 'react-bootstrap';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import Navbar from './components/Navbar.js';
@@ -359,7 +359,7 @@ function AppContent() {
   }
 
   return (
-    <Router>
+    <>
       <Navbar />
       <Routes>
         <Route path="/" element={<Login />} />
@@ -430,7 +430,7 @@ function AppContent() {
         {/* Ruta por defecto */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </Router>
+    </>
   );
 }
 

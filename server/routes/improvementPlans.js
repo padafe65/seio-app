@@ -5,7 +5,7 @@ import db from '../config/db.js';
 const router = express.Router();
 
 // Obtener todos los planes de mejoramiento
-router.get('/improvement-plans', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const [plans] = await db.query(`
       SELECT ip.*, 
@@ -30,7 +30,7 @@ router.get('/improvement-plans', async (req, res) => {
 });
 
 // Obtener planes de mejoramiento por estudiante (usando user_id)
-router.get('/improvement-plans/student/:userId', async (req, res) => {
+router.get('/student/:userId', async (req, res) => {
   try {
     // Primero obtenemos el student_id asociado con este user_id
     const [students] = await db.query(
@@ -68,7 +68,7 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
 });
 
 // Obtener planes de mejoramiento por profesor (usando user_id)
-router.get('/improvement-plans/teacher/:userId', async (req, res) => {
+router.get('/teacher/:userId', async (req, res) => {
   try {
     // Primero obtenemos el teacher_id asociado con este user_id
     const [teachers] = await db.query(
@@ -105,7 +105,7 @@ router.get('/improvement-plans/teacher/:userId', async (req, res) => {
 });
 
 // Obtener un plan de mejoramiento específico
-router.get('/improvement-plans/:id', async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const [plans] = await db.query(`
       SELECT ip.*, 
@@ -137,7 +137,7 @@ router.get('/improvement-plans/:id', async (req, res) => {
 });
 
 // Crear un nuevo plan de mejoramiento
-router.post('/improvement-plans', async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { 
       student_id, 
@@ -196,7 +196,7 @@ router.post('/improvement-plans', async (req, res) => {
 });
 
 // Actualizar un plan de mejoramiento
-router.put('/improvement-plans/:id', async (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { 
@@ -237,7 +237,7 @@ router.put('/improvement-plans/:id', async (req, res) => {
 });
 
 // Eliminar un plan de mejoramiento
-router.delete('/improvement-plans/:id', async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -258,7 +258,7 @@ router.delete('/improvement-plans/:id', async (req, res) => {
 });
 
 // Obtener indicadores no alcanzados por estudiante, grado y fase
-router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', async (req, res) => {
+router.get('/indicators/failed/:studentId/:grade/:phase', async (req, res) => {
   try {
     const { studentId, grade, phase } = req.params;
     
@@ -279,7 +279,7 @@ router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', asyn
 });
 
 // Obtener indicadores alcanzados por estudiante, grado y fase
-router.get('/improvement-plans/indicators/passed/:studentId/:grade/:phase', async (req, res) => {
+router.get('/indicators/passed/:studentId/:grade/:phase', async (req, res) => {
   try {
     const { studentId, grade, phase } = req.params;
     
@@ -300,7 +300,7 @@ router.get('/improvement-plans/indicators/passed/:studentId/:grade/:phase', asyn
 });
 
 // Obtener plantillas de descripción para planes de mejoramiento
-router.get('/improvement-plans/templates', async (req, res) => {
+router.get('/templates', async (req, res) => {
   try {
     const [templates] = await db.query(`
       SELECT DISTINCT description 
@@ -318,7 +318,7 @@ router.get('/improvement-plans/templates', async (req, res) => {
 });
 
 // Añadir esta nueva ruta para obtener planes por student_id directamente
-router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
+router.get('/student-id/:studentId', async (req, res) => {
   try {
     const { studentId } = req.params;
     
