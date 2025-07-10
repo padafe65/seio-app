@@ -1,3 +1,4 @@
+// backend/middleware/authMiddleware.js
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';
 
@@ -6,7 +7,7 @@ export const verifyToken = async (req, res, next) => {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ 
       success: false,
-      message: 'No se proporcionó token de autenticación.',
+      message: 'No se proporcionó un token de autenticación válido.',
       error: 'MISSING_TOKEN'
     });
   }
@@ -14,124 +15,69 @@ export const verifyToken = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    // Verificar el token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    // Obtener información adicional del usuario desde la base de datos
-    const [users] = await pool.query(
-      'SELECT u.*, t.id as teacher_id, s.id as student_id ' +
-      'FROM users u ' +
-      'LEFT JOIN teachers t ON t.user_id = u.id ' +
-      'LEFT JOIN students s ON s.user_id = u.id ' +
-      'WHERE u.id = ?', 
-      [decoded.id]
-    );
-
-    if (!users || users.length === 0) {
-      return res.status(404).json({ 
-        success: false,
-        message: 'Usuario no encontrado en la base de datos.',
-        error: 'USER_NOT_FOUND'
-      });
+    if (!process.env.JWT_SECRET) {
+      console.error('❌ FATAL: JWT_SECRET no está configurado en las variables de entorno.');
+      return res.status(500).json({ success: false, message: 'Error de configuración del servidor.', error: 'JWT_SECRET_NOT_SET' });
     }
 
-    const user = users[0];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!decoded || !decoded.id) {
+      return res.status(401).json({ success: false, message: 'Token inválido: no contiene ID de usuario.', error: 'INVALID_TOKEN_PAYLOAD' });
+    }
     
-    // Agregar información del usuario al objeto de solicitud
-    req.user = {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      teacher_id: user.teacher_id,
-      student_id: user.student_id
-    };
+    // Consulta optimizada para obtener toda la info del usuario y sus roles de una vez.
+    const query = `
+      SELECT 
+        u.id, u.name, u.email, u.role,
+        t.id as teacher_id,
+        s.id as student_id
+      FROM users u
+      LEFT JOIN teachers t ON t.user_id = u.id
+      LEFT JOIN students s ON s.user_id = u.id
+      WHERE u.id = ?
+    `;
+    const [users] = await pool.query(query, [decoded.id]);
+    
+    if (users.length === 0) {
+      return res.status(404).json({ success: false, message: 'El usuario asociado al token ya no existe.', error: 'USER_NOT_FOUND' });
+    }
+
+    // Adjuntamos toda la información útil al objeto `req.user`
+    req.user = users[0];
     
     next();
   } catch (error) {
-    console.error('Error en verifyToken:', error);
-    
-    let errorMessage = 'Error de autenticación';
-    let errorCode = 'AUTH_ERROR';
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ success: false, message: 'Token de autenticación inválido.', error: 'INVALID_TOKEN' });
+    }
     
     if (error.name === 'TokenExpiredError') {
-      errorMessage = 'La sesión ha expirado. Por favor inicia sesión nuevamente.';
-      errorCode = 'TOKEN_EXPIRED';
-    } else if (error.name === 'JsonWebTokenError') {
-      errorMessage = 'Token de autenticación inválido.';
-      errorCode = 'INVALID_TOKEN';
+      return res.status(401).json({ success: false, message: 'La sesión ha expirado. Por favor, inicia sesión nuevamente.', error: 'TOKEN_EXPIRED' });
     }
     
-    res.status(401).json({ 
-      success: false,
-      message: errorMessage,
-      error: errorCode
-    });
+    console.error('❌ Error desconocido en verifyToken:', error);
+    return res.status(500).json({ success: false, message: 'Error interno del servidor durante la verificación del token.', error: 'INTERNAL_AUTH_ERROR' });
   }
 };
 
-export const checkRole = (allowedRoles) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ 
-        success: false,
-        message: 'No autenticado. Por favor inicia sesión.',
-        error: 'UNAUTHORIZED'
-      });
-    }
-    
-    if (!allowedRoles.includes(req.user.role)) {
-      const roles = allowedRoles.join(' o ');
-      return res.status(403).json({ 
-        success: false,
-        message: `Acceso denegado. Se requiere uno de los siguientes roles: ${roles}.`,
-        error: 'FORBIDDEN',
-        requiredRoles: allowedRoles,
-        currentRole: req.user.role
-      });
-    }
-    
-    next();
-  };
-};
-
-// Middleware específico para verificar si es docente o admin
-export const isTeacherOrAdmin = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ 
-      success: false,
-      message: 'No autenticado. Por favor inicia sesión.',
-      error: 'UNAUTHORIZED'
-    });
+export const checkRole = (allowedRoles) => (req, res, next) => {
+  if (!req.user || !req.user.role) {
+    return res.status(401).json({ success: false, message: 'No autenticado. Se requiere iniciar sesión.', error: 'UNAUTHENTICATED' });
   }
   
-  if (req.user.role !== 'docente' && req.user.role !== 'super_administrador') {
+  if (!allowedRoles.includes(req.user.role)) {
     return res.status(403).json({ 
-      success: false,
-      message: 'Acceso denegado. Se requiere rol de docente o administrador.',
-      error: 'FORBIDDEN'
+      success: false, 
+      message: `Acceso denegado. Se requiere uno de los siguientes roles: ${allowedRoles.join(', ')}.`,
+      error: 'FORBIDDEN_ROLE'
     });
   }
   
   next();
 };
 
-// Middleware específico para verificar si es admin
-export const isAdmin = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ 
-      success: false,
-      message: 'No autenticado. Por favor inicia sesión.',
-      error: 'UNAUTHORIZED'
-    });
-  }
-  
-  if (req.user.role !== 'super_administrador') {
-    return res.status(403).json({ 
-      success: false,
-      message: 'Acceso denegado. Se requiere rol de administrador.',
-      error: 'FORBIDDEN'
-    });
-  }
-  
-  next();
-};
+// Middleware para verificar si es docente o superadmin. Es un atajo para checkRole.
+export const isTeacherOrAdmin = checkRole(['docente', 'super_administrador']);
+
+// Middleware para verificar si es admin. Es un atajo para checkRole.
+export const isAdmin = checkRole(['super_administrador']);

@@ -36,32 +36,76 @@ export const getStudentById = async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
+    console.log('=== INICIO getStudentById ===');
+    console.log('ID del estudiante solicitado:', id, 'Tipo:', typeof id);
+    console.log('Usuario autenticado:', { 
+      userId, 
+      userRole, 
+      teacher_id: req.user.teacher_id,
+      student_id: req.user.student_id 
+    });
+
     // Si es docente, verificar que el estudiante esté asignado a él
     if (userRole === 'docente') {
-      const [teacherStudents] = await pool.query(
-        'SELECT ts.student_id FROM teacher_students ts ' +
-        'JOIN teachers t ON ts.teacher_id = t.id ' +
-        'WHERE t.user_id = ? AND ts.student_id = ?',
-        [userId, id]
+      console.log('Verificando permisos para docente...');
+      
+      // 1. Primero, obtener el ID del profesor
+      const [teacher] = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = ?', 
+        [userId]
       );
 
-      if (teacherStudents.length === 0) {
+      if (teacher.length === 0) {
+        console.log('Error: No se encontró el registro del profesor');
+        return res.status(403).json({ 
+          success: false,
+          message: 'No estás registrado como docente',
+          error: 'TEACHER_NOT_FOUND'
+        });
+      }
+
+      const teacherId = teacher[0].id;
+      console.log('ID del profesor:', teacherId);
+
+      // 2. Verificar si el estudiante está asignado a este profesor
+      const [assignment] = await pool.query(
+        'SELECT * FROM teacher_students WHERE teacher_id = ? AND student_id = ?',
+        [teacherId, id]
+      );
+
+      console.log('Resultado de la verificación de asignación:', assignment);
+
+      if (assignment.length === 0) {
+        console.log('Error: El estudiante no está asignado a este docente');
         return res.status(403).json({ 
           success: false,
           message: 'No tienes permiso para ver este estudiante',
-          error: 'FORBIDDEN'
+          error: 'STUDENT_NOT_ASSIGNED',
+          debug: {
+            teacherId,
+            studentId: id,
+            userRole,
+            userId
+          }
         });
       }
     }
     // Si es estudiante, solo puede ver su propia información
     else if (userRole === 'estudiante' && req.user.student_id !== parseInt(id)) {
+      console.log('Error: Estudiante intentando acceder a otro estudiante');
       return res.status(403).json({ 
         success: false,
         message: 'Solo puedes ver tu propia información',
-        error: 'FORBIDDEN'
+        error: 'FORBIDDEN',
+        debug: {
+          studentId: req.user.student_id,
+          requestedId: id
+        }
       });
     }
 
+    console.log('Permiso concedido, obteniendo datos del estudiante...');
+    
     const query = `
       SELECT 
         s.*, 
@@ -75,16 +119,26 @@ export const getStudentById = async (req, res) => {
       WHERE s.id = ?
     `;
 
+    console.log('Ejecutando consulta SQL:', query.replace(/\s+/g, ' ').trim());
+    console.log('Con parámetros:', [id]);
+    
     const [students] = await pool.query(query, [id]);
     
+    console.log('Resultado de la consulta:', students);
+    
     if (students.length === 0) {
+      console.log('Error: Estudiante no encontrado en la base de datos');
       return res.status(404).json({ 
         success: false,
         message: 'Estudiante no encontrado',
-        error: 'NOT_FOUND'
+        error: 'NOT_FOUND',
+        debug: {
+          studentId: id
+        }
       });
     }
 
+    console.log('=== FIN getStudentById (éxito) ===');
     res.json({
       success: true,
       data: students[0]
