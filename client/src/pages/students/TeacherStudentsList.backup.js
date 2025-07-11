@@ -143,8 +143,8 @@ const TeacherStudentsList = () => {
                 </thead>
                 <tbody>
                   {filteredStudents.length > 0 ? (
-                    filteredStudents.map((student) => (
-                      <tr key={`student-${student.id}`}>
+                    filteredStudents.map((student, index) => (
+                      <tr key={`${student.id}-${index}-${student.user_id || ''}`}>
                         <td>{student.name}</td>
                         <td>{student.email}</td>
                         <td>{student.phone}</td>
@@ -154,13 +154,13 @@ const TeacherStudentsList = () => {
                         <td>{student.course_name}</td>
                         <td className="text-end">
                           <div className="btn-group">
-                            <Link to={`/estudiantes/${student.id}`} className="btn btn-sm btn-outline-info" title="Ver detalles">
+                            <Link to={`/estudiantes/${student.user_id || student.id}`} className="btn btn-sm btn-outline-info">
                               <Eye size={16} />
                             </Link>
-                            <Link to={`/estudiantes/${student.id}/editar`} className="btn btn-sm btn-outline-primary" title="Editar">
+                            <Link to={`/estudiantes/${student.user_id || student.id}/editar`} className="btn btn-sm btn-outline-primary">
                               <Edit size={16} />
                             </Link>
-                            <Link to={`/estudiantes/${student.id}/calificaciones`} className="btn btn-sm btn-outline-success" title="Ver calificaciones">
+                            <Link to={`/estudiantes/${student.user_id || student.id}/calificaciones`} className="btn btn-sm btn-outline-success">
                               Calificaciones
                             </Link>
                           </div>

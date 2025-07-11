@@ -1,5 +1,5 @@
 // src/pages/students/StudentDetail.js
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
@@ -10,7 +10,7 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const StudentDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { authToken, user, verifyToken } = useAuth();
+  const { authToken, verifyToken } = useAuth();
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -142,7 +142,7 @@ const StudentDetail = () => {
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h4 className="mb-0">Detalles del Estudiante</h4>
+        <h4 className="mb-0">Detalles del Estudiante: {student.user_name}</h4>
         <div>
           <Link to={`/estudiantes/${id}/editar`} className="btn btn-primary me-2">
             Editar
@@ -157,8 +157,8 @@ const StudentDetail = () => {
         <div className="card-body">
           <div className="d-flex justify-content-between align-items-start mb-4">
             <div>
-              <h4 className="card-title mb-1">{student.name}</h4>
-              <p className="text-muted mb-0">ID: {student.id}</p>
+              <h2 className="card-title mb-1">{student.name}</h2>
+              <p className="text-muted mb-0">ID: {student.id} | Usuario ID: {student.user_id}</p>
             </div>
             <span className={`badge bg-${student.role === 'estudiante' ? 'success' : 'primary'} fs-6`}>
               {student.role === 'estudiante' ? 'Estudiante' : student.role}
@@ -166,73 +166,88 @@ const StudentDetail = () => {
           </div>
           
           <div className="row">
+            {/* Información de Contacto */}
             <div className="col-md-6">
-              <div className="mb-3">
-                <h6 className="text-muted mb-1">Información de Contacto</h6>
-                <div className="d-flex align-items-center mb-2">
-                  <i className="bi bi-envelope me-2"></i>
-                  <span>{student.email || 'No especificado'}</span>
+              <div className="card mb-4">
+                <div className="card-header bg-light">
+                  <h5 className="mb-0"><i className="bi bi-person-lines-fill me-2"></i>Información de Contacto</h5>
                 </div>
-                <div className="d-flex align-items-center">
-                  <i className="bi bi-telephone me-2"></i>
-                  <span>{student.phone || 'No especificado'}</span>
+                <div className="card-body">
+                  <div className="mb-3">
+                    <h6 className="text-muted mb-2">Datos del Estudiante</h6>
+                    <div className="d-flex align-items-center mb-2">
+                      <i className="bi bi-envelope me-2 text-primary"></i>
+                      <span><strong>Email:</strong> {student.user_email || 'No especificado'}</span>
+                    </div>
+                    <div className="d-flex align-items-center mb-2">
+                      <i className="bi bi-telephone me-2 text-primary"></i>
+                      <span><strong>Teléfono:</strong> {student.user_phone || 'No especificado'}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="mb-3">
+                    <h6 className="text-muted mb-2">Contacto de Emergencia</h6>
+                    <div className="d-flex align-items-center mb-2">
+                      <i className="bi bi-envelope me-2 text-primary"></i>
+                      <span><strong>Email de contacto:</strong> {student.contact_email || 'No especificado'}</span>
+                    </div>
+                    <div className="d-flex align-items-center">
+                      <i className="bi bi-telephone me-2 text-primary"></i>
+                      <span><strong>Teléfono de contacto:</strong> {student.contact_phone || 'No especificado'}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
             
+            {/* Información Académica */}
             <div className="col-md-6">
-              <div className="mb-3">
-                <h6 className="text-muted mb-1">Información Académica</h6>
-                <div className="d-flex align-items-center mb-2">
-                  <i className="bi bi-mortarboard me-2"></i>
-                  <span>{student.course_name || 'Curso no asignado'}</span>
+              <div className="card mb-4">
+                <div className="card-header bg-light">
+                  <h5 className="mb-0"><i className="bi bi-mortarboard me-2"></i>Información Académica</h5>
                 </div>
-                <div className="d-flex align-items-center">
-                  <i className="bi bi-calendar-check me-2"></i>
-                  <span>Registrado el: {new Date(student.created_at).toLocaleDateString()}</span>
+                <div className="card-body">
+                  <div className="mb-3">
+                    <div className="d-flex align-items-center mb-2">
+                      <i className="bi bi-mortarboard me-2 text-primary"></i>
+                      <span><strong>Curso:</strong> {student.course_name || 'No asignado'}</span>
+                    </div>
+                    <div className="d-flex align-items-center mb-2">
+                      <i className="bi bi-123 me-2 text-primary"></i>
+                      <span><strong>Grado:</strong> {student.grade ? `${student.grade}°` : 'No especificado'}</span>
+                    </div>
+                    <div className="d-flex align-items-center">
+                      <i className="bi bi-calendar-check me-2 text-primary"></i>
+                      <span><strong>Registrado el:</strong> {student.user_created_at ? new Date(student.user_created_at).toLocaleDateString('es-ES', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      }) : 'Fecha no disponible'}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div className="mt-4">
-        <h5 className="mb-3">Actividad Reciente</h5>
-        <div className="card">
-          <div className="card-body">
-            <p className="text-muted mb-0">
-              <i className="bi bi-info-circle me-2"></i>
-              Próximamente: Historial de cuestionarios realizados
-            </p>
-          </div>
-        </div>
-      </div>
-      
-      {/* Sección de Información Adicional */}
-      <div className="card mt-4">
-        <div className="card-body">
-          <h5 className="card-title mb-3">Información Adicional</h5>
-          <div className="row">
-            <div className="col-md-6">
-              <div className="mb-3">
-                <h6 className="text-muted mb-1">Datos Personales</h6>
-                <div className="d-flex align-items-center mb-2">
-                  <i className="bi bi-calendar3 me-2"></i>
-                  <span><strong>Edad:</strong> {student.age || 'No especificada'} años</span>
+              
+              {/* Información Adicional */}
+              <div className="card">
+                <div className="card-header bg-light">
+                  <h5 className="mb-0"><i className="bi bi-info-circle me-2"></i>Información Adicional</h5>
                 </div>
-                <div className="d-flex align-items-center">
-                  <i className="bi bi-mortarboard me-2"></i>
-                  <span><strong>Grado:</strong> {student.grade ? `${student.grade}°` : 'No especificado'}</span>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-6">
-              <div className="mb-3">
-                <h6 className="text-muted mb-1">Estado</h6>
-                <div className="d-flex align-items-center">
-                  <i className="bi bi-person-badge me-2"></i>
-                  <span><strong>Estado:</strong> {student.status === 'active' ? 'Activo' : 'Inactivo'}</span>
+                <div className="card-body">
+                  <div className="d-flex align-items-center mb-2">
+                    <i className="bi bi-calendar3 me-2 text-primary"></i>
+                    <span><strong>Edad:</strong> {student.age ? `${student.age} años` : 'No especificada'}</span>
+                  </div>
+                  <div className="d-flex align-items-center">
+                    <i className="bi bi-person-badge me-2 text-primary"></i>
+                    <span><strong>Estado:</strong> 
+                      <span className={`badge bg-${student.user_estado === 'activo' ? 'success' : 'secondary'} ms-2`}>
+                        {student.user_estado === 'activo' ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
