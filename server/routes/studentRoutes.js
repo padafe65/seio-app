@@ -130,9 +130,17 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
             });
         }
         
-        // Obtener los estudiantes asignados al docente
+        // Obtener los estudiantes asignados al docente con todos los campos necesarios
         const query = `
-            SELECT s.id, u.name, u.email, u.phone, c.name as course_name
+            SELECT 
+                s.id, 
+                u.name, 
+                u.email, 
+                u.phone, 
+                s.contact_phone,
+                s.contact_email,
+                c.name as course_name,
+                c.grade as grade
             FROM teacher_students ts
             JOIN students s ON ts.student_id = s.id
             JOIN users u ON s.user_id = u.id
