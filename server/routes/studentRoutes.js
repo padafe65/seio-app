@@ -48,6 +48,7 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
             }
 
             // Obtener los estudiantes asignados al docente con los campos correctos
+            console.log('🔍 Ejecutando consulta para obtener estudiantes del docente:', teacherId);
             const [students] = await pool.query(`
                 SELECT 
                     s.id,
@@ -68,6 +69,8 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
                 WHERE ts.teacher_id = ?
                 ORDER BY u.name
             `, [teacherId]);
+            
+            console.log('📊 Resultado de la consulta de estudiantes:', students);
 
             console.log('📊 Estudiantes encontrados:', students);
             

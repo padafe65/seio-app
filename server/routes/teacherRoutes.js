@@ -72,7 +72,17 @@ router.get('/students', verifyToken, isTeacherOrAdmin, async (req, res) => {
         }
         
         const query = `
-            SELECT s.id, u.name, u.lastname, u.email, u.phone, c.name as course_name
+            SELECT 
+                s.id, 
+                u.name, 
+                u.email, 
+                u.phone, 
+                c.name as course_name,
+                s.contact_phone,
+                s.contact_email,
+                s.age,
+                s.grade,
+                s.course_id
             FROM teacher_students ts
             JOIN students s ON ts.student_id = s.id
             JOIN users u ON s.user_id = u.id
