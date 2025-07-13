@@ -4,6 +4,42 @@ import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
+// Ruta para obtener todos los docentes
+router.get('/', verifyToken, async (req, res) => {
+    try {
+        console.log('🔍 Obteniendo lista de docentes');
+        
+        const query = `
+            SELECT 
+                t.id,
+                t.user_id,
+                u.name,
+                u.email,
+                u.phone,
+                u.estado as user_estado
+            FROM teachers t
+            JOIN users u ON t.user_id = u.id
+            WHERE u.estado = 'activo'
+            ORDER BY u.name ASC
+        `;
+        
+        console.log('🔍 Ejecutando consulta SQL:', query.replace(/\s+/g, ' ').trim());
+        
+        const [teachers] = await pool.query(query);
+        
+        console.log(`✅ Se encontraron ${teachers.length} docentes`);
+        res.json(teachers);
+        
+    } catch (error) {
+        console.error('❌ Error al obtener la lista de docentes:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al obtener la lista de docentes',
+            error: error.message
+        });
+    }
+});
+
 // Middleware para verificar el rol de docente o superadmin
 const isTeacherOrAdmin = (req, res, next) => {
     if (req.user.role !== 'docente' && req.user.role !== 'super_administrador') {

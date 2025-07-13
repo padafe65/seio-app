@@ -41,24 +41,24 @@ const Dashboard = () => {
         };
 
         // Obtener estudiantes del docente
-        const studentsResponse = await api.get(`/api/students/teacher/${teacherId}`);
+        const studentsResponse = await api.get(`/api/students/teacher/${teacherId}`, config);
         setTeacherStudents(studentsResponse.data);
         
         // Obtener calificaciones de los estudiantes
-        const gradesResponse = await api.get(`/api/teachers/student-grades/${teacherId}`);
+        const gradesResponse = await api.get(`/api/teachers/students`, config);
         setStudentGrades(gradesResponse.data);
         
         // Obtener los cursos del docente
-        const coursesResponse = await api.get(`/api/teacher-courses/teacher/${teacherId}`);
+        const coursesResponse = await api.get(`/api/teacher-courses/teacher/${teacherId}`, config);
         
-        if (coursesResponse.data.length > 0) {
+        if (coursesResponse.data && coursesResponse.data.length > 0) {
           // Por ahora, tomamos el primer curso como la "materia" principal
-          setTeacherSubject(coursesResponse.data[0].course_name);
+          setTeacherSubject(coursesResponse.data[0].course_name || 'Sin curso asignado');
         }
         
         // Obtener cuestionarios del docente
         try {
-          const questionnairesResponse = await api.get('/api/questionnaires');
+          const questionnairesResponse = await api.get('/api/questionnaires', config);
           
           // Filtrar en el frontend si es necesario (aunque el backend ya debería filtrar)
           const filteredQuestionnaires = Array.isArray(questionnairesResponse.data) 
@@ -73,7 +73,7 @@ const Dashboard = () => {
         
         // Obtener preguntas del docente
         try {
-          const questionsResponse = await api.get('/api/questions');
+          const questionsResponse = await api.get('/api/questions', config);
           
           // Filtrar en el frontend si es necesario (aunque el backend ya debería filtrar)
           const filteredQuestions = Array.isArray(questionsResponse.data)

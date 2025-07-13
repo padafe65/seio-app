@@ -300,4 +300,90 @@ router.get('/teacher/:userId', async (req, res) => {
   }
 });
 
+// Obtener los docentes de un estudiante
+router.get('/:id/teachers', isTeacherOrAdmin, async (req, res) => {
+    const studentId = req.params.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    console.log(`📝 [${new Date().toISOString()}] Obteniendo docentes del estudiante ${studentId}`);
+    console.log(`👤 Usuario autenticado: ID=${userId}, Rol=${userRole}`);
+
+    try {
+        // Verificar que el estudiante exista
+        const [student] = await pool.query('SELECT id FROM students WHERE id = ?', [studentId]);
+        if (!student || student.length === 0) {
+            console.error(`❌ No se encontró el estudiante con ID ${studentId}`);
+            return res.status(404).json({
+                success: false,
+                message: 'Estudiante no encontrado',
+                error: 'STUDENT_NOT_FOUND'
+            });
+        }
+
+        // Si es docente, verificar que el estudiante esté asignado a él
+        if (userRole === 'docente') {
+            const [teacher] = await pool.query(
+                'SELECT id FROM teachers WHERE user_id = ?', 
+                [userId]
+            );
+
+            if (teacher.length === 0) {
+                console.error('❌ El usuario no tiene un perfil de docente');
+                return res.status(403).json({
+                    success: false,
+                    message: 'No estás registrado como docente',
+                    error: 'TEACHER_NOT_FOUND'
+                });
+            }
+
+            const [assignment] = await pool.query(
+                'SELECT * FROM teacher_students WHERE teacher_id = ? AND student_id = ?',
+                [teacher[0].id, studentId]
+            );
+
+            if (assignment.length === 0) {
+                console.error('❌ El estudiante no está asignado a este docente');
+                return res.status(403).json({
+                    success: false,
+                    message: 'No tienes permiso para ver este estudiante',
+                    error: 'FORBIDDEN'
+                });
+            }
+        }
+
+        // Obtener los docentes del estudiante
+        const [teachers] = await pool.query(`
+            SELECT 
+                t.id,
+                u.name,
+                u.email,
+                u.phone
+            FROM teacher_students ts
+            JOIN teachers t ON ts.teacher_id = t.id
+            JOIN users u ON t.user_id = u.id
+            WHERE ts.student_id = ?
+            ORDER BY u.name
+        `, [studentId]);
+
+        console.log(`📊 Docentes encontrados para el estudiante ${studentId}:`, teachers);
+        
+        res.json({
+            success: true,
+            data: teachers
+        });
+
+    } catch (error) {
+        console.error('❌ Error al obtener docentes del estudiante:', error);
+        console.error('📌 Stack trace:', error.stack);
+        
+        res.status(500).json({
+            success: false,
+            message: 'Error del servidor al obtener los docentes del estudiante',
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+});
+
 export default router;

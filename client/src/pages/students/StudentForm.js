@@ -50,29 +50,87 @@ const StudentForm = ({ isViewMode = false }) => {
     };
 
     const fetchTeachers = async (currentTeacherId = null) => {
+      console.log('🔍 Iniciando fetchTeachers...');
+      
       try {
-        console.log('Obteniendo lista de docentes...');
-        // Obtener todos los docentes
-        const response = await api.get('/api/teachers', getAuthConfig());
+        // Verificar el token
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          const error = new Error('No se encontró el token de autenticación. Por favor, inicie sesión nuevamente.');
+          error.code = 'MISSING_TOKEN';
+          throw error;
+        }
+        
+        // Obtener la configuración de autenticación
+        const config = getAuthConfig();
+        
+        // Realizar la petición para obtener la lista de docentes
+        console.log('🌐 Solicitando lista de docentes a /api/teachers');
+        
+        let response;
+        try {
+          response = await api.get('/api/teachers', config);
+          console.log('✅ Petición a /api/teachers exitosa');
+        } catch (error) {
+          // Manejar errores de red o de la API
+          console.error('❌ Error en la petición a /api/teachers:', {
+            message: error.message,
+            response: error.response ? {
+              status: error.response.status,
+              statusText: error.response.statusText,
+              data: error.response.data
+            } : 'No hay respuesta del servidor',
+            request: error.request,
+            config: error.config
+          });
+          
+          // Proporcionar un mensaje más amigable según el tipo de error
+          if (!error.response) {
+            error.message = 'No se pudo conectar al servidor. Verifique su conexión a internet.';
+          } else if (error.response.status === 401) {
+            error.message = 'Su sesión ha expirado. Por favor, inicie sesión nuevamente.';
+            localStorage.removeItem('authToken');
+            window.location.href = '/login';
+          } else if (error.response.status === 403) {
+            error.message = 'No tiene permisos para acceder a esta información.';
+          } else if (error.response.status === 404) {
+            error.message = 'El recurso solicitado no fue encontrado.';
+          } else if (error.response.status >= 500) {
+            error.message = 'Error interno del servidor. Por favor, intente más tarde.';
+          }
+          
+          throw error;
+        }
+        
+        // Verificar si la respuesta tiene el formato esperado
+        if (!response.data) {
+          throw new Error('La respuesta del servidor no contiene datos');
+        }
         
         // Manejar diferentes formatos de respuesta
         let teachersList = [];
         if (Array.isArray(response.data)) {
+          console.log('📋 Formato de respuesta: Array directo');
           teachersList = response.data;
         } else if (response.data && Array.isArray(response.data.data)) {
+          console.log('📋 Formato de respuesta: Objeto con propiedad data');
           teachersList = response.data.data;
+        } else {
+          console.warn('⚠️ Formato de respuesta inesperado:', response.data);
+          throw new Error('Formato de respuesta inesperado del servidor');
         }
         
         console.log('Docentes obtenidos del servidor:', teachersList);
         
-        // Si se proporciona un ID de docente actual, asegurarse de que esté en la lista
+        // 2. Si hay un ID de docente actual, asegurarse de que esté en la lista
+        let currentTeacher = null;
         if (currentTeacherId) {
           console.log('Buscando docente con ID:', currentTeacherId);
           
-          // Verificar si el docente actual ya está en la lista
-          const currentTeacher = teachersList.find(t => 
-            (t.id && t.id.toString() === currentTeacherId.toString()) ||
-            (t.user_id && t.user_id.toString() === currentTeacherId.toString())
+          // Primero intentar encontrar el docente por user_id (que es lo que usa la relación)
+          currentTeacher = teachersList.find(t => 
+            (t.user_id && t.user_id.toString() === currentTeacherId.toString()) ||
+            (t.id && t.id.toString() === currentTeacherId.toString())
           );
           
           // Si no está en la lista, intentar obtenerlo por separado
@@ -80,11 +138,12 @@ const StudentForm = ({ isViewMode = false }) => {
             console.log('Docente no encontrado en la lista, buscando individualmente...');
             try {
               const teacherResponse = await api.get(`/api/teachers/${currentTeacherId}`, getAuthConfig());
-              const teacherData = teacherResponse.data?.data || teacherResponse.data;
-              if (teacherData) {
-                console.log('Docente encontrado individualmente:', teacherData);
-                // Agregar al principio de la lista
-                teachersList = [teacherData, ...teachersList];
+              currentTeacher = teacherResponse.data?.data || teacherResponse.data;
+              
+              if (currentTeacher) {
+                console.log('Docente encontrado individualmente:', currentTeacher);
+                // Agregar el docente actual a la lista
+                teachersList.unshift(currentTeacher);
               }
             } catch (teacherError) {
               console.warn('No se pudo cargar el docente actual:', teacherError);
@@ -94,9 +153,44 @@ const StudentForm = ({ isViewMode = false }) => {
           }
         }
         
-        console.log('Total de docentes cargados:', teachersList.length);
-        setTeachers(teachersList);
-        return teachersList;
+        // 3. Mapear los datos para asegurar que tengan el formato esperado
+        const formattedTeachers = teachersList.map(teacher => {
+          // Aplanar la estructura si es necesario
+          const teacherData = teacher.user ? {
+            ...teacher,
+            name: teacher.user.name,
+            email: teacher.user.email,
+            phone: teacher.user.phone
+          } : teacher;
+          
+          // Usar user_id como ID principal si está disponible
+          const teacherId = teacherData.user_id || teacherData.id;
+          
+          return {
+            id: teacherId,
+            user_id: teacherData.user_id,
+            name: teacherData.user_name || teacherData.name || `Docente #${teacherId}`,
+            email: teacherData.user_email || teacherData.email || '',
+            phone: teacherData.phone || ''
+          };
+        });
+        
+        console.log('Total de docentes cargados:', formattedTeachers.length);
+        console.log('Lista de docentes formateada:', formattedTeachers);
+        
+        // 4. Si hay un docente actual, asegurarse de que esté seleccionado
+        if (currentTeacher) {
+          const teacherId = currentTeacher.user_id || currentTeacher.id;
+          if (teacherId) {
+            setFormData(prev => ({
+              ...prev,
+              teacher_id: String(teacherId)
+            }));
+          }
+        }
+        
+        setTeachers(formattedTeachers);
+        return formattedTeachers;
       } catch (error) {
         console.error('Error al cargar profesores:', error);
         // Devolver lista vacía en caso de error
@@ -109,43 +203,40 @@ const StudentForm = ({ isViewMode = false }) => {
       if (!id) return;
       
       try {
-        console.log('Obteniendo datos del estudiante con ID:', id);
+        console.log('🔍 Obteniendo datos del estudiante con ID:', id);
         
         // 1. Obtener los datos del estudiante
-        const studentResponse = await api.get(`/api/students/${id}`, getAuthConfig());
-        console.log('Respuesta del servidor (estudiante):', studentResponse);
-        
-        // Extraer los datos del estudiante de la respuesta
-        const studentData = studentResponse.data?.data || studentResponse.data;
-        console.log('Datos del estudiante extraídos:', studentData);
-        
-        if (!studentData) {
-          throw new Error('No se encontraron datos del estudiante');
-        }
-        
-        // 2. Obtener los docentes asignados a este estudiante
-        let mainTeacher = null;
+        let studentData;
         try {
-          const teachersResponse = await api.get(`/api/students/${id}/teachers`, getAuthConfig());
-          console.log('Docentes asignados al estudiante:', teachersResponse.data);
+          console.log(`🌐 Solicitando datos del estudiante con ID: ${id}`);
+          const studentResponse = await api.get(`/api/students/${id}`, getAuthConfig());
+          studentData = studentResponse.data?.data || studentResponse.data;
+          console.log('✅ Datos del estudiante obtenidos:', studentData);
           
-          // Asegurarse de que los datos vienen en el formato esperado
-          const responseData = teachersResponse.data;
-          const assignedTeachers = Array.isArray(responseData) ? 
-            responseData : 
-            (responseData.data || []);
-            
-          mainTeacher = assignedTeachers.length > 0 ? assignedTeachers[0] : null;
-          console.log('Docente principal encontrado:', mainTeacher);
-        } catch (teacherError) {
-          console.warn('Error al cargar docentes asignados:', teacherError);
+          if (!studentData) {
+            throw new Error('No se encontraron datos del estudiante');
+          }
+        } catch (error) {
+          console.error('❌ Error al obtener datos del estudiante:', {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+          });
+          
+          let errorMessage = 'Error al cargar los datos del estudiante';
+          if (error.response?.status === 404) {
+            errorMessage = 'El estudiante solicitado no existe';
+          } else if (error.response?.status === 403) {
+            errorMessage = 'No tiene permisos para ver este estudiante';
+          } else if (!error.response) {
+            errorMessage = 'No se pudo conectar al servidor. Verifique su conexión a internet.';
+          }
+          
+          throw new Error(errorMessage);
         }
         
-        // 3. Cargar la lista completa de docentes
-        await fetchTeachers(mainTeacher?.id || null);
-        
-        // 4. Establecer los datos del formulario
-        const formDataToSet = {
+        // 2. Inicializar el estado del formulario con los datos básicos del estudiante
+        const initialFormData = {
           name: studentData.user_name || studentData.name || '',
           phone: studentData.user_phone || studentData.phone || '',
           email: studentData.user_email || studentData.email || '',
@@ -154,19 +245,63 @@ const StudentForm = ({ isViewMode = false }) => {
           age: studentData.age || '',
           grade: studentData.grade || '',
           course_id: studentData.course_id ? String(studentData.course_id) : '',
-          teacher_id: mainTeacher ? String(mainTeacher.id) : ''
+          teacher_id: ''
         };
         
-        console.log('Datos del formulario a establecer:', formDataToSet);
-        setFormData(formDataToSet);
+        // 3. Establecer los datos iniciales del formulario
+        setFormData(initialFormData);
+        
+        // 4. Obtener docentes asignados al estudiante
+        let mainTeacher = null;
+        try {
+          console.log(`🌐 Solicitando docentes asignados al estudiante ${id}`);
+          const teachersResponse = await api.get(`/api/students/${id}/teachers`, getAuthConfig());
+          const assignedTeachers = Array.isArray(teachersResponse.data) ? teachersResponse.data : [];
+          mainTeacher = assignedTeachers.length > 0 ? assignedTeachers[0] : null;
+          console.log('✅ Docentes asignados obtenidos:', { mainTeacher, assignedTeachers });
+        } catch (error) {
+          console.warn('⚠️ No se pudieron cargar los docentes asignados:', {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data
+          });
+          // Continuar sin docentes asignados en caso de error
+          mainTeacher = null;
+        }
+        
+        // 5. Si hay un docente principal, actualizar el formulario
+        if (mainTeacher) {
+          console.log('👨‍🏫 Docente principal encontrado:', mainTeacher);
+          const teacherId = mainTeacher.id || mainTeacher.user_id;
+          
+          if (teacherId) {
+            console.log(`🔄 Actualizando formulario con docente ID: ${teacherId}`);
+            setFormData(prev => ({
+              ...prev,
+              teacher_id: String(teacherId)
+            }));
+            
+            // Cargar la lista de docentes con énfasis en el docente actual
+            console.log('🔄 Cargando lista de docentes con el docente principal...');
+            await fetchTeachers(teacherId);
+            return; // Salir de la función después de cargar los docentes
+          }
+        }
+        
+        // 6. Si no hay docente asignado o hubo un error, cargar la lista completa
+        console.log('ℹ️ No se encontró docente asignado o hubo un error, cargando lista completa...');
+        await fetchTeachers();
         
       } catch (error) {
-        console.error('Error al cargar datos del estudiante:', error);
+        console.error('❌ Error al cargar datos del estudiante:', error);
+        
+        // Mostrar mensaje de error al usuario
         Swal.fire({
           icon: 'error',
           title: 'Error',
-          text: 'No se pudo cargar la información del estudiante. Por favor, intente nuevamente.'
+          text: error.message || 'No se pudo cargar la información del estudiante. Por favor, intente nuevamente.'
         });
+        
         throw error; // Relanzar el error para manejarlo en loadData
       }
     };
@@ -178,15 +313,20 @@ const StudentForm = ({ isViewMode = false }) => {
         // 1. Cargar cursos
         await fetchCourses();
         
-        // 2. Cargar datos del estudiante (que también cargará los docentes)
-        await fetchStudentData();
+        // 2. Si hay un ID, cargar datos del estudiante
+        if (id) {
+          await fetchStudentData();
+        } else {
+          // Si es un nuevo estudiante, solo cargar la lista de docentes
+          await fetchTeachers();
+        }
         
       } catch (error) {
         console.error('Error al cargar datos:', error);
         Swal.fire({
           icon: 'error',
           title: 'Error',
-          text: 'No se pudieron cargar los datos. Por favor, intente nuevamente.'
+          text: error.message || 'No se pudieron cargar los datos. Por favor, intente nuevamente.'
         });
       } finally {
         setLoading(false);
@@ -212,39 +352,90 @@ const StudentForm = ({ isViewMode = false }) => {
       console.log("Enviando datos:", formData);
       setLoading(true);
 
+      // Validar datos requeridos
+      if (!formData.name || !formData.email) {
+        throw new Error('Nombre y correo electrónico son campos requeridos');
+      }
+
+      // Preparar los datos para enviar
+      const studentData = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone || '',
+        contact_email: formData.contact_email || '',
+        contact_phone: formData.contact_phone || '',
+        age: formData.age || null,
+        grade: formData.grade || '',
+        course_id: formData.course_id ? parseInt(formData.course_id) : null,
+        // Asegurarse de que teacher_id sea un número o null
+        teacher_id: formData.teacher_id ? parseInt(formData.teacher_id) : null
+      };
+
+      console.log("Datos a enviar al servidor:", studentData);
+
       if (!id) {
         // CREAR: Enviar todos los datos a la ruta de creación de estudiantes
-        const response = await api.post('/api/students', formData, getAuthConfig());
+        const response = await api.post('/api/students', studentData, getAuthConfig());
         console.log("Respuesta de creación:", response.data);
 
         Swal.fire({
           icon: 'success',
           title: '¡Éxito!',
-          text: 'Estudiante creado correctamente'
+          text: 'Estudiante creado correctamente',
+          showConfirmButton: false,
+          timer: 1500
         });
 
         navigate('/estudiantes');
       } else {
-        // ACTUALIZAR: La lógica de actualización ya es correcta.
-        const response = await api.put(`/api/students/${id}`, formData, getAuthConfig());
+        // ACTUALIZAR: Usar PATCH para enviar solo los campos modificados
+        const response = await api.patch(`/api/students/${id}`, studentData, getAuthConfig());
         console.log("Respuesta de actualización:", response.data);
 
         Swal.fire({
           icon: 'success',
-          title: 'Actualizado',
-          text: 'Estudiante actualizado correctamente'
+          title: '¡Actualizado!',
+          text: 'Estudiante actualizado correctamente',
+          showConfirmButton: false,
+          timer: 1500
+        }).then(() => {
+          navigate('/estudiantes');
         });
-
-        navigate('/estudiantes');
       }
     } catch (error) {
       console.error('Error completo:', error);
+      
+      let errorMessage = 'Hubo un problema al guardar los datos';
+      
+      if (error.response) {
+        console.error('Detalles del error:', error.response.data);
+        errorMessage = error.response.data?.message || 
+                      error.response.data?.error || 
+                      `Error ${error.response.status}: ${error.response.statusText}`;
+      } else if (error.request) {
+        console.error('No se recibió respuesta del servidor:', error.request);
+        errorMessage = 'No se pudo conectar al servidor. Verifica tu conexión a internet.';
+      }
 
       Swal.fire({
         icon: 'error',
         title: 'Error',
-        text: error.response?.data?.message || 'Hubo un problema al guardar los datos'
+        html: `
+          <div class="text-start">
+            <p class="mb-2">${errorMessage}</p>
+            ${error.response?.data?.details ? 
+              `<p class="mb-1 fw-bold">Detalles:</p>
+              <ul class="mb-0">
+                ${Object.entries(error.response.data.details)
+                  .map(([field, message]) => `<li>${field}: ${message}</li>`)
+                  .join('')}
+              </ul>` : ''}
+          </div>
+        `,
+        confirmButtonText: 'Entendido'
       });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -385,61 +576,65 @@ const StudentForm = ({ isViewMode = false }) => {
               </div>
               
               <div className="col-md-6 mb-3">
-                <label htmlFor="course_id" className="form-label">Curso</label>
-                <select
-                  className="form-select"
-                  id="course_id"
-                  name="course_id"
-                  value={formData.course_id}
-                  onChange={handleChange}
-                  required
-                  disabled={isViewMode}
-                >
-                  <option value="">Seleccionar curso</option>
-                  {courses.map(course => (
-                    <option key={course.id} value={course.id}>
-                      {course.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            
-            {/* Nuevo selector de profesor */}
-            <div className="row">
-              <div className="mb-4">
-                <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="teacher_id">
-                  Docente Asignado
-                </label>
-                <select
-                  id="teacher_id"
-                  name="teacher_id"
-                  value={formData.teacher_id || ''}
-                  onChange={handleChange}
-                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                  disabled={isViewMode}
-                >
-                  <option value="">Seleccione un docente</option>
-                  {teachers.length > 0 ? (
-                    teachers.map((teacher) => {
-                      const teacherId = teacher.id || teacher.user_id; // Manejar ambos formatos de ID
-                      const isSelected = formData.teacher_id === teacherId?.toString();
-                      
-                      return (
-                        <option 
-                          key={teacherId}
-                          value={teacherId}
-                          className={isSelected ? 'font-bold bg-blue-100' : ''}
-                        >
-                          {isSelected ? '(Actual) ' : ''}
-                          {teacher.name} {teacher.lastname || ''}
-                        </option>
-                      );
-                    })
-                  ) : (
-                    <option value="" disabled>No hay docentes disponibles</option>
-                  )}
-                </select>
+                <label htmlFor="teacher_id" className="form-label">Docente Asignado</label>
+                {loading ? (
+                  <div className="d-flex align-items-center">
+                    <div className="spinner-border spinner-border-sm me-2" role="status">
+                      <span className="visually-hidden">Cargando...</span>
+                    </div>
+                    <span>Cargando docentes...</span>
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      id="teacher_id"
+                      name="teacher_id"
+                      className={`form-select ${!formData.teacher_id && 'is-invalid'}`}
+                      value={formData.teacher_id || ''}
+                      onChange={handleChange}
+                      required
+                      disabled={isViewMode || teachers.length === 0}
+                    >
+                      <option value="">Seleccione un docente</option>
+                      {teachers.length > 0 ? (
+                        teachers.map((teacher) => {
+                          // Manejar tanto teacher.id como teacher.user_id
+                          const teacherId = teacher.id || teacher.user_id;
+                          const isSelected = formData.teacher_id === teacherId?.toString();
+                          // Usar el nombre del usuario si está disponible, de lo contrario un valor por defecto
+                          const displayName = teacher.user_name || teacher.name || `Docente #${teacherId}`;
+                          
+                          return (
+                            <option 
+                              key={teacherId}
+                              value={teacherId}
+                              className={isSelected ? 'fw-bold' : ''}
+                            >
+                              {isSelected ? '✓ ' : ''}{displayName}
+                            </option>
+                          );
+                        })
+                      ) : (
+                        <option value="" disabled>No hay docentes disponibles</option>
+                      )}
+                    </select>
+                    <div className="form-text">
+                      {formData.teacher_id ? (
+                        <span className="text-success">
+                          <i className="bi bi-check-circle-fill me-1"></i>
+                          Docente seleccionado correctamente
+                        </span>
+                      ) : (
+                        <span className="text-warning">
+                          <i className="bi bi-exclamation-triangle-fill me-1"></i>
+                          {teachers.length === 0 ? 
+                            'No hay docentes disponibles para asignar' : 
+                            'Seleccione un docente para este estudiante'}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             
