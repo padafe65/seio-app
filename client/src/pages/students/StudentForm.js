@@ -245,47 +245,43 @@ const StudentForm = ({ isViewMode = false }) => {
           age: studentData.age || '',
           grade: studentData.grade || '',
           course_id: studentData.course_id ? String(studentData.course_id) : '',
-          teacher_id: ''
+          teacher_id: studentData.teacher_id ? String(studentData.teacher_id) : ''
         };
         
         // 3. Establecer los datos iniciales del formulario
         setFormData(initialFormData);
         
-        // 4. Obtener docentes asignados al estudiante
-        let mainTeacher = null;
-        try {
-          console.log(`🌐 Solicitando docentes asignados al estudiante ${id}`);
-          const teachersResponse = await api.get(`/api/students/${id}/teachers`, getAuthConfig());
-          const assignedTeachers = Array.isArray(teachersResponse.data) ? teachersResponse.data : [];
-          mainTeacher = assignedTeachers.length > 0 ? assignedTeachers[0] : null;
-          console.log('✅ Docentes asignados obtenidos:', { mainTeacher, assignedTeachers });
-        } catch (error) {
-          console.warn('⚠️ No se pudieron cargar los docentes asignados:', {
-            message: error.message,
-            status: error.response?.status,
-            data: error.response?.data
-          });
-          // Continuar sin docentes asignados en caso de error
-          mainTeacher = null;
+        // 4. Verificar si el estudiante ya tiene un docente asignado
+        let mainTeacherId = null;
+        
+        // Opción 1: Verificar si el estudiante tiene teacher_id directamente
+        if (studentData.teacher_id) {
+          mainTeacherId = studentData.teacher_id;
+          console.log('👨\u200d🏫 Docente asignado encontrado en studentData.teacher_id:', mainTeacherId);
+        } 
+        // Opción 2: Verificar si hay un docente en la relación teacher_students
+        else if (studentData.teachers && studentData.teachers.length > 0) {
+          mainTeacherId = studentData.teachers[0].id || studentData.teachers[0].user_id;
+          console.log('👨\u200d🏫 Docente asignado encontrado en relación teacher_students:', mainTeacherId);
         }
         
-        // 5. Si hay un docente principal, actualizar el formulario
-        if (mainTeacher) {
-          console.log('👨‍🏫 Docente principal encontrado:', mainTeacher);
-          const teacherId = mainTeacher.id || mainTeacher.user_id;
+        // Depuración: Mostrar los datos completos del estudiante
+        console.log('📋 Datos completos del estudiante:', studentData);
+        console.log('🔍 Buscando teacher_id en studentData.teacher_id:', studentData.teacher_id);
+        console.log('🔍 Buscando teacher_id en studentData.teacher_id (alternativa):', studentData.teacher_id);
+        
+        // 5. Si hay un docente asignado, actualizar el formulario
+        if (mainTeacherId) {
+          console.log(`🔄 Actualizando formulario con docente ID: ${mainTeacherId}`);
+          setFormData(prev => ({
+            ...prev,
+            teacher_id: String(mainTeacherId)
+          }));
           
-          if (teacherId) {
-            console.log(`🔄 Actualizando formulario con docente ID: ${teacherId}`);
-            setFormData(prev => ({
-              ...prev,
-              teacher_id: String(teacherId)
-            }));
-            
-            // Cargar la lista de docentes con énfasis en el docente actual
-            console.log('🔄 Cargando lista de docentes con el docente principal...');
-            await fetchTeachers(teacherId);
-            return; // Salir de la función después de cargar los docentes
-          }
+          // Cargar la lista de docentes con énfasis en el docente actual
+          console.log('🔄 Cargando lista de docentes con el docente principal...');
+          await fetchTeachers(mainTeacherId);
+          return; // Salir de la función después de cargar los docentes
         }
         
         // 6. Si no hay docente asignado o hubo un error, cargar la lista completa

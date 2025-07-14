@@ -107,6 +107,15 @@ export const getStudentById = async (req, res) => {
 
     console.log('Permiso concedido, obteniendo datos del estudiante...');
     
+    // Primero, obtener el ID del docente asignado al estudiante
+    const [teacherAssignment] = await pool.query(
+      'SELECT teacher_id FROM teacher_students WHERE student_id = ? LIMIT 1',
+      [id]
+    );
+    
+    const teacherId = teacherAssignment.length > 0 ? teacherAssignment[0].teacher_id : null;
+    
+    // Luego, obtener los datos del estudiante
     const query = `
       SELECT 
         s.*, 
@@ -144,9 +153,18 @@ export const getStudentById = async (req, res) => {
     }
 
     console.log('=== FIN getStudentById (éxito) ===');
+    
+    // Incluir el teacher_id en la respuesta
+    const studentData = {
+      ...students[0],
+      teacher_id: teacherId
+    };
+    
+    console.log('Datos del estudiante con teacher_id:', studentData);
+    
     res.json({
       success: true,
-      data: students[0]
+      data: studentData
     });
   } catch (error) {
     console.error('Error al obtener estudiante:', error);
@@ -154,6 +172,173 @@ export const getStudentById = async (req, res) => {
       message: 'Error del servidor al obtener estudiante',
       error: error.message
     });
+  }
+};
+
+// Actualizar un estudiante existente
+export const updateStudent = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  const userRole = req.user.role;
+  const { 
+    name, 
+    email, 
+    phone, 
+    contact_email, 
+    contact_phone, 
+    age, 
+    grade, 
+    course_id,
+    teacher_id 
+  } = req.body;
+
+  console.log('=== INICIO updateStudent ===');
+  console.log('Datos recibidos para actualizar:', { 
+    id, 
+    name, 
+    email, 
+    phone, 
+    contact_email, 
+    contact_phone, 
+    age, 
+    grade, 
+    course_id,
+    teacher_id,
+    userId,
+    userRole
+  });
+
+  // Iniciar una transacción
+  const connection = await pool.getConnection();
+  await connection.beginTransaction();
+
+  try {
+    // 1. Verificar permisos
+    if (userRole === 'docente') {
+      // Verificar que el estudiante esté asignado a este docente
+      const [teacher] = await connection.query(
+        'SELECT id FROM teachers WHERE user_id = ?', 
+        [userId]
+      );
+
+      if (teacher.length === 0) {
+        await connection.rollback();
+        return res.status(403).json({ 
+          success: false,
+          message: 'No estás registrado como docente',
+          error: 'TEACHER_NOT_FOUND'
+        });
+      }
+
+      const [assignment] = await connection.query(
+        'SELECT * FROM teacher_students WHERE teacher_id = ? AND student_id = ?',
+        [teacher[0].id, id]
+      );
+
+      if (assignment.length === 0) {
+        await connection.rollback();
+        return res.status(403).json({ 
+          success: false,
+          message: 'No tienes permiso para actualizar este estudiante',
+          error: 'FORBIDDEN'
+        });
+      }
+    }
+
+    // 2. Obtener el user_id del estudiante
+    const [student] = await connection.query(
+      'SELECT user_id FROM students WHERE id = ?',
+      [id]
+    );
+
+    if (student.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Estudiante no encontrado',
+        error: 'NOT_FOUND'
+      });
+    }
+
+    const userIdToUpdate = student[0].user_id;
+
+    // 3. Actualizar la tabla users
+    await connection.query(
+      'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
+      [name, email, phone, userIdToUpdate]
+    );
+
+    // 4. Actualizar la tabla students
+    await connection.query(
+      `UPDATE students 
+       SET contact_email = ?, contact_phone = ?, age = ?, grade = ?, course_id = ? 
+       WHERE id = ?`,
+      [contact_email, contact_phone, age, grade, course_id, id]
+    );
+
+    // 5. Actualizar la relación con el docente si se proporcionó teacher_id
+    if (teacher_id) {
+      // Verificar que el docente exista (teacher_id es en realidad el user_id)
+      const [teacher] = await connection.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [teacher_id]
+      );
+
+      if (teacher.length === 0) {
+        await connection.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'El docente especificado no existe',
+          error: 'TEACHER_NOT_FOUND',
+          details: `No se encontró un docente con user_id: ${teacher_id}`
+        });
+      }
+
+      const teacherDbId = teacher[0].id;
+
+      // Eliminar asignaciones existentes
+      await connection.query(
+        'DELETE FROM teacher_students WHERE student_id = ?',
+        [id]
+      );
+
+      // Crear nueva asignación usando el id real de la tabla teachers
+      await connection.query(
+        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
+        [teacherDbId, id]
+      );
+    }
+
+    // Confirmar la transacción
+    await connection.commit();
+
+    console.log('=== FIN updateStudent (éxito) ===');
+    
+    // Obtener los datos actualizados del estudiante
+    const [updatedStudent] = await pool.query(
+      'SELECT s.*, u.name as user_name, u.email as user_email, u.phone as user_phone ' +
+      'FROM students s ' +
+      'JOIN users u ON s.user_id = u.id ' +
+      'WHERE s.id = ?',
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Estudiante actualizado correctamente',
+      data: updatedStudent[0]
+    });
+
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error al actualizar estudiante:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error del servidor al actualizar estudiante',
+      error: error.message
+    });
+  } finally {
+    connection.release();
   }
 };
 

@@ -2,7 +2,7 @@ import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { log } from 'console';
-import { getStudentById } from '../controllers/studentController.js';
+import { getStudentById, updateStudent } from '../controllers/studentController.js';
 
 const router = express.Router();
 
@@ -11,6 +11,9 @@ router.use(verifyToken);
 
 // Obtener un estudiante por ID
 router.get('/:id', isTeacherOrAdmin, getStudentById);
+
+// Actualizar un estudiante
+router.patch('/:id', isTeacherOrAdmin, updateStudent);
 
 // Obtener estudiantes por ID de docente
 router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
