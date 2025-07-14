@@ -140,6 +140,7 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
         const query = `
             SELECT 
                 s.id, 
+                s.user_id,
                 u.name, 
                 u.email, 
                 u.phone, 
@@ -147,11 +148,17 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
                 s.contact_email,
                 c.name as course_name,
                 c.grade as grade
-            FROM teacher_students ts
+            FROM (
+                SELECT DISTINCT ts.student_id 
+                FROM teacher_students ts 
+                WHERE ts.teacher_id = ?
+            ) AS ts
             JOIN students s ON ts.student_id = s.id
             JOIN users u ON s.user_id = u.id
             LEFT JOIN courses c ON s.course_id = c.id
-            WHERE ts.teacher_id = ?
+            GROUP BY s.id, s.user_id, u.name, u.email, u.phone, 
+                     s.contact_phone, s.contact_email, c.name, c.grade
+            ORDER BY u.name ASC
         `;
         
         console.log(`🔍 Ejecutando consulta para estudiantes del docente ${teacherId}`);

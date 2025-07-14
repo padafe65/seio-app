@@ -44,8 +44,18 @@ const TeacherStudentsList = () => {
         console.log('📊 Respuesta del servidor:', response.data);
         
         if (response.data && response.data.success) {
-          setStudents(response.data.data || []);
-          console.log(`✅ Se cargaron ${response.data.data?.length || 0} estudiantes`);
+          // Eliminar duplicados basados en el ID del estudiante
+          const uniqueStudents = response.data.data.reduce((acc, current) => {
+            const x = acc.find(item => item.id === current.id);
+            if (!x) {
+              return acc.concat([current]);
+            } else {
+              return acc;
+            }
+          }, []);
+          
+          setStudents(uniqueStudents);
+          console.log(`✅ Se cargaron ${uniqueStudents.length} estudiantes únicos (de ${response.data.data?.length || 0} registros)`);
         } else {
           console.error('❌ La respuesta del servidor no tiene el formato esperado');
           setStudents([]);
@@ -143,8 +153,8 @@ const TeacherStudentsList = () => {
                 </thead>
                 <tbody>
                   {filteredStudents.length > 0 ? (
-                    filteredStudents.map((student) => (
-                      <tr key={`student-${student.id}`}>
+                    filteredStudents.map((student, index) => (
+                      <tr key={`student-${student.id}-${index}`}>
                         <td>{student.name}</td>
                         <td>{student.email}</td>
                         <td>{student.phone}</td>
