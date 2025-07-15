@@ -12,7 +12,7 @@ import ResetPassword from './pages/ResetPassword.js';
 import CompleteStudent from './components/CompleteStudent.js';
 import CompleteTeacher from './components/CompleteTeacher.js';
 import Dashboard from './pages/Dashboard.js';
-import CreateQuestionPage from './pages/CreateQuestionPage.js';
+import CreateQuestionPage from './pages/questionnaires/CreateQuestionPage.js';
 import StudentDashboardPage from './pages/StudentDashboardPage.js';
 import TakeQuizPage from './pages/TakeQuizPage.js';
 import ResultsPage from './pages/ResultsPage.js';
@@ -39,6 +39,7 @@ import ResultsList from './pages/results/ResultsList.js';
 import ResultDetail from './pages/results/ResultDetail.js';
 import QuestionnairesList from './pages/questionnaires/QuestionnairesList.js';
 import QuestionnaireForm from './pages/questionnaires/QuestionnaireForm.js';
+
 import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
 import StudentIndicators from './pages/indicators/StudentIndicators';
@@ -400,7 +401,6 @@ function AppContent() {
           <Route path="evaluacion-fase" element={<PhaseEvaluation />} />
           <Route path="cuestionarios" element={<QuestionnairesList />} />
           <Route path="cuestionarios/nuevo" element={<QuestionnaireForm />} />
-          <Route path="cuestionarios/:id/editar" element={<QuestionnaireForm />} />
           <Route path="cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
         </Route>
 
