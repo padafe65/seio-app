@@ -142,7 +142,7 @@ router.get('/:id', isTeacherOrAdmin, async (req, res) => {
     
     // 1. Obtener el cuestionario
     const [questionnaires] = await pool.query(
-      `SELECT q.*, u.name as teacher_name, u.lastname as teacher_lastname
+      `SELECT q.*, u.name as teacher_name
        FROM questionnaires q
        LEFT JOIN teachers t ON q.created_by = t.id
        LEFT JOIN users u ON t.user_id = u.id
@@ -174,27 +174,17 @@ router.get('/:id', isTeacherOrAdmin, async (req, res) => {
     
     // 3. Obtener las preguntas del cuestionario
     const [questions] = await pool.query(
-      'SELECT * FROM questions WHERE questionnaire_id = ? ORDER BY question_order',
+      'SELECT * FROM questions WHERE questionnaire_id = ? ORDER BY id',
       [id]
     );
     
-    // 4. Obtener estudiantes asignados
-    const [assignedStudents] = await pool.query(
-      `SELECT s.id, u.name, u.lastname, u.email 
-       FROM students s
-       JOIN users u ON s.user_id = u.id
-       JOIN questionnaire_students qs ON s.id = qs.student_id
-       WHERE qs.questionnaire_id = ?`,
-      [id]
-    );
-    
-    // 5. Devolver la respuesta
+    // 4. Devolver la respuesta
     res.json({
       success: true,
+      message: 'Cuestionario obtenido correctamente',
       data: {
         ...questionnaire,
-        questions,
-        assigned_students: assignedStudents
+        questions
       }
     });
     

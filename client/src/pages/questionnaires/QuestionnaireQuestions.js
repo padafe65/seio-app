@@ -1,520 +1,571 @@
-// src/pages/questionnaires/QuestionnaireQuestions.js
+// pages/CreateQuestionPage.js
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import api from '../../config/axios';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import axios from 'axios';
 import Swal from 'sweetalert2';
-import { MathJax, MathJaxContext } from 'better-react-mathjax';
-import { ArrowLeft, Save, Plus } from 'lucide-react';
+import 'bootstrap/dist/css/bootstrap.min.css';
+import { ArrowLeft } from 'lucide-react';
+// Importaciones para KaTeX
+import 'katex/dist/katex.min.css';
+import { InlineMath, BlockMath } from 'react-katex';
 
-const QuestionnaireQuestions = () => {
-  const { id } = useParams();
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
+const CreateQuestionPage = () => {
+  const { id: questionnaireIdFromUrl } = useParams();
   const navigate = useNavigate();
   
-  const [loading, setLoading] = useState(true);
-  const [questionnaire, setQuestionnaire] = useState(null);
-  const [questions, setQuestions] = useState([]);
-  
-  const [currentQuestion, setCurrentQuestion] = useState({
+  const initialFormState = {
+    questionnaire_id: questionnaireIdFromUrl || '',
     question_text: '',
     option1: '',
     option2: '',
     option3: '',
     option4: '',
-    correct_answer: '1',
-    image: null
+    correct_answer: '',
+    category: '',
+    image: null,
+    image_url: ''
+  };
+
+  const [formData, setFormData] = useState(initialFormState);
+  const [preview, setPreview] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [questionnaires, setQuestionnaires] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [currentQuestionnaire, setCurrentQuestionnaire] = useState(null);
+  const [loading, setLoading] = useState(true);
+  // Estado para previsualizar expresiones matemáticas
+  const [mathPreview, setMathPreview] = useState({
+    question_text: false,
+    option1: false,
+    option2: false,
+    option3: false,
+    option4: false
   });
-  
-  const [imagePreview, setImagePreview] = useState(null);
-  const [showLatexGuide, setShowLatexGuide] = useState(false);
-  
+
   useEffect(() => {
-    const fetchQuestionnaireData = async () => {
+    const fetchData = async () => {
       try {
-        const response = await api.get(`/api/questionnaires/${id}`);
-        setQuestionnaire(response.data.questionnaire);
-        setQuestions(response.data.questions || []);
+        // Si hay un ID de cuestionario en la URL, carga solo las preguntas de ese cuestionario
+        if (questionnaireIdFromUrl) {
+          setFormData(prev => ({
+            ...prev,
+            questionnaire_id: questionnaireIdFromUrl
+          }));
+          
+          // Cargar detalles del cuestionario y sus preguntas en una sola petición
+          const questionnaireResponse = await axios.get(`${API_URL}/api/questionnaires/${questionnaireIdFromUrl}`);
+          console.log("Cuestionario create:", questionnaireResponse.data);
+          
+          // Verificar si el cuestionario existe
+          if (!questionnaireResponse.data.data) {
+            throw new Error('Cuestionario no encontrado');
+          }
+          
+          // Establecer el cuestionario actual
+          const data = questionnaireResponse.data.data;
+          setCurrentQuestionnaire(data);
+          
+          // IMPORTANTE: Establecer la categoría del cuestionario en el estado del formulario
+          setFormData(prev => ({
+            ...prev,
+            category: data.category
+          }));
+          
+          // Usar las preguntas que vienen en la respuesta del cuestionario
+          setQuestions(data.questions);
+        } else {
+          // Si no hay ID, carga todos los cuestionarios y preguntas como antes
+          fetchQuestions();
+          fetchQuestionnaires();
+        }
+        setLoading(false);
       } catch (error) {
-        console.error('Error al cargar cuestionario:', error);
-        Swal.fire({
-          icon: 'error',
-          title: 'Error',
-          text: error.response?.data?.message || 'No se pudo cargar la información del cuestionario'
-        });
-      } finally {
+        console.error('Error al cargar datos:', error);
         setLoading(false);
       }
     };
     
-    fetchQuestionnaireData();
-  }, [id]);
-  
-  const handleQuestionChange = (e) => {
-    const { name, value } = e.target;
-    setCurrentQuestion({ ...currentQuestion, [name]: value });
-  };
-  
-  const handleImageChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedImage = e.target.files[0];
-      setCurrentQuestion({ ...currentQuestion, image: selectedImage });
-      setImagePreview(URL.createObjectURL(selectedImage));
+    fetchData();
+  }, [questionnaireIdFromUrl]);
+
+  const fetchQuestions = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/api/questions`);
+      setQuestions(res.data);
+    } catch (err) {
+      console.error('Error cargando preguntas:', err.message);
     }
   };
-  
-  const handleAddQuestion = async (e) => {
-    e.preventDefault();
-    
+
+  const fetchQuestionnaires = async () => {
     try {
-      const formData = new FormData();
-      formData.append('questionnaire_id', id);
-      formData.append('question_text', currentQuestion.question_text);
-      formData.append('option1', currentQuestion.option1);
-      formData.append('option2', currentQuestion.option2);
-      formData.append('option3', currentQuestion.option3);
-      formData.append('option4', currentQuestion.option4);
-      formData.append('correct_answer', currentQuestion.correct_answer);
+      const res = await axios.get(`${API_URL}/api/questionnaires`);
+      setQuestionnaires(res.data);
+    } catch (err) {
+      console.error('Error cargando cuestionarios:', err.message);
+    }
+  };
+
+  const handleChange = (e) => {
+    const { name, value, files } = e.target;
+    if (name === 'image') {
+      const file = files[0];
+      setFormData({ ...formData, image: file });
+      setPreview(file ? URL.createObjectURL(file) : null);
+    } else {
+      setFormData({ ...formData, [name]: value });
       
-      if (currentQuestion.image) {
-        formData.append('image', currentQuestion.image);
+      // Si cambia el cuestionario, actualizar la categoría automáticamente
+      if (name === 'questionnaire_id' && value) {
+        const selectedQuestionnaire = questionnaires.find(q => q.id === parseInt(value) || q.id === value);
+        if (selectedQuestionnaire) {
+          setFormData(prev => ({
+            ...prev,
+            category: selectedQuestionnaire.category,
+            [name]: value
+          }));
+        }
       }
-      
-      const response = await api.post('/api/questions', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
+    }
+  };
+
+  // Función para alternar entre vista normal y matemática
+  const toggleMathPreview = (field) => {
+    setMathPreview(prev => ({
+      ...prev,
+      [field]: !prev[field]
+    }));
+  };
+
+  // Función para detectar si un texto contiene expresiones LaTeX
+  const containsLatex = (text) => {
+    return text && (text.includes('\\') || text.includes('{') || text.includes('}'));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const data = new FormData();
+
+    for (let key in formData) {
+      if (formData[key]) {
+        data.append(key, formData[key]);
+      }
+    }
+
+    // Si no se seleccionó una nueva imagen, mantener la existente
+    if (editingId && !formData.image && preview) {
+      data.append('image_url', preview.replace(`${API_URL}`, ''));
+    }
+
+    try {
+      const successMessage = editingId ? 'Pregunta actualizada' : 'Pregunta creada';
+
+      if (editingId) {
+        await axios.put(`${API_URL}/api/questions/${editingId}`, data);
+      } else {
+        await axios.post(`${API_URL}/api/questions`, data);
+      }
+
+      Swal.fire(successMessage, '', 'success').then(() => {
+        // Si estamos en la página de un cuestionario específico, volvemos a la lista de cuestionarios.
+        // Si no, simplemente reseteamos el formulario para poder crear otra pregunta de otro cuestionario.
+        if (questionnaireIdFromUrl) {
+          navigate('/cuestionarios');
+        } else {
+          resetForm();
+          fetchQuestions(); // Recargar la lista general si aplica
         }
       });
-      
-      // Añadir la nueva pregunta a la lista
-      const newQuestion = {
-        id: response.data.id,
-        question_text: currentQuestion.question_text,
-        option1: currentQuestion.option1,
-        option2: currentQuestion.option2,
-        option3: currentQuestion.option3,
-        option4: currentQuestion.option4,
-        correct_answer: currentQuestion.correct_answer,
-        image_url: imagePreview
-      };
-      
-      setQuestions([...questions, newQuestion]);
-      
-      // Limpiar el formulario
-      setCurrentQuestion({
-        question_text: '',
-        option1: '',
-        option2: '',
-        option3: '',
-        option4: '',
-        correct_answer: '1',
-        image: null
-      });
-      setImagePreview(null);
-      
-      Swal.fire({
-        icon: 'success',
-        title: 'Pregunta añadida',
-        text: 'La pregunta ha sido añadida correctamente'
-      });
     } catch (error) {
-      console.error('Error al añadir pregunta:', error);
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'Hubo un problema al añadir la pregunta'
-      });
+      console.error(error);
+      Swal.fire('Error al guardar la pregunta', '', 'error');
     }
   };
-  
-  const handleDeleteQuestion = async (questionId) => {
-    try {
-      await api.delete(`/api/questions/${questionId}`);
-      
-      // Actualizar la lista de preguntas
-      setQuestions(questions.filter(q => q.id !== questionId));
-      
-      Swal.fire({
-        icon: 'success',
-        title: 'Pregunta eliminada',
-        text: 'La pregunta ha sido eliminada correctamente'
-      });
-    } catch (error) {
-      console.error('Error al eliminar pregunta:', error);
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'Hubo un problema al eliminar la pregunta'
-      });
-    }
-  };
-  
-  const handleFinish = () => {
-    Swal.fire({
-      icon: 'success',
-      title: 'Cuestionario completado',
-      text: `Se han añadido ${questions.length} preguntas al cuestionario`
-    }).then(() => {
-      navigate('/cuestionarios');
+
+  const resetForm = () => {
+    setFormData({
+      ...initialFormState,
+      questionnaire_id: questionnaireIdFromUrl || ''
+    });
+    setPreview(null);
+    setEditingId(null);
+    // Resetear también la vista previa matemática
+    setMathPreview({
+      question_text: false,
+      option1: false,
+      option2: false,
+      option3: false,
+      option4: false
     });
   };
-  
-  // Ejemplos de LaTeX para la guía
-  const latexExamples = [
-    { description: 'Fracciones', latex: '\\frac{numerador}{denominador}', ejemplo: '\\frac{1}{2}' },
-    { description: 'Exponentes', latex: 'base^{exponente}', ejemplo: 'x^{2}' },
-    { description: 'Subíndices', latex: 'base_{subíndice}', ejemplo: 'x_{i}' },
-    { description: 'Raíces', latex: '\\sqrt{expresión}', ejemplo: '\\sqrt{16}' },
-    { description: 'Raíz n-ésima', latex: '\\sqrt[n]{expresión}', ejemplo: '\\sqrt[3]{27}' }
-  ];
-  
+
+  const handleEdit = (question) => {
+    setEditingId(question.id);
+    setFormData({
+      questionnaire_id: question.questionnaire_id,
+      question_text: question.question_text,
+      option1: question.option1,
+      option2: question.option2,
+      option3: question.option3,
+      option4: question.option4,
+      correct_answer: question.correct_answer,
+      category: question.category,
+      image: null,
+      image_url: question.image_url || ''
+    });
+    setPreview(question.image_url ? `${API_URL}${question.image_url}` : null);
+  };
+
+  const handleDelete = async (id) => {
+    const result = await Swal.fire({
+      title: '¿Estás seguro?',
+      text: "Esta acción no se puede deshacer",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#3085d6',
+      cancelButtonColor: '#d33',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    
+    if (result.isConfirmed) {
+      try {
+        await axios.delete(`${API_URL}/api/questions/${id}`);
+        Swal.fire('Eliminada', 'La pregunta ha sido eliminada', 'success');
+        
+        if (questionnaireIdFromUrl) {
+          // Recargar solo las preguntas del cuestionario actual
+          const questionsResponse = await axios.get(`${API_URL}/api/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+          setQuestions(questionsResponse.data);
+        } else {
+          fetchQuestions();
+        }
+      } catch (error) {
+        console.error('Error al eliminar:', error);
+        Swal.fire('Error', 'No se pudo eliminar la pregunta', 'error');
+      }
+    }
+  };
+
   if (loading) {
     return (
-      <div className="d-flex justify-content-center my-5">
+      <div className="text-center py-5">
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Cargando...</span>
         </div>
       </div>
     );
   }
-  
+
   return (
-    <MathJaxContext>
-      <div className="container my-4">
-        <div className="d-flex justify-content-between align-items-center mb-4">
-          <h2>Preguntas del Cuestionario</h2>
-          <button 
-            className="btn btn-outline-secondary d-flex align-items-center gap-2"
-            onClick={() => navigate('/cuestionarios')}
-          >
-            <ArrowLeft size={18} />
-            Volver
-          </button>
-        </div>
-        
-        {questionnaire && (
-          <div className="card mb-4">
-            <div className="card-header bg-primary text-white">
-              <h5 className="mb-0">{questionnaire.title}</h5>
-            </div>
+    <div className="container mt-4">
+      {questionnaireIdFromUrl && currentQuestionnaire && (
+        <div className="mb-4">
+          <div className="d-flex justify-content-between align-items-center mb-3">
+            <Link to="/cuestionarios" className="btn btn-outline-secondary">
+              <ArrowLeft size={18} className="me-1" /> Volver a Cuestionarios
+            </Link>
+            <h2 className="mb-0">Gestión de Preguntas</h2>
+          </div>
+          
+          <div className="card">
             <div className="card-body">
-              <div className="row">
+              <h5 className="card-title">{currentQuestionnaire.title}</h5>
+              <div className="row mt-3">
                 <div className="col-md-3">
-                  <strong>Categoría:</strong> {questionnaire.category.replace('_', ' - ')}
+                  <p><strong>Categoría:</strong> {currentQuestionnaire.category.replace('_', ' - ')}</p>
                 </div>
                 <div className="col-md-3">
-                  <strong>Grado:</strong> {questionnaire.grade}°
+                  <p><strong>Grado:</strong> {currentQuestionnaire.grade}°</p>
                 </div>
                 <div className="col-md-3">
-                  <strong>Fase:</strong> {questionnaire.phase}
+                  <p><strong>Fase:</strong> {currentQuestionnaire.phase}</p>
                 </div>
                 <div className="col-md-3">
-                  <strong>Curso:</strong> {questionnaire.course_name}
+                  <p><strong>Curso:</strong> {currentQuestionnaire.course_name}</p>
                 </div>
               </div>
             </div>
           </div>
-        )}
-        
-        <div className="card mb-4">
-          <div className="card-header bg-success text-white">
-            <h5 className="mb-0">Añadir Nueva Pregunta</h5>
-          </div>
-          <div className="card-body">
-            <form onSubmit={handleAddQuestion}>
-              {/* Texto de la pregunta con soporte para LaTeX */}
-              <div className="mb-3">
-                <div className="d-flex justify-content-between align-items-center">
-                  <label htmlFor="question_text" className="form-label">Texto de la pregunta</label>
-                  <button 
-                    type="button" 
-                    className="btn btn-sm btn-outline-info"
-                    onClick={() => setShowLatexGuide(!showLatexGuide)}
-                  >
-                    {showLatexGuide ? 'Ocultar guía LaTeX' : 'Mostrar guía LaTeX'}
-                  </button>
-                </div>
-                <textarea
-                  id="question_text"
-                  name="question_text"
-                  value={currentQuestion.question_text}
-                  onChange={handleQuestionChange}
-                  className="form-control"
-                  rows="3"
-                  required
-                  placeholder="Escribe la pregunta aquí. Puedes usar sintaxis LaTeX entre $ $ para expresiones matemáticas."
-                />
-                {currentQuestion.question_text && (
-                  <div className="mt-2 p-3 border rounded bg-light">
-                    <strong>Vista previa:</strong>
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
-                  </div>
-                )}
-              </div>
-              
-              {/* Guía de LaTeX (colapsable) */}
-              {showLatexGuide && (
-                <div className="mb-3 p-3 border rounded bg-light">
-                  <h5>Guía rápida de LaTeX</h5>
-                  <p className="text-muted">Escribe expresiones matemáticas entre símbolos $ $ en tu texto.</p>
-                  <div className="table-responsive">
-                    <table className="table table-sm">
-                      <thead>
-                        <tr>
-                          <th>Descripción</th>
-                          <th>Sintaxis</th>
-                          <th>Ejemplo</th>
-                          <th>Resultado</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {latexExamples.map((example, index) => (
-                          <tr key={index}>
-                            <td>{example.description}</td>
-                            <td><code>{example.latex}</code></td>
-                            <td><code>${example.ejemplo}$</code></td>
-                            <td>
-                              <MathJax>
-                                <div dangerouslySetInnerHTML={{ __html: `\\(${example.ejemplo}\\)` }} />
-                              </MathJax>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-              
-              {/* Subida de imagen */}
-              <div className="mb-3">
-                <label htmlFor="image" className="form-label">Imagen (opcional)</label>
-                <input
-                  type="file"
-                  id="image"
-                  name="image"
-                  onChange={handleImageChange}
-                  className="form-control"
-                  accept="image/*"
-                />
-                {imagePreview && (
-                  <div className="mt-2">
-                    <img 
-                      src={imagePreview} 
-                      alt="Vista previa" 
-                      style={{ maxHeight: '200px', maxWidth: '100%' }} 
-                      className="img-thumbnail"
-                    />
-                  </div>
-                )}
-              </div>
-              
-              {/* Opciones de respuesta con soporte para LaTeX */}
-              <div className="mb-3">
-                <label className="form-label">Opciones de respuesta</label>
-                
-                {/* Opción 1 */}
-                <div className="input-group mb-2">
-                  <div className="input-group-text">
-                    <input
-                      type="radio"
-                      name="correct_answer"
-                      value="1"
-                      checked={currentQuestion.correct_answer === '1'}
-                      onChange={handleQuestionChange}
-                      required
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    name="option1"
-                    value={currentQuestion.option1}
-                    onChange={handleQuestionChange}
-                    className="form-control"
-                    placeholder="Opción 1 (puedes usar LaTeX entre $ $)"
-                    required
-                  />
-                </div>
-                {currentQuestion.option1 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option1.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
-                  </div>
-                )}
-                
-                {/* Opción 2 */}
-                <div className="input-group mb-2">
-                  <div className="input-group-text">
-                    <input
-                      type="radio"
-                      name="correct_answer"
-                      value="2"
-                      checked={currentQuestion.correct_answer === '2'}
-                      onChange={handleQuestionChange}
-                      required
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    name="option2"
-                    value={currentQuestion.option2}
-                    onChange={handleQuestionChange}
-                    className="form-control"
-                    placeholder="Opción 2 (puedes usar LaTeX entre $ $)"
-                    required
-                  />
-                </div>
-                {currentQuestion.option2 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option2.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
-                  </div>
-                )}
-                
-                {/* Opción 3 */}
-                <div className="input-group mb-2">
-                  <div className="input-group-text">
-                    <input
-                      type="radio"
-                      name="correct_answer"
-                      value="3"
-                      checked={currentQuestion.correct_answer === '3'}
-                      onChange={handleQuestionChange}
-                      required
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    name="option3"
-                    value={currentQuestion.option3}
-                    onChange={handleQuestionChange}
-                    className="form-control"
-                    placeholder="Opción 3 (puedes usar LaTeX entre $ $)"
-                    required
-                  />
-                </div>
-                {currentQuestion.option3 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option3.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
-                  </div>
-                )}
-                
-                {/* Opción 4 */}
-                <div className="input-group mb-2">
-                  <div className="input-group-text">
-                    <input
-                      type="radio"
-                      name="correct_answer"
-                      value="4"
-                      checked={currentQuestion.correct_answer === '4'}
-                      onChange={handleQuestionChange}
-                      required
-                    />
-                  </div>
-                  <input
-                    type="text"
-                    name="option4"
-                    value={currentQuestion.option4}
-                    onChange={handleQuestionChange}
-                    className="form-control"
-                    placeholder="Opción 4 (puedes usar LaTeX entre $ $)"
-                    required
-                  />
-                </div>
-                {currentQuestion.option4 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option4.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
-                  </div>
-                )}
-                
-                <div className="form-text text-muted">
-                  Selecciona el botón de radio junto a la opción correcta.
-                </div>
-              </div>
-              
-              <div className="d-flex justify-content-between">
+        </div>
+      )}
+
+      <div className="card mb-4">
+        <div className="card-body">
+          <h4 className="card-title mb-4">{editingId ? 'Editar Pregunta' : 'Crear Nueva Pregunta'}</h4>
+
+          <form onSubmit={handleSubmit} encType="multipart/form-data">
+            <div className="mb-3">
+              <label className="form-label">Cuestionario</label>
+              <select
+                className="form-select"
+                name="questionnaire_id"
+                value={formData.questionnaire_id}
+                onChange={handleChange}
+                required
+                disabled={!!questionnaireIdFromUrl}
+              >
+                <option value="">Seleccione un cuestionario</option>
+                {questionnaires.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.title} - {q.category.replace('_', ' - ')} (Grado {q.grade}, Fase {q.phase})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mb-3">
+              <label className="form-label">
+                Texto de la pregunta
                 <button 
                   type="button" 
-                  className="btn btn-outline-secondary"
-                  onClick={handleFinish}
+                  className="btn btn-sm btn-outline-secondary ms-2"
+                  onClick={() => toggleMathPreview('question_text')}
                 >
-                  Finalizar
+                  {mathPreview.question_text ? 'Editar' : 'Ver como fórmula'}
                 </button>
-                <button 
-                  type="submit" 
-                  className="btn btn-success d-flex align-items-center gap-2"
-                >
-                  <Plus size={18} />
-                  Añadir Pregunta
-                </button>
+              </label>
+              
+              {mathPreview.question_text ? (
+                <div className="border rounded p-3 bg-light">
+                  <BlockMath math={formData.question_text || ''} />
+                </div>
+              ) : (
+                <textarea
+                  className="form-control"
+                  name="question_text"
+                  value={formData.question_text}
+                  onChange={handleChange}
+                  required
+                  rows={3}
+                  placeholder="Usa sintaxis LaTeX para expresiones matemáticas. Ej: \frac{1}{2} para fracciones"
+                />
+              )}
+              
+              <small className="form-text text-muted">
+                Para fracciones usa \frac{'n'}{'d'}, para raíces \sqrt{'x'}, para potencias x^{'n'}
+              </small>
+            </div>
+
+            <div className="row g-3 mb-3">
+              <div className="col-md-6">
+                <label className="form-label">Imagen (opcional)</label>
+                <input
+                  type="file"
+                  className="form-control"
+                  name="image"
+                  accept="image/*"
+                  onChange={handleChange}
+                />
               </div>
-            </form>
-          </div>
+              <div className="col-md-6 d-flex align-items-end">
+                {preview && (
+                  <img
+                    src={preview}
+                    alt="Preview"
+                    className="img-fluid border rounded"
+                    style={{ maxHeight: '200px' }}
+                  />
+                )}
+              </div>
+            </div>
+
+            <div className="row g-3 mb-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div className="col-md-6 mb-3" key={i}>
+                  <label className="form-label">
+                    Opción {i}
+                    <button 
+                      type="button" 
+                      className="btn btn-sm btn-outline-secondary ms-2"
+                      onClick={() => toggleMathPreview(`option${i}`)}
+                    >
+                      {mathPreview[`option${i}`] ? 'Editar' : 'Ver como fórmula'}
+                    </button>
+                  </label>
+                  
+                  {mathPreview[`option${i}`] ? (
+                    <div className="border rounded p-3 bg-light">
+                      <InlineMath math={formData[`option${i}`] || ''} />
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      className="form-control"
+                      name={`option${i}`}
+                      value={formData[`option${i}`]}
+                      onChange={handleChange}
+                      required
+                      placeholder="Usa sintaxis LaTeX para expresiones matemáticas"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="row g-3 mb-3">
+              <div className="col-md-6">
+                <label className="form-label">Respuesta Correcta</label>
+                <select
+                  className="form-select"
+                  name="correct_answer"
+                  value={formData.correct_answer}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="">Seleccione una opción</option>
+                  {[1, 2, 3, 4].map((i) => (
+                    <option key={i} value={i}>
+                      Opción {i}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div className="col-md-6">
+                <label className="form-label">Categoría</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  name="category"
+                  value={formData.category}
+                  onChange={handleChange}
+                  readOnly={!!formData.questionnaire_id}
+                />
+              </div>
+            </div>
+
+            <div className="d-flex gap-2">
+              <button type="submit" className="btn btn-primary">
+                {editingId ? 'Actualizar Pregunta' : 'Guardar Pregunta'}
+              </button>
+              {editingId && (
+                <button type="button" onClick={resetForm} className="btn btn-secondary">
+                  Cancelar
+                </button>
+              )}
+            </div>
+          </form>
         </div>
-        
-        {/* Lista de preguntas existentes */}
-        <div className="card">
-          <div className="card-header bg-primary text-white">
-            <h5 className="mb-0">Preguntas ({questions.length})</h5>
-          </div>
-          <div className="card-body">
-            {questions.length === 0 ? (
-              <div className="alert alert-info">
-                No hay preguntas añadidas a este cuestionario. Utiliza el formulario de arriba para añadir preguntas.
-              </div>
-            ) : (
-              <div className="list-group">
-                {questions.map((question, index) => (
-                  <div key={question.id} className="list-group-item list-group-item-action">
-                    <div className="d-flex w-100 justify-content-between">
-                      <h5 className="mb-1">Pregunta {index + 1}</h5>
-                      <button 
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => handleDeleteQuestion(question.id)}
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                    <MathJax>
-                      <p className="mb-1" dangerouslySetInnerHTML={{ __html: question.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
-                    {question.image_url && (
-                      <img 
-                        src={question.image_url} 
-                        alt="Imagen de la pregunta" 
-                        className="img-thumbnail mt-2" 
-                        style={{ maxHeight: '100px' }} 
-                      />
-                    )}
-                    <div className="mt-2">
-                      <div className={`badge ${question.correct_answer === '1' ? 'bg-success' : 'bg-secondary'} me-2`}>
-                        1: {question.option1}
-                      </div>
-                      <div className={`badge ${question.correct_answer === '2' ? 'bg-success' : 'bg-secondary'} me-2`}>
-                        2: {question.option2}
-                      </div>
-                      <div className={`badge ${question.correct_answer === '3' ? 'bg-success' : 'bg-secondary'} me-2`}>
-                        3: {question.option3}
-                      </div>
-                      <div className={`badge ${question.correct_answer === '4' ? 'bg-success' : 'bg-secondary'} me-2`}>
-                        4: {question.option4}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          <h4 className="card-title mb-4">Preguntas Existentes</h4>
+          
+          {questions.length === 0 ? (
+            <div className="alert alert-info">
+              No hay preguntas registradas {questionnaireIdFromUrl ? 'para este cuestionario' : ''}.
+            </div>
+          ) : (
+            <div className="table-responsive">
+              <table className="table table-bordered table-hover">
+                <thead className="table-light">
+                  <tr>
+                    <th>ID</th>
+                    <th>Texto</th>
+                    <th>Opciones</th>
+                    <th>Respuesta</th>
+                    {!questionnaireIdFromUrl && <th>Cuestionario</th>}
+                    <th>Imagen</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {questions.map((q) => (
+                    <tr key={q.id}>
+                      <td>{q.id}</td>
+                      <td>
+                        {containsLatex(q.question_text) ? (
+                          <BlockMath math={q.question_text} />
+                        ) : (
+                          q.question_text
+                        )}
+                      </td>
+                      <td>
+                        <ol className="mb-0 ps-3">
+                          {[1, 2, 3, 4].map((n) => (
+                            <li key={n}>
+                              {containsLatex(q[`option${n}`]) ? (
+                                <InlineMath math={q[`option${n}`]} />
+                              ) : (
+                                q[`option${n}`]
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                      </td>
+                      <td className="text-center">{q.correct_answer}</td>
+                      {!questionnaireIdFromUrl && (
+                        <td>
+                          {questionnaires.find(quest => quest.id === parseInt(q.questionnaire_id))?.title || q.questionnaire_id}
+                        </td>
+                      )}
+                      <td className="text-center">
+                        {q.image_url ? (
+                          <img
+                            src={`${API_URL}${q.image_url}`}
+                            alt="Pregunta"
+                            style={{ width: '100px' }}
+                            className="img-thumbnail"
+                          />
+                        ) : (
+                          <span className="text-muted">Sin imagen</span>
+                        )}
+                      </td>
+                      <td>
+                        <div className="d-flex justify-content-center gap-2">
+                          <button onClick={() => handleEdit(q)} className="btn btn-warning btn-sm">
+                            Editar
+                          </button>
+                          <button onClick={() => handleDelete(q.id)} className="btn btn-danger btn-sm">
+                            Eliminar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Guía rápida de LaTeX */}
+      <div className="card mt-4">
+        <div className="card-header bg-info text-white">
+          <h5 className="mb-0">Guía Rápida de LaTeX para Matemáticas</h5>
+        </div>
+        <div className="card-body">
+          <div className="row">
+            <div className="col-md-4">
+              <h6>Fracciones</h6>
+              <p><code>{'\\frac{numerador}{denominador}'}</code> → <InlineMath math="\frac{1}{2}" /></p>
+              
+              <h6>Potencias</h6>
+              <p><code>{'x^{2}'}</code> → <InlineMath math="x^{2}" /></p>
+            </div>
+            <div className="col-md-4">
+              <h6>Raíces</h6>
+              <p><code>{'\\sqrt{x}'}</code> → <InlineMath math="\sqrt{x}" /></p>
+              
+              <h6>Números mixtos</h6>
+              <p><code>{'2\\frac{3}{4}'}</code> → <InlineMath math="2\frac{3}{4}" /></p>
+            </div>
+            <div className="col-md-4">
+              <h6>Operadores</h6>
+              <p><code>{'\\times'}</code> → <InlineMath math="\times" /></p>
+              <p><code>{'\\div'}</code> → <InlineMath math="\div" /></p>
+              <p><code>{'\\pm'}</code> → <InlineMath math="\pm" /></p>
+            </div>
           </div>
         </div>
       </div>
-    </MathJaxContext>
+    </div>
   );
 };
 
-export default QuestionnaireQuestions;
+export default CreateQuestionPage;

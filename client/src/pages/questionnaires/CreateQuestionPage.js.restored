@@ -1,0 +1,573 @@
+// src/pages/questionnaires/QuestionnaireQuestions.js
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../config/axios';
+import Swal from 'sweetalert2';
+import { MathJax, MathJaxContext } from 'better-react-mathjax';
+import { ArrowLeft } from 'lucide-react';
+
+const CreateQuestionPage = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  
+  const [loading, setLoading] = useState(true);
+  const [questionnaire, setQuestionnaire] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  
+  const [currentQuestion, setCurrentQuestion] = useState({
+    id: null,
+    question_text: '',
+    option1: '',
+    option2: '',
+    option3: '',
+    option4: '',
+    correct_answer: '1',
+    image: null
+  });
+  
+  const [isEditing, setIsEditing] = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [showLatexGuide, setShowLatexGuide] = useState(false);
+  
+  useEffect(() => {
+    const fetchQuestionnaireData = async () => {
+      try {
+        const response = await api.get(`/api/questionnaires/${id}`);
+        console.log('Respuesta del backend:', response.data);
+        
+        if (!response.data.success) {
+          throw new Error(response.data.message || 'Error al obtener el cuestionario');
+        }
+        
+        const data = response.data.data;
+        setQuestionnaire(data);
+        
+        // Procesar las preguntas y sus opciones
+        const processedQuestions = data.questions.map(question => ({
+          ...question,
+          options: question.options ? question.options.split('|||') : []
+        }));
+        
+        setQuestions(processedQuestions);
+        setLoading(false);
+        
+      } catch (error) {
+        console.error('Error al cargar el cuestionario:', error);
+        Swal.fire({
+          title: 'Error',
+          text: error.response?.data?.message || 'Error al cargar el cuestionario',
+          icon: 'error'
+        });
+        setLoading(false);
+      }
+    };
+    
+    fetchQuestionnaireData();
+  }, [id]);
+  
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setCurrentQuestion(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+  
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setCurrentQuestion(prev => ({
+        ...prev,
+        image: file
+      }));
+      
+      // Mostrar vista previa de la imagen
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    try {
+      const formData = new FormData();
+      formData.append('question_text', currentQuestion.question_text);
+      formData.append('option1', currentQuestion.option1);
+      formData.append('option2', currentQuestion.option2);
+      formData.append('option3', currentQuestion.option3);
+      formData.append('option4', currentQuestion.option4);
+      formData.append('correct_answer', currentQuestion.correct_answer);
+      if (currentQuestion.image) {
+        formData.append('image', currentQuestion.image);
+      }
+      
+      let response;
+      
+      if (isEditing) {
+        // Actualizar pregunta existente
+        response = await api.put(`/api/questions/${currentQuestion.id}`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+      } else {
+        // Crear nueva pregunta
+        response = await api.post(`/api/questionnaires/${id}/questions`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+      }
+      
+      if (response.data.success) {
+        // Actualizar la lista de preguntas
+        const updatedQuestion = response.data.data;
+        
+        if (isEditing) {
+          setQuestions(questions.map(q => 
+            q.id === updatedQuestion.id ? updatedQuestion : q
+          ));
+        } else {
+          setQuestions([...questions, updatedQuestion]);
+        }
+        
+        // Limpiar el formulario
+        setCurrentQuestion({
+          id: null,
+          question_text: '',
+          option1: '',
+          option2: '',
+          option3: '',
+          option4: '',
+          correct_answer: '1',
+          image: null
+        });
+        setImagePreview(null);
+        setIsEditing(false);
+        
+        // Mostrar mensaje de éxito
+        Swal.fire({
+          title: '¡Éxito!',
+          text: isEditing ? 'Pregunta actualizada correctamente' : 'Pregunta creada correctamente',
+          icon: 'success'
+        });
+      }
+      
+    } catch (error) {
+      console.error('Error al guardar la pregunta:', error);
+      Swal.fire({
+        title: 'Error',
+        text: error.response?.data?.message || 'Error al guardar la pregunta',
+        icon: 'error'
+      });
+    }
+  };
+  
+  const handleEditQuestion = (question) => {
+    setCurrentQuestion({
+      id: question.id,
+      question_text: question.question_text,
+      option1: question.option1,
+      option2: question.option2,
+      option3: question.option3,
+      option4: question.option4,
+      correct_answer: question.correct_answer,
+      image: null
+    });
+    
+    // Mostrar vista previa de la imagen si existe
+    if (question.image_url) {
+      setImagePreview(question.image_url);
+    } else {
+      setImagePreview(null);
+    }
+    
+    setIsEditing(true);
+    
+    // Desplazarse al formulario
+    document.getElementById('question-form').scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  const handleDeleteQuestion = async (questionId) => {
+    try {
+      const result = await Swal.fire({
+        title: '¿Estás seguro?',
+        text: 'Esta acción no se puede deshacer',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        cancelButtonColor: '#d33',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+      });
+      
+      if (result.isConfirmed) {
+        const response = await api.delete(`/api/questions/${questionId}`);
+        
+        if (response.data.success) {
+          // Actualizar la lista de preguntas
+          setQuestions(questions.filter(q => q.id !== questionId));
+          
+          // Mostrar mensaje de éxito
+          Swal.fire(
+            '¡Eliminada!',
+            'La pregunta ha sido eliminada.',
+            'success'
+          );
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error al eliminar la pregunta:', error);
+      Swal.fire({
+        title: 'Error',
+        text: error.response?.data?.message || 'Error al eliminar la pregunta',
+        icon: 'error'
+      });
+    }
+  };
+  
+  const handleFinish = () => {
+    Swal.fire({
+      title: '¿Finalizar cuestionario?',
+      text: '¿Estás seguro de que deseas finalizar la edición de este cuestionario?',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, finalizar',
+      cancelButtonText: 'Cancelar'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        navigate('/cuestionarios');
+      }
+    });
+  };
+  
+  if (loading) {
+    return (
+      <div className="d-flex justify-content-center my-5">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="container my-4">
+      <MathJaxContext>
+        <div className="d-flex justify-content-between align-items-center mb-4">
+          <h2>Preguntas del Cuestionario</h2>
+          <button 
+            className="btn btn-outline-secondary d-flex align-items-center gap-2"
+            onClick={() => navigate('/cuestionarios')}
+          >
+            <ArrowLeft size={18} />
+            Volver
+          </button>
+        </div>
+        
+        {questionnaire && questions.length > 0 ? (
+          <div className="row">
+            <div className="col-md-6">
+              <div className="card mb-4">
+                <div className="card-header">
+                  <h5 className="mb-0">{isEditing ? 'Editar Pregunta' : 'Agregar Nueva Pregunta'}</h5>
+                </div>
+                <div className="card-body" id="question-form">
+                  <form onSubmit={handleSubmit}>
+                    <div className="mb-3">
+                      <label className="form-label">Pregunta</label>
+                      <textarea
+                        className="form-control"
+                        name="question_text"
+                        value={currentQuestion.question_text}
+                        onChange={handleInputChange}
+                        rows="3"
+                        required
+                      />
+                      <div className="form-text">
+                        Usa $ para fórmulas matemáticas. Ejemplo: $E = mc^2$
+                        <button 
+                          type="button" 
+                          className="btn btn-link p-0 ms-2"
+                          onClick={() => setShowLatexGuide(!showLatexGuide)}
+                        >
+                          {showLatexGuide ? 'Ocultar ayuda' : 'Mostrar ayuda'}
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {showLatexGuide && (
+                      <div className="alert alert-info mb-3">
+                        <h6>Guía de sintaxis LaTeX</h6>
+                        <ul className="mb-0">
+                          <li>Fracciones: <code>\frac{1}{2}</code> → $\frac{1}{2}$</li>
+                          <li>Potencias: <code>x^{2}</code> → $x^{2}$</li>
+                          <li>Subíndices: <code>x_{i}</code> → $x_{i}$</li>
+                          <li>Raíz cuadrada: <code>\sqrt{16}</code> → $\sqrt{16}$</li>
+                          <li>Letras griegas: <code>\alpha, \beta, \gamma</code> → $\alpha, \beta, \gamma$</li>
+                        </ul>
+                      </div>
+                    )}
+                    
+                    <div className="mb-3">
+                      <label className="form-label">Opción 1 (Respuesta correcta)</label>
+                      <input
+                        type="text"
+                        className="form-control mb-2"
+                        name="option1"
+                        value={currentQuestion.option1}
+                        onChange={handleInputChange}
+                        required
+                      />
+                      
+                      <label className="form-label">Opción 2</label>
+                      <input
+                        type="text"
+                        className="form-control mb-2"
+                        name="option2"
+                        value={currentQuestion.option2}
+                        onChange={handleInputChange}
+                        required
+                      />
+                      
+                      <label className="form-label">Opción 3</label>
+                      <input
+                        type="text"
+                        className="form-control mb-2"
+                        name="option3"
+                        value={currentQuestion.option3}
+                        onChange={handleInputChange}
+                        required
+                      />
+                      
+                      <label className="form-label">Opción 4</label>
+                      <input
+                        type="text"
+                        className="form-control mb-3"
+                        name="option4"
+                        value={currentQuestion.option4}
+                        onChange={handleInputChange}
+                        required
+                      />
+                      
+                      <div className="form-text">La opción 1 es la respuesta correcta por defecto.</div>
+                    </div>
+                    
+                    <div className="mb-3">
+                      <label className="form-label">Imagen (opcional)</label>
+                      <input
+                        type="file"
+                        className="form-control"
+                        accept="image/*"
+                        onChange={handleImageChange}
+                      />
+                      {imagePreview && (
+                        <div className="mt-2">
+                          <img 
+                            src={imagePreview} 
+                            alt="Vista previa" 
+                            className="img-thumbnail" 
+                            style={{ maxHeight: '150px' }} 
+                          />
+                          <button 
+                            type="button" 
+                            className="btn btn-sm btn-outline-danger ms-2"
+                            onClick={() => {
+                              setImagePreview(null);
+                              setCurrentQuestion(prev => ({ ...prev, image: null }));
+                            }}
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="d-flex justify-content-between">
+                      <button type="submit" className="btn btn-primary">
+                        {isEditing ? 'Actualizar Pregunta' : 'Agregar Pregunta'}
+                      </button>
+                      
+                      {isEditing && (
+                        <button 
+                          type="button" 
+                          className="btn btn-outline-secondary"
+                          onClick={() => {
+                            setCurrentQuestion({
+                              id: null,
+                              question_text: '',
+                              option1: '',
+                              option2: '',
+                              option3: '',
+                              option4: '',
+                              correct_answer: '1',
+                              image: null
+                            });
+                            setImagePreview(null);
+                            setIsEditing(false);
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  </form>
+                </div>
+              </div>
+              
+              <div className="card">
+                <div className="card-header">
+                  <h5 className="mb-0">Vista Previa</h5>
+                </div>
+                <div className="card-body">
+                  {currentQuestion.question_text ? (
+                    <>
+                      <h6>Pregunta:</h6>
+                      <MathJax>
+                        <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\$(.*?)\$/g, '\($1\)') }} />
+                      </MathJax>
+                      
+                      <h6 className="mt-3">Opciones:</h6>
+                      <ol>
+                        <li className={currentQuestion.correct_answer === '1' ? 'text-success fw-bold' : ''}>
+                          {currentQuestion.option1 || 'Opción 1'}
+                        </li>
+                        <li className={currentQuestion.correct_answer === '2' ? 'text-success fw-bold' : ''}>
+                          {currentQuestion.option2 || 'Opción 2'}
+                        </li>
+                        <li className={currentQuestion.correct_answer === '3' ? 'text-success fw-bold' : ''}>
+                          {currentQuestion.option3 || 'Opción 3'}
+                        </li>
+                        <li className={currentQuestion.correct_answer === '4' ? 'text-success fw-bold' : ''}>
+                          {currentQuestion.option4 || 'Opción 4'}
+                        </li>
+                      </ol>
+                      
+                      {imagePreview && (
+                        <div className="mt-3">
+                          <h6>Imagen:</h6>
+                          <img 
+                            src={imagePreview} 
+                            alt="Vista previa" 
+                            className="img-fluid rounded"
+                            style={{ maxHeight: '200px' }}
+                          />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-muted">Escribe una pregunta para ver la vista previa</p>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="col-md-6">
+              <div className="card">
+                <div className="card-header d-flex justify-content-between align-items-center">
+                  <h5 className="mb-0">Preguntas ({questions.length})</h5>
+                  <span className="badge bg-primary">{questionnaire.title}</span>
+                </div>
+                
+                {questions.length === 0 ? (
+                  <div className="card-body text-center">
+                    <p className="text-muted">No hay preguntas en este cuestionario</p>
+                    <button 
+                      className="btn btn-primary"
+                      onClick={() => document.getElementById('question-form').scrollIntoView({ behavior: 'smooth' })}
+                    >
+                      Agregar Primera Pregunta
+                    </button>
+                  </div>
+                ) : (
+                  <div className="list-group list-group-flush">
+                    {questions.map((question, index) => (
+                      <div key={question.id} className="list-group-item">
+                        <div className="d-flex justify-content-between align-items-start">
+                          <div className="me-3">
+                            <h6 className="mb-1">Pregunta {index + 1}</h6>
+                            <MathJax>
+                              <div dangerouslySetInnerHTML={{ __html: question.question_text.replace(/\$(.*?)\$/g, '\($1\)') }} />
+                            </MathJax>
+                            
+                            {question.image_url && (
+                              <div className="mt-2">
+                                <img 
+                                  src={question.image_url} 
+                                  alt="Imagen de la pregunta" 
+                                  className="img-thumbnail" 
+                                  style={{ maxHeight: '150px' }}
+                                />
+                              </div>
+                            )}
+                            
+                            <div className="mt-2">
+                              <strong>Opciones:</strong>
+                              <ol className="mb-0">
+                                {[1, 2, 3, 4].map((num) => (
+                                  <li 
+                                    key={num} 
+                                    className={question.correct_answer === num.toString() ? 'text-success fw-bold' : ''}
+                                  >
+                                    {question[`option${num}`]}
+                                    {question.correct_answer === num.toString() && ' (Correcta)'}
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+                          </div>
+                          
+                          <div className="btn-group">
+                            <button 
+                              className="btn btn-sm btn-outline-primary"
+                              onClick={() => handleEditQuestion(question)}
+                            >
+                              <i className="fas fa-edit"></i> Editar
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => handleDeleteQuestion(question.id)}
+                            >
+                              <i className="fas fa-trash"></i> Eliminar
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                <div className="card-footer text-end">
+                  <button 
+                    className="btn btn-success"
+                    onClick={handleFinish}
+                  >
+                    <i className="fas fa-check-circle me-1"></i>
+                    Finalizar Cuestionario
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-5">
+            <h4>No se encontró el cuestionario o no tiene preguntas</h4>
+            <button 
+              className="btn btn-primary mt-3"
+              onClick={() => navigate('/cuestionarios')}
+            >
+              Volver a la lista de cuestionarios
+            </button>
+          </div>
+        )}
+      </MathJaxContext>
+    </div>
+  );
+};
+
+export default CreateQuestionPage;
