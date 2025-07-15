@@ -1,0 +1,587 @@
+// src/pages/questionnaires/QuestionnaireQuestions.js
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../config/axios';
+import Swal from 'sweetalert2';
+import { MathJax, MathJaxContext } from 'better-react-mathjax';
+import { ArrowLeft } from 'lucide-react';
+
+const CreateQuestionPage = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  
+  const [loading, setLoading] = useState(true);
+  const [questionnaire, setQuestionnaire] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  
+  const [currentQuestion, setCurrentQuestion] = useState({
+    id: null,
+    question_text: '',
+    option1: '',
+    option2: '',
+    option3: '',
+    option4: '',
+    correct_answer: '1',
+    image: null
+  });
+  
+  const [isEditing, setIsEditing] = useState(false);
+  
+  const [imagePreview, setImagePreview] = useState(null);
+  const [showLatexGuide, setShowLatexGuide] = useState(false);
+  const [showRendered, setShowRendered] = useState({}); // Para controlar qué preguntas muestran la vista renderizada
+  
+  useEffect(() => {
+    const fetchQuestionnaireData = async () => {
+      try {
+        const response = await api.get(`/api/questionnaires/${id}`);
+        console.log('Respuesta del backend:', response.data);
+        
+        if (!response.data.success) {
+          throw new Error(response.data.message || 'Error al obtener el cuestionario');
+        }
+        
+        const data = response.data.data;
+        setQuestionnaire(data);
+        
+        // Procesar las preguntas y sus opciones
+        const processedQuestions = data.questions.map(question => ({
+          ...question,
+          options: question.options ? question.options.split('|||') : []
+        }));
+        
+        setQuestions(processedQuestions);
+        setCurrentQuestion(prev => ({ 
+          ...prev, 
+          questionnaire_id: id,
+          category: data.category 
+        }));
+        
+      } catch (error) {
+        console.error('Error al cargar cuestionario:', error);
+        Swal.fire({ 
+          icon: 'error', 
+          title: 'Error', 
+          text: error.message || 'Error al cargar el cuestionario'
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchQuestionnaireData();
+  }, [id]);
+  
+  const handleQuestionChange = (e) => {
+    const { name, value } = e.target;
+    setCurrentQuestion({ ...currentQuestion, [name]: value });
+  };
+  
+  const handleImageChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const selectedImage = e.target.files[0];
+      setCurrentQuestion({ ...currentQuestion, image: selectedImage });
+      setImagePreview(URL.createObjectURL(selectedImage));
+    }
+  };
+  
+  const handleSubmitQuestion = async (e) => {
+    e.preventDefault();
+    
+    try {
+      const formData = new FormData();
+      formData.append('questionnaire_id', id);
+      formData.append('question_text', currentQuestion.question_text);
+      formData.append('option1', currentQuestion.option1);
+      formData.append('option2', currentQuestion.option2);
+      formData.append('option3', currentQuestion.option3);
+      formData.append('option4', currentQuestion.option4);
+      formData.append('correct_answer', currentQuestion.correct_answer);
+      
+      if (currentQuestion.image) {
+        formData.append('image', currentQuestion.image);
+      }
+      
+      let response;
+      
+      if (isEditing) {
+        // Actualizar pregunta existente
+        response = await api.put(`/api/questions/${currentQuestion.id}`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+        
+        // Actualizar la pregunta en la lista
+        setQuestions(questions.map(q => 
+          q.id === currentQuestion.id ? { 
+            ...q, 
+            question_text: currentQuestion.question_text,
+            option1: currentQuestion.option1,
+            option2: currentQuestion.option2,
+            option3: currentQuestion.option3,
+            option4: currentQuestion.option4,
+            correct_answer: currentQuestion.correct_answer,
+            image_url: imagePreview || q.image_url
+          } : q
+        ));
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Pregunta actualizada',
+          text: 'La pregunta ha sido actualizada correctamente'
+        });
+      } else {
+        // Crear nueva pregunta
+        response = await api.post('/api/questions', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+        
+        // Añadir la nueva pregunta a la lista
+        const newQuestion = {
+          id: response.data.id,
+          question_text: currentQuestion.question_text,
+          option1: currentQuestion.option1,
+          option2: currentQuestion.option2,
+          option3: currentQuestion.option3,
+          option4: currentQuestion.option4,
+          correct_answer: currentQuestion.correct_answer,
+          image_url: imagePreview
+        };
+        
+        setQuestions([...questions, newQuestion]);
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Pregunta añadida',
+          text: 'La pregunta ha sido añadida correctamente'
+        });
+      }
+      
+      // Limpiar el formulario
+      resetForm();
+      
+    } catch (error) {
+      console.error('Error al procesar la pregunta:', error);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: `Hubo un problema al ${isEditing ? 'actualizar' : 'añadir'} la pregunta`
+      });
+    }
+  };
+  
+  const handleEditQuestion = (question) => {
+    setCurrentQuestion({
+      id: question.id,
+      question_text: question.question_text,
+      option1: question.option1 || '',
+      option2: question.option2 || '',
+      option3: question.option3 || '',
+      option4: question.option4 || '',
+      correct_answer: question.correct_answer || '1',
+      image: null
+    });
+    
+    if (question.image_url) {
+      setImagePreview(question.image_url);
+    }
+    
+    setIsEditing(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  
+  const resetForm = () => {
+    setCurrentQuestion({
+      id: null,
+      question_text: '',
+      option1: '',
+      option2: '',
+      option3: '',
+      option4: '',
+      correct_answer: '1',
+      image: null
+    });
+    setImagePreview(null);
+    setIsEditing(false);
+  };
+  
+  // const handleCancelEdit = () => {
+  //   resetForm();
+  // };
+  
+  const handleDeleteQuestion = async (questionId) => {
+    const result = await Swal.fire({
+      title: '¿Estás seguro?',
+      text: 'Esta acción no se puede deshacer',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#3085d6',
+      cancelButtonColor: '#d33',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/api/questions/${questionId}`);
+        
+        // Actualizar la lista de preguntas
+        setQuestions(questions.filter(q => q.id !== questionId));
+        
+        // Si estábamos editando esta pregunta, limpiar el formulario
+        if (isEditing && currentQuestion.id === questionId) {
+          resetForm();
+        }
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Pregunta eliminada',
+          text: 'La pregunta ha sido eliminada correctamente'
+        });
+      } catch (error) {
+        console.error('Error al eliminar pregunta:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: 'Hubo un problema al eliminar la pregunta'
+        });
+      }
+    }
+  };
+  
+  const handleFinish = () => {
+    Swal.fire({
+      icon: 'success',
+      title: 'Cuestionario completado',
+      text: `El cuestionario tiene ${questions.length} preguntas`,
+      showCancelButton: true,
+      confirmButtonText: 'Volver a cuestionarios',
+      cancelButtonText: 'Seguir editando',
+      reverseButtons: true
+    }).then((result) => {
+      if (result.isConfirmed) {
+        navigate('/cuestionarios');
+      }
+    });
+  };
+  
+  // Ejemplos de LaTeX para la guía
+  // const latexExamples = [
+  //   { description: 'Fracciones', latex: '\\frac{numerador}{denominador}', ejemplo: '\\frac{1}{2}' },
+  //   { description: 'Exponentes', latex: 'base^{exponente}', ejemplo: 'x^{2}' },
+  //   { description: 'Subíndices', latex: 'base_{subíndice}', ejemplo: 'x_{i}' },
+  //   { description: 'Raíces', latex: '\\sqrt{expresión}', ejemplo: '\\sqrt{16}' },
+  //   { description: 'Raíz n-ésima', latex: '\\sqrt[n]{expresión}', ejemplo: '\\sqrt[3]{27}' }
+  // ];
+  
+  if (loading) {
+    return (
+      <div className="d-flex justify-content-center my-5">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="container my-4">
+      <MathJaxContext>
+        <div>
+          <div className="d-flex justify-content-between align-items-center mb-4">
+            <h2>Preguntas del Cuestionario</h2>
+            <button 
+              className="btn btn-outline-secondary d-flex align-items-center gap-2"
+              onClick={() => navigate('/cuestionarios')}
+            >
+              <ArrowLeft size={18} />
+              Volver
+            </button>
+          </div>
+        
+        {questionnaire && questions.length > 0 ? (
+            <div className="row">
+              <div className="col-md-12">
+                <div className="mt-3">
+                  <h5><strong>{questionnaire.title}</strong></h5>
+                  <p className="text-muted">{questionnaire.description}</p>
+                </div>
+              </div>
+              <div className="col-md-12">
+                <div className="mb-3">
+                  <label htmlFor="questionnaireSelect" className="form-label">Seleccionar cuestionario</label>
+                  <select 
+                    className="form-select" 
+                    id="questionnaireSelect"
+                    value={questionnaire.id}
+                    disabled
+                  >
+                    <option value="">Seleccione un cuestionario</option>
+                    <option value={questionnaire.id}>{questionnaire.title}</option>
+                  </select>
+                </div>
+              </div>
+              <div className="col-md-12">
+                <div className="card mb-4">
+                  <div className="card-header bg-primary text-white">
+                    <h5 className="mb-0">{questionnaire.title}</h5>
+                  </div>
+                  <div className="card-body">
+                    <div className="row">
+                      <div className="col-md-3">
+                        <strong>Categoría:</strong> {questionnaire.category.replace('_', ' - ')}
+                      </div>
+                      <div className="col-md-3">
+                        <strong>Grado:</strong> {questionnaire.grade}°
+                      </div>
+                      <div className="col-md-3">
+                        <strong>Fase:</strong> {questionnaire.phase}
+                      </div>
+                      <div className="col-md-3">
+                        <strong>Curso:</strong> {questionnaire.course_name}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="card mb-4">
+              <div className="card-header bg-success text-white">
+                <h5 className="mb-0">
+                  {questions.length === 0 ? 'Añadir la Primera Pregunta' : 'Añadir Nueva Pregunta'}
+                </h5>
+              </div>
+              {questions.length === 0 && (
+                <div className="card-body">
+                  <p className="text-muted">No hay preguntas existentes en este cuestionario. Añade la primera pregunta.</p>
+                </div>
+              )}
+              <div className="card-body">
+                <form onSubmit={handleSubmitQuestion} className="mb-4">
+                  {/* Texto de la pregunta con soporte para LaTeX */}
+                  <div className="mb-3">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <label htmlFor="question_text" className="form-label mb-0">
+                        Texto de la pregunta
+                      </label>
+                      <button 
+                        type="button" 
+                        className="btn btn-sm btn-outline-info"
+                        onClick={() => setShowLatexGuide(!showLatexGuide)}
+                      >
+                        {showLatexGuide ? 'Ocultar guía LaTeX' : 'Mostrar guía LaTeX'}
+                      </button>
+                    </div>
+                    <textarea
+                      id="question_text"
+                      name="question_text"
+                      value={currentQuestion.question_text}
+                      onChange={handleQuestionChange}
+                      className="form-control"
+                      rows="3"
+                      required
+                      placeholder="Escribe la pregunta aquí. Puedes usar sintaxis LaTeX entre $ $ para expresiones matemáticas."
+                    />
+                    {currentQuestion.question_text && (
+                      <div className="mt-2 p-3 border rounded bg-light">
+                        <strong>Vista previa:</strong>
+                        <MathJax>
+                          <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
+                        </MathJax>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Opciones de respuesta */}
+                  <div className="mb-3">
+                    <h6>Opciones de respuesta:</h6>
+                    {[1, 2, 3, 4].map((num) => (
+                      <div key={num} className="input-group mb-2">
+                        <span className="input-group-text">
+                          <input
+                            type="radio"
+                            name="correct_answer"
+                            value={num}
+                            checked={currentQuestion.correct_answer === num.toString()}
+                            onChange={() => setCurrentQuestion({...currentQuestion, correct_answer: num.toString()})}
+                            className="form-check-input mt-0"
+                            required
+                          />
+                        </span>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder={`Opción ${num}`}
+                          value={currentQuestion[`option${num}`] || ''}
+                          onChange={(e) => setCurrentQuestion({
+                            ...currentQuestion,
+                            [`option${num}`]: e.target.value
+                          })}
+                          required
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Subida de imagen */}
+                  <div className="mb-3">
+                    <label htmlFor="question_image" className="form-label">
+                      Imagen (opcional)
+                    </label>
+                    <input
+                      type="file"
+                      id="question_image"
+                      className="form-control"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                    />
+                    {imagePreview && (
+                      <div className="mt-2">
+                        <img 
+                          src={imagePreview} 
+                          alt="Vista previa" 
+                          className="img-thumbnail" 
+                          style={{ maxHeight: '200px' }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="d-flex justify-content-between">
+                    <button 
+                      type="button" 
+                      className="btn btn-secondary"
+                      onClick={() => navigate('/cuestionarios')}
+                    >
+                      <ArrowLeft size={16} className="me-1" />
+                      Volver
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="btn btn-primary"
+                      disabled={!currentQuestion.question_text || !currentQuestion.option1 || !currentQuestion.option2}
+                    >
+                      {isEditing ? 'Actualizar Pregunta' : 'Agregar Pregunta'}
+                    </button>
+                  </div>
+                </form>
+                
+                {/* Guía de LaTeX (colapsable) */}
+                {showLatexGuide && (
+                  <div className="mt-4">
+                    <div className="card">
+                      <div className="card-header">
+                        <h6 className="mb-0">Guía de sintaxis LaTeX</h6>
+                      </div>
+                      <div className="card-body">
+                        <p className="mb-2">Puedes usar expresiones matemáticas en LaTeX encerrándolas entre símbolos de dólar <code>$</code>:</p>
+                        <ul className="mb-0">
+                          <li>Fracciones: <code>\$\frac&#123;numerador&#125;&#123;denominador&#125;\$</code> → $\frac{1}{2}$</li>
+                          <li>Potencias: <code>\$x^{2}\$</code> → $x^{2}$</li>
+                          <li>Subíndices: <code>\$x_&#123;i&#125;\$</code> → $x_{i}$</li>
+                          <li>Raíz cuadrada: <code>\$\sqrt&#123;expresión&#125;\$</code> → $\sqrt{16}$</li>
+                          <li>Letras griegas: <code>\$\alpha, \beta, \gamma\$</code> → $\alpha, \beta, \gamma$</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          
+          {/* Lista de preguntas existentes */}
+          {questions.length > 0 && (
+            <div className="card">
+              <div className="card-header bg-primary text-white">
+                <h5 className="mb-0">Preguntas ({questions.length})</h5>
+              </div>
+              <div className="list-group list-group-flush">
+                {questions.map((question, index) => (
+                  <div key={question.id} className="list-group-item">
+                    <div className="d-flex justify-content-between align-items-start">
+                      <div className="me-3">
+                        <div className="d-flex justify-content-between align-items-center mb-2">
+                          <h6 className="mb-0">Pregunta {index + 1}</h6>
+                          <button 
+                            type="button" 
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setShowRendered(prev => ({
+                              ...prev,
+                              [question.id]: !prev[question.id]
+                            }))}
+                          >
+                            {showRendered[question.id] ? 'Ver código LaTeX' : 'Vista previa'}
+                          </button>
+                        </div>
+                        {showRendered[question.id] ? (
+                          <MathJax>
+                            <div dangerouslySetInnerHTML={{ __html: question.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
+                          </MathJax>
+                        ) : (
+                          <div className="p-2 bg-light rounded">
+                            <pre className="mb-0"><code>{question.question_text}</code></pre>
+                          </div>
+                        )}
+                        {question.image_url && (
+                          <div className="mt-2">
+                            <img 
+                              src={question.image_url} 
+                              alt="Imagen de la pregunta" 
+                              className="img-thumbnail" 
+                              style={{ maxHeight: '150px' }}
+                            />
+                          </div>
+                        )}
+                        <div className="mt-2">
+                          <strong>Opciones:</strong>
+                          <ol className="mb-0">
+                            {[1, 2, 3, 4].map((num) => (
+                              <li key={num} className={question.correct_answer === num.toString() ? 'text-success fw-bold' : ''}>
+                                {question[`option${num}`]}
+                                {question.correct_answer === num.toString() && ' (Correcta)'}
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      </div>
+                      <div className="btn-group">
+                        <button 
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => handleEditQuestion(question)}
+                        >
+                          <i className="fas fa-edit"></i> Editar
+                        </button>
+                        <button 
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => handleDeleteQuestion(question.id)}
+                        >
+                          <i className="fas fa-trash"></i> Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="card-footer text-end">
+                <button 
+                  className="btn btn-success"
+                  onClick={handleFinish}
+                >
+                  <i className="fas fa-check-circle me-1"></i>
+                  Finalizar Cuestionario
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </MathJaxContext>
+    </div>
+  );
+};
+
+export default CreateQuestionPage;

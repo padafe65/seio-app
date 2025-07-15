@@ -16,6 +16,7 @@ const CreateQuestionPage = () => {
   const [questionOptions, setQuestionOptions] = useState({});
   
   const [currentQuestion, setCurrentQuestion] = useState({
+    id: null,
     question_text: '',
     option1: '',
     option2: '',
@@ -25,8 +26,11 @@ const CreateQuestionPage = () => {
     image: null
   });
   
+  const [isEditing, setIsEditing] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [showLatexGuide, setShowLatexGuide] = useState(false);
+  const [showRawText, setShowRawText] = useState({}); // Para controlar la visualización de texto plano vs renderizado
+  const [showRawCurrent, setShowRawCurrent] = useState(false); // Para la pregunta actual
   
   useEffect(() => {
     const fetchQuestionnaireData = async () => {
@@ -82,7 +86,7 @@ const CreateQuestionPage = () => {
     }
   };
   
-  const handleAddQuestion = async (e) => {
+  const handleSubmitQuestion = async (e) => {
     e.preventDefault();
     
     try {
@@ -99,28 +103,58 @@ const CreateQuestionPage = () => {
         formData.append('image', currentQuestion.image);
       }
       
-      const response = await api.post('/api/questions', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
+      let response;
       
-      // Añadir la nueva pregunta a la lista
-      const newQuestion = {
-        id: response.data.id,
-        question_text: currentQuestion.question_text,
-        option1: currentQuestion.option1,
-        option2: currentQuestion.option2,
-        option3: currentQuestion.option3,
-        option4: currentQuestion.option4,
-        correct_answer: currentQuestion.correct_answer,
-        image_url: imagePreview
-      };
-      
-      setQuestions([...questions, newQuestion]);
+      if (isEditing) {
+        // Actualizar pregunta existente
+        response = await api.put(`/api/questions/${currentQuestion.id}`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+        
+        // Actualizar la pregunta en la lista
+        setQuestions(questions.map(q => 
+          q.id === currentQuestion.id ? { ...currentQuestion, image_url: imagePreview || q.image_url } : q
+        ));
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Pregunta actualizada',
+          text: 'La pregunta ha sido actualizada correctamente'
+        });
+      } else {
+        // Crear nueva pregunta
+        response = await api.post('/api/questions', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
+        
+        // Añadir la nueva pregunta a la lista
+        const newQuestion = {
+          id: response.data.id,
+          question_text: currentQuestion.question_text,
+          option1: currentQuestion.option1,
+          option2: currentQuestion.option2,
+          option3: currentQuestion.option3,
+          option4: currentQuestion.option4,
+          correct_answer: currentQuestion.correct_answer,
+          image_url: imagePreview
+        };
+        
+        setQuestions([...questions, newQuestion]);
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'Pregunta añadida',
+          text: 'La pregunta ha sido añadida correctamente'
+        });
+      }
       
       // Limpiar el formulario
       setCurrentQuestion({
+        id: null,
         question_text: '',
         option1: '',
         option2: '',
@@ -130,12 +164,7 @@ const CreateQuestionPage = () => {
         image: null
       });
       setImagePreview(null);
-      
-      Swal.fire({
-        icon: 'success',
-        title: 'Pregunta añadida',
-        text: 'La pregunta ha sido añadida correctamente'
-      });
+      setIsEditing(false);
     } catch (error) {
       console.error('Error al añadir pregunta:', error);
       Swal.fire({
@@ -145,29 +174,77 @@ const CreateQuestionPage = () => {
       });
     }
   };
-  
-  const handleDeleteQuestion = async (questionId) => {
-    try {
-      await api.delete(`/api/questions/${questionId}`);
-      
-      // Actualizar la lista de preguntas
-      setQuestions(questions.filter(q => q.id !== questionId));
-      
-      Swal.fire({
-        icon: 'success',
-        title: 'Pregunta eliminada',
-        text: 'La pregunta ha sido eliminada correctamente'
-      });
-    } catch (error) {
-      console.error('Error al eliminar pregunta:', error);
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'Hubo un problema al eliminar la pregunta'
-      });
-    }
+
+  const handleEditQuestion = (question) => {
+    // Asegurarse de que la respuesta correcta esté en el formato correcto (1, 2, 3 o 4)
+    const correctAnswer = question.correct_answer ? String(question.correct_answer) : '1';
+    
+    setCurrentQuestion({
+      id: question.id,
+      question_text: question.question_text,
+      option1: question.option1 || '',
+      option2: question.option2 || '',
+      option3: question.option3 || '',
+      option4: question.option4 || '',
+      correct_answer: correctAnswer,
+      image: null
+    });
+    
+    setImagePreview(question.image_url || null);
+    setIsEditing(true);
+    setShowRawCurrent(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   
+  const handleCancelEdit = () => {
+    setCurrentQuestion({
+      id: null,
+      question_text: '',
+      option1: '',
+      option2: '',
+      option3: '',
+      option4: '',
+      correct_answer: '1',
+      image: null
+    });
+    setImagePreview(null);
+    setIsEditing(false);
+    setShowRawCurrent(false);
+  };
+  
+  const handleDeleteQuestion = async (questionId) => {
+    const result = await Swal.fire({
+      title: '¿Estás seguro?',
+      text: 'Esta acción no se puede deshacer',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#3085d6',
+      cancelButtonColor: '#d33',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    
+    if (result.isConfirmed) {
+      try {
+        await api.delete(`/api/questions/${questionId}`);
+        setQuestions(questions.filter(q => q.id !== questionId));
+        
+        Swal.fire(
+          '¡Eliminada!',
+          'La pregunta ha sido eliminada.',
+          'success'
+        );
+      } catch (error) {
+        console.error('Error al eliminar la pregunta:', error);
+        Swal.fire(
+          'Error',
+          'No se pudo eliminar la pregunta',
+          'error'
+        );
+      }
+    }
+  };
+
   const handleFinish = () => {
     Swal.fire({
       icon: 'success',
@@ -259,8 +336,19 @@ const CreateQuestionPage = () => {
           </div>
         ) : (
           <div className="card mb-4">
-            <div className="card-header bg-success text-white">
-              <h5 className="mb-0">Añadir Nueva Pregunta</h5>
+            <div className="card-header bg-success text-white d-flex justify-content-between align-items-center">
+              <h5 className="mb-0">
+                {isEditing ? 'Editar Pregunta' : 'Añadir Nueva Pregunta'}
+              </h5>
+              {isEditing && (
+                <button 
+                  type="button" 
+                  className="btn btn-sm btn-outline-light"
+                  onClick={handleCancelEdit}
+                >
+                  Cancelar edición
+                </button>
+              )}
             </div>
             <div className="card-body">
               <p className="text-muted">No hay preguntas existentes en este cuestionario. Añade la primera pregunta.</p>
@@ -273,7 +361,7 @@ const CreateQuestionPage = () => {
             <h5 className="mb-0">Añadir Nueva Pregunta</h5>
           </div>
           <div className="card-body">
-            <form onSubmit={handleAddQuestion}>
+            <form onSubmit={handleSubmitQuestion}>
               {/* Texto de la pregunta con soporte para LaTeX */}
               <div className="mb-3">
                 <div className="d-flex justify-content-between align-items-center">
@@ -298,10 +386,73 @@ const CreateQuestionPage = () => {
                 />
                 {currentQuestion.question_text && (
                   <div className="mt-2 p-3 border rounded bg-light">
-                    <strong>Vista previa:</strong>
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <strong>Vista previa:</strong>
+                      <button 
+                        type="button"
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => setShowRawCurrent(!showRawCurrent)}
+                      >
+                        <i className={`fas fa-${showRawCurrent ? 'eye' : 'code'}`}></i> {showRawCurrent ? 'Ver renderizado' : 'Ver código'}
+                      </button>
+                    </div>
+                    {showRawCurrent ? (
+                      <pre className="mb-0"><code>{currentQuestion.question_text}</code></pre>
+                    ) : (
+                      <div className="p-3 bg-white rounded">
+                        <MathJax>
+                          <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\\text\{(.*?)\}/g, '$1').replace(/\$(.*?)\$/g, '\\($1\\)') }} />
+                        </MathJax>
+                      </div>
+                    )}
+                    
+                    {/* Vista previa de opciones */}
+                    <div className="mt-4">
+                      <h6 className="mb-3"><strong>Opciones de respuesta:</strong></h6>
+                      {[1, 2, 3, 4].map(optNum => {
+                        const optionText = currentQuestion[`option${optNum}`] || '';
+                        const isCorrect = currentQuestion.correct_answer === String(optNum);
+                        
+                        return (
+                          <div 
+                            key={optNum} 
+                            className={`p-3 mb-2 rounded ${isCorrect ? 'bg-success bg-opacity-10 border border-success' : 'bg-light'}`}
+                          >
+                            <div className="form-check d-flex align-items-start">
+                              <div className="d-flex align-items-center me-3">
+                                <input 
+                                  className="form-check-input" 
+                                  type="radio" 
+                                  name={`correct-${currentQuestion.id}`} 
+                                  checked={isCorrect}
+                                  onChange={() => {}}
+                                  disabled={!isEditing}
+                                />
+                                <span className="badge bg-primary ms-2 me-2">Opción {optNum}</span>
+                                {isCorrect && (
+                                  <span className="badge bg-success">
+                                    <i className="fas fa-check me-1"></i> Correcta
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex-grow-1">
+                                {showRawCurrent ? (
+                                  <pre className="mb-0"><code>{optionText}</code></pre>
+                                ) : (
+                                  <MathJax>
+                                    <div dangerouslySetInnerHTML={{ 
+                                      __html: optionText
+                                        .replace(/\\text\{(.*?)\}/g, '$1')
+                                        .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                                    }} />
+                                  </MathJax>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>
@@ -376,7 +527,7 @@ const CreateQuestionPage = () => {
                       value="1"
                       checked={currentQuestion.correct_answer === '1'}
                       onChange={handleQuestionChange}
-                      required
+                      className="form-check-input"
                     />
                   </div>
                   <input
@@ -406,7 +557,7 @@ const CreateQuestionPage = () => {
                       value="2"
                       checked={currentQuestion.correct_answer === '2'}
                       onChange={handleQuestionChange}
-                      required
+                      className="form-check-input"
                     />
                   </div>
                   <input
@@ -436,7 +587,7 @@ const CreateQuestionPage = () => {
                       value="3"
                       checked={currentQuestion.correct_answer === '3'}
                       onChange={handleQuestionChange}
-                      required
+                      className="form-check-input"
                     />
                   </div>
                   <input
@@ -466,7 +617,7 @@ const CreateQuestionPage = () => {
                       value="4"
                       checked={currentQuestion.correct_answer === '4'}
                       onChange={handleQuestionChange}
-                      required
+                      className="form-check-input"
                     />
                   </div>
                   <input
@@ -491,22 +642,52 @@ const CreateQuestionPage = () => {
                   Selecciona el botón de radio junto a la opción correcta.
                 </div>
               </div>
-              
-              <div className="d-flex justify-content-between">
-                <button 
-                  type="button" 
-                  className="btn btn-outline-secondary"
-                  onClick={handleFinish}
-                >
-                  Finalizar
-                </button>
-                <button 
-                  type="submit" 
-                  className="btn btn-success d-flex align-items-center gap-2"
-                >
-                  <Plus size={18} />
-                  Añadir Pregunta
-                </button>
+              <div className="d-flex justify-content-between align-items-center">
+                <div>
+                  <button 
+                    type="button" 
+                    className="btn btn-outline-secondary me-2"
+                    onClick={handleFinish}
+                  >
+                    <i className="fas fa-arrow-left me-1"></i> Volver
+                  </button>
+                  {isEditing && (
+                    <button 
+                      type="button" 
+                      className="btn btn-outline-danger"
+                      onClick={handleCancelEdit}
+                    >
+                      <i className="fas fa-times me-1"></i> Cancelar edición
+                    </button>
+                  )}
+                </div>
+                <div className="d-flex gap-2">
+                  {isEditing && (
+                    <button 
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={() => handleDeleteQuestion(currentQuestion.id)}
+                    >
+                      Eliminar Pregunta
+                    </button>
+                  )}
+                  <button 
+                    type="submit" 
+                    className="btn btn-success d-flex align-items-center gap-2"
+                  >
+                    {isEditing ? (
+                      <>
+                        <i className="fas fa-save"></i>
+                        Guardar Cambios
+                      </>
+                    ) : (
+                      <>
+                        <Plus size={18} />
+                        Añadir Pregunta
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -527,17 +708,106 @@ const CreateQuestionPage = () => {
                 {questions.map((question, index) => (
                   <div key={question.id} className="list-group-item list-group-item-action">
                     <div className="d-flex w-100 justify-content-between">
-                      <h5 className="mb-1">Pregunta {index + 1}</h5>
-                      <button 
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => handleDeleteQuestion(question.id)}
-                      >
-                        Eliminar
-                      </button>
+                      <div className="d-flex align-items-center gap-2">
+                        <h5 className="mb-0">Pregunta {index + 1}</h5>
+                        <button 
+                          type="button" 
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => handleEditQuestion(question)}
+                        >
+                          <i className="fas fa-edit"></i> Editar
+                        </button>
+                        <button 
+                          type="button" 
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => setShowRawText(prev => ({
+                            ...prev,
+                            [question.id]: !prev[question.id]
+                          }))}
+                        >
+                          <i className={`fas fa-${showRawText[question.id] ? 'eye' : 'code'}`}></i> {showRawText[question.id] ? 'Ver renderizado' : 'Ver código'}
+                        </button>
+                      </div>
                     </div>
-                    <MathJax>
-                      <p className="mb-1" dangerouslySetInnerHTML={{ __html: question.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
+                    <div className="mb-3">
+                      {/* Enunciado de la pregunta */}
+                      <div className="d-flex justify-content-between align-items-start mb-3">
+                        <div className="flex-grow-1">
+                          <h6 className="mb-2">
+                            <strong>Enunciado:</strong>
+                          </h6>
+                          {showRawText[question.id] ? (
+                            <pre className="mb-0"><code>{question.question_text}</code></pre>
+                          ) : (
+                            <div className="p-2 bg-white rounded border">
+                              <MathJax>
+                                <div dangerouslySetInnerHTML={{ 
+                                  __html: (question.question_text || '')
+                                    .replace(/\\text\{(.*?)\}/g, '$1')
+                                    .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                                }} />
+                              </MathJax>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Respuesta correcta */}
+                      <div className="mb-3 p-2 bg-success bg-opacity-10 rounded border border-success">
+                        <h6 className="mb-2 text-success">
+                          <i className="fas fa-check-circle me-1"></i> Respuesta correcta:
+                        </h6>
+                        <div className="p-2 bg-white rounded">
+                          <MathJax>
+                            <div dangerouslySetInnerHTML={{ 
+                              __html: (question[`option${question.correct_answer}`] || '')
+                                .replace(/\\text\{(.*?)\}/g, '$1')
+                                .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                            }} />
+                          </MathJax>
+                          <div className="text-muted small mt-1">
+                            Opción {question.correct_answer}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Todas las opciones */}
+                      <div className="mt-3">
+                        <h6 className="small text-muted mb-2">
+                          <i className="fas fa-list-ul me-1"></i> Todas las opciones:
+                        </h6>
+                        {[1, 2, 3, 4].map(optNum => {
+                          const optionText = question[`option${optNum}`] || '';
+                          if (!optionText) return null;
+                          
+                          const isCorrect = question.correct_answer === String(optNum);
+                          
+                          return (
+                            <div 
+                              key={optNum} 
+                              className={`p-2 mb-2 rounded small ${isCorrect ? 'border border-success' : 'border'}`}
+                            >
+                              <div className="d-flex align-items-center">
+                                <span className={`badge ${isCorrect ? 'bg-success' : 'bg-secondary'} me-2`}>
+                                  {optNum}
+                                </span>
+                                {showRawText[question.id] ? (
+                                  <code className="small">{optionText}</code>
+                                ) : (
+                                  <MathJax>
+                                    <div className="small" dangerouslySetInnerHTML={{ 
+                                      __html: optionText
+                                        .replace(/\\text\{(.*?)\}/g, '$1')
+                                        .replace(/\$(.*?)\$/g, '\\($1\\)')
+                                    }} />
+                                  </MathJax>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                     {question.image_url && (
                       <img 
                         src={question.image_url} 
