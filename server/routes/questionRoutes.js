@@ -187,11 +187,17 @@ router.get('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { questionnaire_id } = req.query;
     let query = `
-      SELECT q.*, qn.title as questionnaire_title, u.name as created_by_name
+      SELECT 
+        q.*, 
+        qn.title as questionnaire_title, 
+        u.name as created_by_name,
+        c.name as course_name,
+        c.grade as course_grade
       FROM questions q
       JOIN questionnaires qn ON q.questionnaire_id = qn.id
       JOIN teachers t ON qn.created_by = t.id
       JOIN users u ON t.user_id = u.id
+      LEFT JOIN courses c ON qn.course_id = c.id
     `;
     
     const params = [];

@@ -140,12 +140,13 @@ router.get('/:id', isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // 1. Obtener el cuestionario
+    // 1. Obtener el cuestionario con información del curso
     const [questionnaires] = await pool.query(
-      `SELECT q.*, u.name as teacher_name
+      `SELECT q.*, u.name as teacher_name, c.id as course_id, c.name as course_name, c.grade as course_grade
        FROM questionnaires q
        LEFT JOIN teachers t ON q.created_by = t.id
        LEFT JOIN users u ON t.user_id = u.id
+       LEFT JOIN courses c ON q.course_id = c.id
        WHERE q.id = ?`, 
       [id]
     );

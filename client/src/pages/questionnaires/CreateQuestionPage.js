@@ -426,8 +426,21 @@ const CreateQuestionPage = () => {
           <div className="row">
             <div className="col-md-12">
               <div className="mt-3">
-                <h5><strong>{questionnaire.title}</strong></h5>
-                <p className="text-muted">{questionnaire.description}</p>
+                <div className="d-flex justify-content-between align-items-start">
+                  <div>
+                    <h5><strong>{questionnaire.title}</strong></h5>
+                    <p className="text-muted mb-0">{questionnaire.description}</p>
+                  </div>
+                  {questionnaire.course_name && (
+                    <div className="text-end">
+                      <span className="badge bg-info text-dark">
+                        <i className="fas fa-book me-1"></i>
+                        {questionnaire.course_name} 
+                        {questionnaire.course_grade && `(${questionnaire.course_grade}° grado)`}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="col-md-12">
@@ -530,15 +543,30 @@ const CreateQuestionPage = () => {
                         <i className={`fas fa-${showRawCurrent ? 'eye' : 'code'}`}></i> {showRawCurrent ? 'Ver renderizado' : 'Ver código'}
                       </button>
                     </div>
-                    {showRawCurrent ? (
-                      <pre className="mb-0"><code>{currentQuestion.question_text}</code></pre>
-                    ) : (
-                      <div className="p-3 bg-white rounded">
+                    <div className="d-flex flex-column gap-2">
+                      <div className={`p-3 bg-white rounded border ${!showRawCurrent ? 'd-block' : 'd-none'}`}>
                         <MathJax>
-                          <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\\text\{(.*?)\}/g, '$1').replace(/\$(.*?)\$/g, '\\($1\\)') }} />
+                          <div dangerouslySetInnerHTML={{ 
+                            __html: (currentQuestion.question_text || '')
+                              .replace(/\\text\{(.*?)\}/g, '$1')
+                              .replace(/\$(.*?)\$/g, '\\($1\\)')
+                          }} />
                         </MathJax>
                       </div>
-                    )}
+                      <div className={`${showRawCurrent ? 'd-block' : 'd-none'}`}>
+                        <pre className="mb-0 p-2 bg-light rounded"><code>{currentQuestion.question_text}</code></pre>
+                      </div>
+                      <div className="form-text">
+                        <button 
+                          type="button" 
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => setShowRawCurrent(!showRawCurrent)}
+                        >
+                          <i className={`fas fa-${showRawCurrent ? 'eye' : 'code'}`}></i> 
+                          {showRawCurrent ? 'Ver renderizado' : 'Ver código'}
+                        </button>
+                      </div>
+                    </div>
                     
                     {/* Vista previa de opciones */}
                     <div className="mt-4">
@@ -675,10 +703,16 @@ const CreateQuestionPage = () => {
                   />
                 </div>
                 {currentQuestion.option1 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option1.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
+                  <div className="ms-4">
+                    <div className="p-2 border rounded bg-light">
+                      <MathJax>
+                        <div dangerouslySetInnerHTML={{ 
+                          __html: (currentQuestion.option1 || '')
+                            .replace(/\\text\{(.*?)\}/g, '$1')
+                            .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                        }} />
+                      </MathJax>
+                    </div>
                   </div>
                 )}
                 
@@ -705,10 +739,16 @@ const CreateQuestionPage = () => {
                   />
                 </div>
                 {currentQuestion.option2 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option2.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
+                  <div className="ms-4">
+                    <div className="p-2 border rounded bg-light">
+                      <MathJax>
+                        <div dangerouslySetInnerHTML={{ 
+                          __html: (currentQuestion.option2 || '')
+                            .replace(/\\text\{(.*?)\}/g, '$1')
+                            .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                        }} />
+                      </MathJax>
+                    </div>
                   </div>
                 )}
                 
@@ -735,10 +775,16 @@ const CreateQuestionPage = () => {
                   />
                 </div>
                 {currentQuestion.option3 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option3.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
+                  <div className="ms-4">
+                    <div className="p-2 border rounded bg-light">
+                      <MathJax>
+                        <div dangerouslySetInnerHTML={{ 
+                          __html: (currentQuestion.option3 || '')
+                            .replace(/\\text\{(.*?)\}/g, '$1')
+                            .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                        }} />
+                      </MathJax>
+                    </div>
                   </div>
                 )}
                 
@@ -765,10 +811,16 @@ const CreateQuestionPage = () => {
                   />
                 </div>
                 {currentQuestion.option4 && (
-                  <div className="mb-2 ms-4 p-2 border rounded bg-light">
-                    <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.option4.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
-                    </MathJax>
+                  <div className="ms-4">
+                    <div className="p-2 border rounded bg-light">
+                      <MathJax>
+                        <div dangerouslySetInnerHTML={{ 
+                          __html: (currentQuestion.option4 || '')
+                            .replace(/\\text\{(.*?)\}/g, '$1')
+                            .replace(/\$(.*?)\$/g, '\\($1\\)') 
+                        }} />
+                      </MathJax>
+                    </div>
                   </div>
                 )}
                 
@@ -842,25 +894,32 @@ const CreateQuestionPage = () => {
                 {questions.map((question, index) => (
                   <div key={question.id} className="list-group-item list-group-item-action">
                     <div className="d-flex w-100 justify-content-between">
-                      <div className="d-flex align-items-center gap-2">
-                        <h5 className="mb-0">Pregunta {index + 1}</h5>
-                        <button 
-                          type="button" 
-                          className="btn btn-sm btn-outline-primary"
-                          onClick={() => handleEditQuestion(question)}
-                        >
-                          <i className="fas fa-edit"></i> Editar
-                        </button>
-                        <button 
-                          type="button" 
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => setShowRawText(prev => ({
-                            ...prev,
-                            [question.id]: !prev[question.id]
-                          }))}
-                        >
-                          <i className={`fas fa-${showRawText[question.id] ? 'eye' : 'code'}`}></i> {showRawText[question.id] ? 'Ver renderizado' : 'Ver código'}
-                        </button>
+                      <div className="d-flex flex-column w-100">
+                        <div className="d-flex align-items-center gap-2 mb-2">
+                          <h5 className="mb-0">Pregunta {index + 1}</h5>
+                          {question.course_name && (
+                            <span className="badge bg-info">
+                              Curso: {question.course_name} {question.course_grade ? `(${question.course_grade}° grado)` : ''}
+                            </span>
+                          )}
+                          <button 
+                            type="button" 
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={() => handleEditQuestion(question)}
+                          >
+                            <i className="fas fa-edit"></i> Editar
+                          </button>
+                          <button 
+                            type="button" 
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setShowRawText(prev => ({
+                              ...prev,
+                              [question.id]: !prev[question.id]
+                            }))}
+                          >
+                            <i className={`fas fa-${showRawText[question.id] ? 'eye' : 'code'}`}></i> {showRawText[question.id] ? 'Ver renderizado' : 'Ver código'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <div className="mb-3">
