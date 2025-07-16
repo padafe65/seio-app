@@ -22,19 +22,10 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Helper para verificar si un docente es propietario de un cuestionario
-const checkOwnership = async (questionnaireId, userId, teacherId = null) => {
+// Helper para verificar si un docente es propietario de un cuestionario o pregunta
+const checkOwnership = async (resourceId, userId, resourceType = 'question') => {
   try {
-    // Si ya tenemos el teacher_id del middleware, lo usamos
-    if (teacherId) {
-      const [qRows] = await pool.query(
-        'SELECT id FROM questionnaires WHERE id = ? AND created_by = ?', 
-        [questionnaireId, teacherId]
-      );
-      return qRows.length > 0;
-    }
-    
-    // Si no tenemos el teacher_id, lo buscamos
+    // Obtener el ID del profesor asociado al usuario
     const [teacherRows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?', 
       [userId]
@@ -42,13 +33,33 @@ const checkOwnership = async (questionnaireId, userId, teacherId = null) => {
     
     if (teacherRows.length === 0) return false; // No es un profesor
     
-    const tid = teacherRows[0].id;
-    const [qRows] = await pool.query(
-      'SELECT id FROM questionnaires WHERE id = ? AND created_by = ?', 
-      [questionnaireId, tid]
-    );
+    const teacherId = teacherRows[0].id;
     
-    return qRows.length > 0;
+    if (resourceType === 'question') {
+      // Para preguntas, primero obtenemos el cuestionario
+      const [questionRows] = await pool.query(
+        'SELECT questionnaire_id FROM questions WHERE id = ?',
+        [resourceId]
+      );
+      
+      if (questionRows.length === 0) return false;
+      
+      // Luego verificamos si el cuestionario pertenece al profesor
+      const [qRows] = await pool.query(
+        'SELECT id FROM questionnaires WHERE id = ? AND created_by = ?',
+        [questionRows[0].questionnaire_id, teacherId]
+      );
+      
+      return qRows.length > 0;
+    } else {
+      // Para cuestionarios, verificamos directamente
+      const [qRows] = await pool.query(
+        'SELECT id FROM questionnaires WHERE id = ? AND created_by = ?',
+        [resourceId, teacherId]
+      );
+      
+      return qRows.length > 0;
+    }
   } catch (error) {
     console.error('Error en checkOwnership:', error);
     return false;
@@ -261,43 +272,162 @@ router.get('/:id', verifyToken, async (req, res) => {
 });
 
 // Actualizar una pregunta existente
-router.put('/:id', verifyToken, upload.single('image'), async (req, res) => {
+// Ruta para actualizar una pregunta existente
+router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async (req, res) => {
+  console.log('=== SOLICITUD PUT A /api/questions/' + req.params.id + ' ===');
+  console.log('Cuerpo de la solicitud:', req.body);
+  console.log('Archivo adjunto:', req.file ? 'Sí' : 'No');
+  console.log('Usuario autenticado:', req.user);
   try {
     const { id } = req.params;
     const { questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category } = req.body;
 
-    const [qRows] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
-    if (qRows.length === 0) return res.status(404).json({ message: 'Pregunta no encontrada.' });
-
-    if (req.user.role === 'docente') {
-      const isOwner = await checkOwnership(qRows[0].questionnaire_id, req.user.id);
-      if (!isOwner) return res.status(403).json({ message: 'Acceso denegado.' });
+    // Validar campos requeridos
+    if (!questionnaire_id || !question_text || !option1 || !option2 || !correct_answer || !category) {
+      return res.status(400).json({
+        message: 'Faltan campos obligatorios',
+        error: 'MISSING_REQUIRED_FIELDS',
+        requiredFields: ['questionnaire_id', 'question_text', 'option1', 'option2', 'correct_answer', 'category']
+      });
     }
 
-    const image_url = req.file ? `/uploads/${req.file.filename}` : (req.body.image_url || qRows[0].image_url);
+    // Verificar que la pregunta exista
+    const [qRows] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
+    if (qRows.length === 0) {
+      return res.status(404).json({ 
+        message: 'Pregunta no encontrada.',
+        error: 'QUESTION_NOT_FOUND'
+      });
+    }
 
-    await pool.query(
-      `UPDATE questions SET questionnaire_id = ?, question_text = ?, option1 = ?, option2 = ?, option3 = ?, option4 = ?, correct_answer = ?, category = ?, image_url = ? WHERE id = ?`,
-      [questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url, id]
+    // Verificar que el cuestionario exista
+    const [questionnaire] = await pool.query('SELECT id FROM questionnaires WHERE id = ?', [questionnaire_id]);
+    if (questionnaire.length === 0) {
+      return res.status(404).json({
+        message: 'El cuestionario especificado no existe',
+        error: 'QUESTIONNAIRE_NOT_FOUND'
+      });
+    }
+
+    // Verificar permisos para docentes
+    if (req.user.role === 'docente') {
+      const isOwner = await checkOwnership(id, req.user.id);
+      if (!isOwner) {
+        console.error(`Acceso denegado: El usuario ${req.user.id} no es propietario de la pregunta ${id}`);
+        return res.status(403).json({ 
+          message: 'No tienes permiso para modificar esta pregunta.',
+          error: 'FORBIDDEN',
+          details: 'El cuestionario no pertenece al docente actual'
+        });
+      }
+    }
+
+    // Manejar la imagen
+    let image_url = qRows[0].image_url; // Mantener la imagen actual por defecto
+    
+    if (req.file) {
+      // Si hay un nuevo archivo, usar el nuevo
+      image_url = `/uploads/${req.file.filename}`;
+    } else if (req.body.image_url === '') {
+      // Si se envió image_url vacío, significa que se quiere eliminar la imagen
+      image_url = null;
+    }
+
+    // Validar que la respuesta correcta sea una de las opciones
+    const options = [option1, option2, option3, option4].filter(Boolean);
+    if (!options.includes(correct_answer)) {
+      return res.status(400).json({
+        message: 'La respuesta correcta debe ser una de las opciones proporcionadas',
+        error: 'INVALID_CORRECT_ANSWER'
+      });
+    }
+
+    // Actualizar la pregunta
+    const [result] = await pool.query(
+      `UPDATE questions SET 
+        questionnaire_id = ?, 
+        question_text = ?, 
+        option1 = ?, 
+        option2 = ?, 
+        option3 = ?, 
+        option4 = ?, 
+        correct_answer = ?, 
+        category = ?, 
+        image_url = ? 
+      WHERE id = ?`,
+      [
+        questionnaire_id, 
+        question_text, 
+        option1, 
+        option2, 
+        option3 || null, 
+        option4 || null, 
+        correct_answer, 
+        category, 
+        image_url, 
+        id
+      ]
     );
-    res.json({ message: 'Pregunta actualizada' });
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        message: 'No se pudo actualizar la pregunta',
+        error: 'UPDATE_FAILED'
+      });
+    }
+
+    // Obtener la pregunta actualizada para devolverla
+    const [updatedQuestion] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
+    
+    res.json({ 
+      message: 'Pregunta actualizada exitosamente',
+      question: updatedQuestion[0]
+    });
   } catch (error) {
     console.error('❌ Error al actualizar la pregunta:', error);
-    res.status(500).json({ message: 'Error al actualizar la pregunta' });
+    
+    // Manejar errores específicos de la base de datos
+    if (error.code === 'ER_NO_REFERENCED_ROW_2') {
+      return res.status(400).json({
+        message: 'El cuestionario especificado no existe',
+        error: 'INVALID_QUESTIONNAIRE_ID',
+        details: error.message
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Error al actualizar la pregunta',
+      error: 'INTERNAL_SERVER_ERROR',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
 // Eliminar una pregunta
-router.delete('/:id', verifyToken, async (req, res) => {
+router.delete('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [qRows] = await pool.query('SELECT questionnaire_id FROM questions WHERE id = ?', [id]);
-    if (qRows.length === 0) return res.status(404).json({ message: 'Pregunta no encontrada.' });
+    // Verificar que la pregunta exista
+    const [qRows] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
+    if (qRows.length === 0) {
+      return res.status(404).json({ 
+        message: 'Pregunta no encontrada.',
+        error: 'QUESTION_NOT_FOUND'
+      });
+    }
 
+    // Verificar permisos para docentes
     if (req.user.role === 'docente') {
-      const isOwner = await checkOwnership(qRows[0].questionnaire_id, req.user.id);
-      if (!isOwner) return res.status(403).json({ message: 'Acceso denegado.' });
+      const isOwner = await checkOwnership(id, req.user.id);
+      if (!isOwner) {
+        console.error(`Acceso denegado: El usuario ${req.user.id} no es propietario de la pregunta ${id}`);
+        return res.status(403).json({ 
+          message: 'No tienes permiso para eliminar esta pregunta.',
+          error: 'FORBIDDEN',
+          details: 'El cuestionario no pertenece al docente actual'
+        });
+      }
     }
 
     await pool.query('DELETE FROM questions WHERE id = ?', [id]);

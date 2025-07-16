@@ -43,6 +43,9 @@ const CreateQuestionPage = () => {
     option3: false,
     option4: false
   });
+  
+  // Estado para controlar la vista de las preguntas (latex o texto)
+  const [viewMode, setViewMode] = useState('latex'); // 'latex' o 'text'
 
   useEffect(() => {
     const fetchData = async () => {
@@ -264,27 +267,51 @@ const CreateQuestionPage = () => {
       {questionnaireIdFromUrl && currentQuestionnaire && (
         <div className="mb-4">
           <div className="d-flex justify-content-between align-items-center mb-3">
-            <Link to="/cuestionarios" className="btn btn-outline-secondary">
-              <ArrowLeft size={18} className="me-1" /> Volver a Cuestionarios
-            </Link>
+            <div>
+              <Link to="/cuestionarios" className="btn btn-outline-secondary">
+                <ArrowLeft size={18} className="me-1" /> Volver a Cuestionarios
+              </Link>
+            </div>
             <h2 className="mb-0">Gestión de Preguntas</h2>
+            <div className="btn-group">
+              <button 
+                type="button" 
+                className={`btn ${viewMode === 'text' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                onClick={() => setViewMode('text')}
+              >
+                Vista de Texto
+              </button>
+              <button 
+                type="button" 
+                className={`btn ${viewMode === 'latex' ? 'btn-primary' : 'btn-outline-secondary'}`}
+                onClick={() => setViewMode('latex')}
+              >
+                Vista LaTeX
+              </button>
+            </div>
           </div>
           
-          <div className="card">
+          <div className="card mb-4">
+            <div className="card-header bg-light">
+              <h4 className="card-title mb-0">{currentQuestionnaire.title}</h4>
+            </div>
             <div className="card-body">
-              <h5 className="card-title">{currentQuestionnaire.title}</h5>
-              <div className="row mt-3">
+              <div className="row">
                 <div className="col-md-3">
-                  <p><strong>Categoría:</strong> {currentQuestionnaire.category.replace('_', ' - ')}</p>
+                  <p className="mb-1"><strong>Categoría:</strong></p>
+                  <p className="bg-light p-2 rounded">{currentQuestionnaire.category.replace('_', ' - ')}</p>
                 </div>
-                <div className="col-md-3">
-                  <p><strong>Grado:</strong> {currentQuestionnaire.grade}°</p>
+                <div className="col-md-2">
+                  <p className="mb-1"><strong>Grado:</strong></p>
+                  <p className="bg-light p-2 rounded">{currentQuestionnaire.grade}°</p>
                 </div>
-                <div className="col-md-3">
-                  <p><strong>Fase:</strong> {currentQuestionnaire.phase}</p>
+                <div className="col-md-2">
+                  <p className="mb-1"><strong>Fase:</strong></p>
+                  <p className="bg-light p-2 rounded">{currentQuestionnaire.phase}</p>
                 </div>
-                <div className="col-md-3">
-                  <p><strong>Curso:</strong> {currentQuestionnaire.course_name}</p>
+                <div className="col-md-5">
+                  <p className="mb-1"><strong>Curso:</strong></p>
+                  <p className="bg-light p-2 rounded">{currentQuestionnaire.course_name}</p>
                 </div>
               </div>
             </div>
@@ -464,39 +491,75 @@ const CreateQuestionPage = () => {
               <table className="table table-bordered table-hover">
                 <thead className="table-light">
                   <tr>
-                    <th>ID</th>
-                    <th>Texto</th>
-                    <th>Opciones</th>
-                    <th>Respuesta</th>
-                    {!questionnaireIdFromUrl && <th>Cuestionario</th>}
-                    <th>Imagen</th>
-                    <th>Acciones</th>
+                    <th style={{width: '5%'}}>ID</th>
+                    <th style={{width: '30%'}}>Pregunta</th>
+                    <th style={{width: '35%'}}>Opciones de Respuesta</th>
+                    <th style={{width: '5%'}}>Resp.</th>
+                    {!questionnaireIdFromUrl && <th style={{width: '10%'}}>Cuestionario</th>}
+                    <th style={{width: '10%'}}>Imagen</th>
+                    <th style={{width: '15%'}}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {questions.map((q) => (
-                    <tr key={q.id}>
-                      <td>{q.id}</td>
-                      <td>
-                        {containsLatex(q.question_text) ? (
-                          <BlockMath math={q.question_text} />
-                        ) : (
-                          q.question_text
-                        )}
-                      </td>
-                      <td>
-                        <ol className="mb-0 ps-3">
-                          {[1, 2, 3, 4].map((n) => (
-                            <li key={n}>
-                              {containsLatex(q[`option${n}`]) ? (
-                                <InlineMath math={q[`option${n}`]} />
-                              ) : (
-                                q[`option${n}`]
-                              )}
-                            </li>
-                          ))}
-                        </ol>
-                      </td>
+                  {questions.map((q) => {
+                    const hasLatexInQuestion = containsLatex(q.question_text);
+                    return (
+                      <tr key={q.id}>
+                        <td className="align-middle">{q.id}</td>
+                        <td className="align-middle">
+                          <div className="d-flex flex-column">
+                            {viewMode === 'latex' && hasLatexInQuestion ? (
+                              <div className="border rounded p-2 bg-light mb-2">
+                                <BlockMath math={q.question_text} />
+                              </div>
+                            ) : (
+                              <div className="p-2">
+                                {q.question_text}
+                              </div>
+                            )}
+                            {hasLatexInQuestion && (
+                              <small className="text-muted">
+                                <button 
+                                  className="btn btn-sm btn-link p-0"
+                                  onClick={() => setViewMode(viewMode === 'latex' ? 'text' : 'latex')}
+                                >
+                                  {viewMode === 'latex' ? 'Ver en texto plano' : 'Ver en LaTeX'}
+                                </button>
+                              </small>
+                            )}
+                          </div>
+                        </td>
+                        <td className="align-middle">
+                          <ol className="mb-0 ps-3">
+                            {[1, 2, 3, 4].map((n) => {
+                              const option = q[`option${n}`];
+                              const hasLatex = containsLatex(option);
+                              return (
+                                <li key={n} className="mb-2">
+                                  <div className="d-flex flex-column">
+                                    {viewMode === 'latex' && hasLatex ? (
+                                      <div className="border rounded p-2 bg-light">
+                                        <InlineMath math={option} />
+                                      </div>
+                                    ) : (
+                                      <div className="p-1">{option}</div>
+                                    )}
+                                    {hasLatex && (
+                                      <small className="text-muted">
+                                        <button 
+                                          className="btn btn-sm btn-link p-0"
+                                          onClick={() => setViewMode(viewMode === 'latex' ? 'text' : 'latex')}
+                                        >
+                                          {viewMode === 'latex' ? 'Ver en texto' : 'Ver en LaTeX'}
+                                        </button>
+                                      </small>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        </td>
                       <td className="text-center">{q.correct_answer}</td>
                       {!questionnaireIdFromUrl && (
                         <td>
@@ -536,8 +599,14 @@ const CreateQuestionPage = () => {
       
       {/* Guía rápida de LaTeX */}
       <div className="card mt-4">
-        <div className="card-header bg-info text-white">
+        <div className="card-header bg-info text-white d-flex justify-content-between align-items-center">
           <h5 className="mb-0">Guía Rápida de LaTeX para Matemáticas</h5>
+          <button 
+            className="btn btn-sm btn-light" 
+            onClick={() => setViewMode(viewMode === 'latex' ? 'text' : 'latex')}
+          >
+            {viewMode === 'latex' ? 'Cambiar a vista de texto' : 'Cambiar a vista LaTeX'}
+          </button>
         </div>
         <div className="card-body">
           <div className="row">

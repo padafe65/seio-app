@@ -13,6 +13,7 @@ import teacherRoutes from './routes/teacherRoutes.js';
 import courseRoutes from './routes/courses.js';
 import subjectRoutes from './routes/subjects.js';
 import questionnaireRoutes from './routes/questionnaireRoutes.js';
+import questionRoutes from './routes/questionRoutes.js';
 import quizRoutes from './routes/quiz.js';
 import indicatorRoutes from './routes/indicatorRoutes.js';
 import evaluationResultsRoutes from './routes/evaluationResults.js';
@@ -115,6 +116,7 @@ const apiRoutes = [
   { path: '/api/courses', router: courseRoutes },
   { path: '/api/subjects', router: subjectRoutes },
   { path: '/api/questionnaires', router: questionnaireRoutes },
+  { path: '/api/questions', router: questionRoutes },
   { path: '/api/quiz', router: quizRoutes },
   { path: '/api/indicators', router: indicatorRoutes },
   { path: '/api/evaluation-results', router: evaluationResultsRoutes },

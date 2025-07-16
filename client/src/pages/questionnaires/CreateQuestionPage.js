@@ -10,10 +10,9 @@ const CreateQuestionPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [questionnaire, setQuestionnaire] = useState(null);
   const [questions, setQuestions] = useState([]);
-  const [questionOptions, setQuestionOptions] = useState({});
   
   const [currentQuestion, setCurrentQuestion] = useState({
     id: null,
@@ -23,6 +22,7 @@ const CreateQuestionPage = () => {
     option3: '',
     option4: '',
     correct_answer: '1',
+    category: questionnaire?.category || '', // Inicializar con la categoría del cuestionario si está disponible
     image: null
   });
   
@@ -35,42 +35,83 @@ const CreateQuestionPage = () => {
   useEffect(() => {
     const fetchQuestionnaireData = async () => {
       try {
-        const response = await api.get(`/api/questionnaires/${id}`);
-        console.log('Respuesta del backend:', response.data);
+        setIsLoading(true);
         
-        if (!response.data.success) {
-          throw new Error(response.data.message || 'Error al obtener el cuestionario');
+        // 1. Obtener los datos del cuestionario
+        const questionnaireResponse = await api.get(`/api/questionnaires/${id}`);
+        const questionnaireData = questionnaireResponse.data.data; // Ajustar según la estructura de la respuesta
+        setQuestionnaire(questionnaireData);
+        
+        // 2. Obtener las preguntas del cuestionario
+        console.log('Obteniendo preguntas para el cuestionario ID:', id);
+        const questionsResponse = await api.get(`/api/questions?questionnaire_id=${id}`);
+        console.log('Respuesta de preguntas:', questionsResponse);
+        
+        // Asegurarse de que la respuesta tenga el formato esperado
+        let questionsData = [];
+        if (questionsResponse.data && questionsResponse.data.success) {
+          questionsData = questionsResponse.data.data || [];
+        } else if (Array.isArray(questionsResponse.data)) {
+          // Si la respuesta es directamente un array
+          questionsData = questionsResponse.data;
         }
         
-        const data = response.data.data;
-        setQuestionnaire(data);
+        console.log('Preguntas obtenidas:', questionsData);
         
-        // Procesar las preguntas y sus opciones
-        const processedQuestions = data.questions.map(question => ({
-          ...question,
-          options: question.options ? question.options.split('|||') : []
-        }));
+        // Procesar las preguntas
+        const processedQuestions = questionsData.map(question => {
+          // Asegurarse de que todas las propiedades necesarias existan
+          const processedQuestion = {
+            id: question.id,
+            question_text: question.question_text || '',
+            option1: question.option1 || '',
+            option2: question.option2 || '',
+            option3: question.option3 || '',
+            option4: question.option4 || '',
+            correct_answer: question.correct_answer || '1',
+            category: question.category || questionnaireData.category || '',
+            image_url: question.image_url || null,
+            options: [
+              question.option1,
+              question.option2,
+              question.option3,
+              question.option4
+            ].filter(Boolean) // Filtrar opciones vacías
+          };
+          
+          console.log('Pregunta procesada:', processedQuestion);
+          return processedQuestion;
+        });
         
         setQuestions(processedQuestions);
-        setCurrentQuestion(prev => ({ 
-          ...prev, 
+        
+        // Actualizar el estado actual con la categoría del cuestionario
+        setCurrentQuestion(prev => ({
+          ...prev,
           questionnaire_id: id,
-          category: data.category 
+          category: questionnaireData.category || ''
         }));
         
       } catch (error) {
-        console.error('Error al cargar cuestionario:', error);
+        console.error('Error al cargar el cuestionario:', {
+          error,
+          response: error.response?.data,
+          status: error.response?.status
+        });
+        
         Swal.fire({ 
           icon: 'error', 
           title: 'Error', 
-          text: error.message || 'Error al cargar el cuestionario'
+          text: 'No se pudieron cargar las preguntas del cuestionario. Por favor, inténtalo de nuevo.'
         });
       } finally {
-        setLoading(false);
+        setIsLoading(false);
       }
     };
     
-    fetchQuestionnaireData();
+    if (id) {
+      fetchQuestionnaireData();
+    }
   }, [id]);
   
   const handleQuestionChange = (e) => {
@@ -89,18 +130,62 @@ const CreateQuestionPage = () => {
   const handleSubmitQuestion = async (e) => {
     e.preventDefault();
     
+    // Validar campos requeridos
+    const requiredFields = ['question_text', 'option1', 'option2', 'correct_answer', 'category'];
+    const missingFields = requiredFields.filter(field => !currentQuestion[field]);
+    
+    if (missingFields.length > 0) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Campos requeridos',
+        text: `Por favor completa los siguientes campos: ${missingFields.join(', ')}`
+      });
+      return;
+    }
+    
+    // Obtener el texto de la opción correcta basado en el índice
+    const correctAnswerIndex = parseInt(currentQuestion.correct_answer) - 1; // Convertir a 0-based index
+    const options = [
+      currentQuestion.option1,
+      currentQuestion.option2,
+      currentQuestion.option3,
+      currentQuestion.option4
+    ].filter(Boolean);
+    
+    const correctAnswerText = options[correctAnswerIndex];
+    
+    if (!correctAnswerText) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: 'La respuesta correcta seleccionada no es válida. Por favor, verifica las opciones.'
+      });
+      return;
+    }
+    
     try {
       const formData = new FormData();
-      formData.append('questionnaire_id', id);
-      formData.append('question_text', currentQuestion.question_text);
-      formData.append('option1', currentQuestion.option1);
-      formData.append('option2', currentQuestion.option2);
-      formData.append('option3', currentQuestion.option3);
-      formData.append('option4', currentQuestion.option4);
-      formData.append('correct_answer', currentQuestion.correct_answer);
       
+      // Agregar campos obligatorios
+      formData.append('questionnaire_id', id);
+      formData.append('question_text', currentQuestion.question_text || '');
+      formData.append('option1', currentQuestion.option1 || '');
+      formData.append('option2', currentQuestion.option2 || '');
+      formData.append('option3', currentQuestion.option3 || '');
+      formData.append('option4', currentQuestion.option4 || '');
+      
+      // Enviar el texto de la opción correcta en lugar del índice
+      formData.append('correct_answer', correctAnswerText);
+      formData.append('category', currentQuestion.category || '');
+      
+      console.log('Enviando respuesta correcta:', correctAnswerText);
+      
+      // Solo agregar la imagen si existe
       if (currentQuestion.image) {
         formData.append('image', currentQuestion.image);
+      } else if (imagePreview && !currentQuestion.image) {
+        // Si hay una imagen previa pero no se ha seleccionado una nueva, mantener la existente
+        formData.append('keep_existing_image', 'true');
       }
       
       let response;
@@ -166,31 +251,80 @@ const CreateQuestionPage = () => {
       setImagePreview(null);
       setIsEditing(false);
     } catch (error) {
-      console.error('Error al añadir pregunta:', error);
+      console.error('Error al procesar la pregunta:', {
+        error,
+        response: error.response?.data,
+        status: error.response?.status,
+        headers: error.response?.headers,
+        request: error.request
+      });
+      
+      let errorMessage = 'Hubo un problema al procesar la pregunta';
+      
+      if (error.response) {
+        // El servidor respondió con un estado de error
+        if (error.response.status === 404) {
+          errorMessage = 'No se encontró el recurso solicitado. Por favor, verifica la URL.';
+        } else if (error.response.data?.message) {
+          errorMessage = error.response.data.message;
+        } else {
+          errorMessage = `Error del servidor (${error.response.status}): ${error.response.statusText}`;
+        }
+      } else if (error.request) {
+        // La solicitud fue hecha pero no se recibió respuesta
+        errorMessage = 'No se recibió respuesta del servidor. Verifica tu conexión.';
+      }
+      
       Swal.fire({
         icon: 'error',
         title: 'Error',
-        text: 'Hubo un problema al añadir la pregunta'
+        html: `
+          <div style="text-align: left;">
+            <p>${errorMessage}</p>
+            ${error.response?.data?.details ? `<p><strong>Detalles:</strong> ${error.response.data.details}</p>` : ''}
+            ${process.env.NODE_ENV === 'development' ? `<pre style="font-size: 12px; text-align: left; overflow: auto; max-height: 200px;">${JSON.stringify({
+              status: error.response?.status,
+              data: error.response?.data,
+              config: {
+                url: error.config?.url,
+                method: error.config?.method,
+                headers: error.config?.headers
+              }
+            }, null, 2)}</pre>` : ''}
+          </div>
+        `,
+        confirmButtonText: 'Entendido',
+        width: '600px'
       });
     }
   };
 
   const handleEditQuestion = (question) => {
+    console.log('Editando pregunta:', question);
+    
     // Asegurarse de que la respuesta correcta esté en el formato correcto (1, 2, 3 o 4)
     const correctAnswer = question.correct_answer ? String(question.correct_answer) : '1';
     
-    setCurrentQuestion({
+    setCurrentQuestion(prev => ({
+      ...prev,  // Mantener el estado actual para no perder ningún campo
       id: question.id,
-      question_text: question.question_text,
+      question_text: question.question_text || '',
       option1: question.option1 || '',
       option2: question.option2 || '',
       option3: question.option3 || '',
       option4: question.option4 || '',
       correct_answer: correctAnswer,
+      category: question.category || questionnaire?.category || '', // Usar la categoría de la pregunta o del cuestionario
       image: null
-    });
+    }));
     
-    setImagePreview(question.image_url || null);
+    // Si hay una URL de imagen, establecer la vista previa
+    if (question.image_url) {
+      setImagePreview(question.image_url);
+    } else {
+      setImagePreview(null);
+    }
+    
     setIsEditing(true);
     setShowRawCurrent(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -264,7 +398,7 @@ const CreateQuestionPage = () => {
     { description: 'Raíz n-ésima', latex: '\\sqrt[n]{expresión}', ejemplo: '\\sqrt[3]{27}' }
   ];
   
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="d-flex justify-content-center my-5">
         <div className="spinner-border text-primary" role="status">
