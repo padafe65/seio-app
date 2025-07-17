@@ -147,7 +147,105 @@ router.get('/students', verifyToken, isTeacherOrAdmin, async (req, res) => {
     }
 });
 
-// Ruta para obtener las calificaciones de los estudiantes del docente autenticado
+// Ruta para obtener el docente por ID de usuario
+router.get('/by-user/:userId', verifyToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        console.log(`🔍 Buscando docente para el usuario ID: ${userId}`);
+        
+        // Validar que el userId sea un número
+        if (isNaN(userId)) {
+            console.error('❌ ID de usuario no válido:', userId);
+            return res.status(400).json({
+                success: false,
+                message: 'ID de usuario no válido',
+                error: 'INVALID_USER_ID'
+            });
+        }
+        
+        console.log(`🔍 Ejecutando consulta SQL para obtener docente con user_id: ${userId}`);
+        
+        const [teacher] = await pool.query(
+            `SELECT 
+                t.id,
+                t.user_id,
+                t.subject,
+                u.name,
+                u.email,
+                u.phone,
+                u.estado,
+                u.role
+             FROM teachers t 
+             JOIN users u ON t.user_id = u.id 
+             WHERE t.user_id = ?`,
+            [userId]
+        );
+        
+        console.log(`📊 Resultado de la consulta:`, teacher);
+        
+        if (!teacher || teacher.length === 0) {
+            console.error(`❌ No se encontró docente para el usuario ID: ${userId}`);
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Docente no encontrado',
+                userId: userId,
+                error: 'TEACHER_NOT_FOUND'
+            });
+        }
+        
+        const teacherData = teacher[0];
+        console.log(`✅ Docente encontrado:`, {
+            id: teacherData.id,
+            user_id: teacherData.user_id,
+            name: teacherData.name,
+            email: teacherData.email,
+            role: teacherData.role
+        });
+        
+        // Asegurarnos de que el objeto de respuesta tenga el formato esperado
+        const response = {
+            success: true,
+            id: teacherData.id,
+            user_id: teacherData.user_id,
+            name: teacherData.name,
+            email: teacherData.email,
+            phone: teacherData.phone,
+            subject: teacherData.subject,
+            role: teacherData.role,
+            estado: teacherData.estado,
+            created_at: teacherData.created_at,
+            updated_at: teacherData.updated_at
+        };
+        
+        console.log('📤 Enviando respuesta:', response);
+        res.status(200).json(response);
+        
+    } catch (error) {
+        console.error('❌ Error al obtener docente por ID de usuario:', error);
+        
+        // Si es un error de SQL, mostramos más detalles
+        if (error.code) {
+            console.error('🔍 Detalles del error SQL:', {
+                code: error.code,
+                errno: error.errno,
+                sqlMessage: error.sqlMessage,
+                sqlState: error.sqlState,
+                sql: error.sql
+            });
+        }
+        
+        res.status(500).json({ 
+            success: false, 
+            message: 'Error al obtener información del docente',
+            error: error.message,
+            code: error.code,
+            sqlMessage: error.sqlMessage
+        });
+    }
+});
+
+// Obtener grados de estudiantes asignados a un docente
 router.get('/student-grades', verifyToken, isTeacherOrAdmin, async (req, res) => {
     try {
         const teacherId = req.user.teacher_id;

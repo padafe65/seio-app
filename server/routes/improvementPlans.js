@@ -264,11 +264,29 @@ router.get('/indicators/failed/:studentId/:grade/:phase', async (req, res) => {
     
     // Obtener indicadores no alcanzados para este estudiante en esta fase
     const [indicators] = await db.query(`
-      SELECT i.id, i.description, i.subject, i.phase, i.grade, i.achieved
+      SELECT 
+        i.id, 
+        i.description, 
+        i.subject, 
+        i.phase, 
+        i.grade, 
+        i.achieved,
+        t.subject as teacher_subject,
+        u.name as teacher_name,
+        q.title as questionnaire_title,
+        q.phase as questionnaire_phase,
+        c.name as course_name
       FROM indicators i
+      JOIN teachers t ON i.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
+      LEFT JOIN courses c ON q.course_id = c.id
       JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
-      WHERE ts.student_id = ? AND i.grade = ? AND i.phase = ? AND i.achieved = false
-      ORDER BY i.subject
+      WHERE ts.student_id = ? 
+        AND i.grade = ? 
+        AND i.phase = ? 
+        AND i.achieved = false
+      ORDER BY i.subject, i.created_at DESC
     `, [studentId, grade, phase]);
     
     res.json(indicators);
@@ -285,11 +303,29 @@ router.get('/indicators/passed/:studentId/:grade/:phase', async (req, res) => {
     
     // Obtener indicadores alcanzados para este estudiante en esta fase
     const [indicators] = await db.query(`
-      SELECT i.id, i.description, i.subject, i.phase, i.grade, i.achieved
+      SELECT 
+        i.id, 
+        i.description, 
+        i.subject, 
+        i.phase, 
+        i.grade, 
+        i.achieved,
+        t.subject as teacher_subject,
+        u.name as teacher_name,
+        q.title as questionnaire_title,
+        q.phase as questionnaire_phase,
+        c.name as course_name
       FROM indicators i
+      JOIN teachers t ON i.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
+      LEFT JOIN courses c ON q.course_id = c.id
       JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
-      WHERE ts.student_id = ? AND i.grade = ? AND i.phase = ? AND i.achieved = true
-      ORDER BY i.subject
+      WHERE ts.student_id = ? 
+        AND i.grade = ? 
+        AND i.phase = ? 
+        AND i.achieved = true
+      ORDER BY i.subject, i.created_at DESC
     `, [studentId, grade, phase]);
     
     res.json(indicators);

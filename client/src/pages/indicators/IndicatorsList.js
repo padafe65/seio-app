@@ -20,24 +20,161 @@ const IndicatorsList = () => {
   
   useEffect(() => {
     const fetchIndicators = async () => {
+      setLoading(true);
+      setError(null);
+      
       try {
-        // Si es docente, obtener solo sus indicadores
-        let url = '/api/indicators';
-        if (user && user.role === 'docente') {
-          // Obtener el ID del profesor
-          const teacherResponse = await axios.get(`/api/teachers/by-user/${user.id}`);
-          const teacherId = teacherResponse.data.id;
-          console.log("ID del profesor:", teacherId);
-          url = `/api/indicators?teacher_id=${teacherId}`;
+        console.log('🔍 Iniciando carga de indicadores para el usuario:', {
+          userId: user?.id,
+          userRole: user?.role
+        });
+        
+        // Para todos los usuarios, primero verificamos si hay un token
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          console.error('❌ No se encontró el token de autenticación en localStorage');
+          throw new Error('No se encontró el token de autenticación');
         }
         
-        const response = await axios.get(url);
-        setIndicators(response.data);
-        setFilteredIndicators(response.data);
-        console.log("Indicadores obtenidos:", response.data);
+        console.log('🔑 Token encontrado en localStorage');
+        
+        // Configuración de axios para incluir el token
+        const config = {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          withCredentials: true
+        };
+        
+        console.log('📤 Configuración de la petición:', {
+          headers: config.headers,
+          withCredentials: config.withCredentials
+        });
+        
+        // Si es docente, obtener solo sus indicadores
+        if (user && user.role === 'docente') {
+          console.log('👨‍🏫 Usuario es docente, obteniendo información del profesor...');
+          
+          try {
+            // 1. Primero obtenemos el ID del profesor
+            console.log(`🔍 Obteniendo información del profesor para el usuario ID: ${user.id}`);
+            const teacherResponse = await axios.get(
+              `/api/teachers/by-user/${user.id}`,
+              config
+            );
+            
+            console.log('✅ Información del profesor obtenida:', teacherResponse.data);
+            
+            // Verificar que la respuesta tenga el formato esperado
+            if (!teacherResponse.data || !teacherResponse.data.success) {
+              console.error('❌ Error en la respuesta del servidor:', teacherResponse.data);
+              throw new Error(teacherResponse.data?.message || 'Error al obtener información del profesor');
+            }
+            
+            const teacherData = teacherResponse.data;
+            const teacherId = teacherData.id;
+            
+            console.log("🆔 ID del profesor obtenido:", teacherId, "Datos completos:", teacherData);
+            
+            if (!teacherId) {
+              console.error('❌ No se pudo obtener el ID del profesor de la respuesta:', teacherResponse.data);
+              throw new Error('No se pudo obtener el ID del profesor de la respuesta del servidor');
+            }
+            
+            // 2. Luego obtenemos los indicadores de ese profesor
+            const indicatorsUrl = `/api/indicators?teacher_id=${teacherId}`;
+            console.log(`🔗 URL de la API de indicadores: ${indicatorsUrl}`);
+            
+            console.log('📤 Enviando solicitud con headers:', {
+              Authorization: config.headers.Authorization ? 'Token presente' : 'Token ausente',
+              'Content-Type': config.headers['Content-Type']
+            });
+            
+            const response = await axios.get(indicatorsUrl, config);
+            
+            console.log('✅ Respuesta del servidor:', {
+              status: response.status,
+              statusText: response.statusText,
+              data: response.data ? (response.data.data ? `Recibidos ${response.data.count} indicadores` : 'Formato de datos inesperado') : 'Sin datos',
+              success: response.data?.success,
+              headers: response.headers
+            });
+            
+            // Verificar que la respuesta tenga el formato esperado
+            if (!response.data || !response.data.success) {
+              console.error('❌ Error en la respuesta del servidor:', response.data);
+              throw new Error(response.data?.message || 'Error al obtener los indicadores');
+            }
+            
+            const indicatorsData = response.data.data || [];
+            
+            console.log(`📊 Total de indicadores cargados: ${indicatorsData.length}`);
+            if (indicatorsData.length > 0) {
+              console.log('📝 Primer indicador:', {
+                id: indicatorsData[0].id,
+                description: indicatorsData[0].description,
+                teacher_id: indicatorsData[0].teacher_id,
+                student_id: indicatorsData[0].student_id,
+                questionnaire_id: indicatorsData[0].questionnaire_id
+              });
+            }
+            
+            setIndicators(indicatorsData);
+            setFilteredIndicators(indicatorsData);
+            
+          } catch (teacherError) {
+            console.error('❌ Error al obtener información del profesor o sus indicadores:', {
+              error: teacherError,
+              response: teacherError.response?.data,
+              status: teacherError.response?.status,
+              statusText: teacherError.response?.statusText,
+              url: teacherError.config?.url,
+              method: teacherError.config?.method,
+              headers: teacherError.config?.headers
+            });
+            
+            setError(`Error al cargar los indicadores: ${teacherError.response?.data?.message || teacherError.message}`);
+            return;
+          }
+        } else {
+          // Para usuarios que no son docentes (ej. administradores)
+          const adminUrl = '/api/indicators';
+          console.log('👤 Usuario no es docente, obteniendo todos los indicadores...');
+          console.log('📤 Enviando solicitud a:', adminUrl);
+          
+          const response = await axios.get(adminUrl, config);
+          
+          console.log('✅ Respuesta del servidor (admin):', {
+            status: response.status,
+            statusText: response.statusText,
+            data: response.data ? `Recibidos ${Array.isArray(response.data) ? response.data.length : 'datos'}` : 'Sin datos'
+          });
+          
+          if (!Array.isArray(response.data)) {
+            console.error('❌ La respuesta no es un array:', response.data);
+            throw new Error('Formato de respuesta inesperado');
+          }
+          
+          console.log(`📊 Total de indicadores cargados: ${response.data.length}`);
+          setIndicators(response.data);
+          setFilteredIndicators(response.data);
+        }
+        
       } catch (error) {
-        console.error('Error al cargar indicadores:', error);
-        setError('Error al cargar indicadores. Intente nuevamente.');
+        console.error('❌ Error general al cargar indicadores:', {
+          error: error,
+          response: error.response?.data,
+          status: error.response?.status,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            params: error.config?.params,
+            headers: error.config?.headers
+          }
+        });
+        
+        setError(`Error al cargar indicadores: ${error.message}. Por favor, intente nuevamente.`);
       } finally {
         setLoading(false);
       }

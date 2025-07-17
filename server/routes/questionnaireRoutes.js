@@ -47,19 +47,23 @@ router.get('/', isTeacherOrAdmin, async (req, res) => {
 
     // 2. Aplicar filtros según el rol
     if (req.user.role === 'docente') {
-      // Para docentes, solo mostrar los cuestionarios que ellos crearon
-      conditions.push('q.created_by = (SELECT id FROM teachers WHERE user_id = ?)');
-      queryParams.push(req.user.id);
-      // Para docentes, solo mostrar sus propios cuestionarios
+      // Obtener el ID del docente a partir del user_id
+      console.log(`🔍 Obteniendo ID de docente para el usuario: ${req.user.id}`);
       const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+      
       if (teacherRows.length === 0) {
+        console.error(`❌ No se encontró perfil de docente para el usuario: ${req.user.id}`);
         return res.status(403).json({ 
           success: false, 
           message: 'No se encontró el perfil de docente asociado a tu cuenta',
           error: 'TEACHER_NOT_FOUND'
         });
       }
+      
+      // Usar solo una condición con el ID del docente
       const teacherId = teacherRows[0].id;
+      console.log(`✅ ID de docente obtenido: ${teacherId} para el usuario: ${req.user.id}`);
+      
       conditions.push('q.created_by = ?');
       queryParams.push(teacherId);
     }

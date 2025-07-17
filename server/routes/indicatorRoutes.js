@@ -1,25 +1,77 @@
 // routes/indicatorRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // Obtener todos los indicadores (con filtros opcionales)
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
+  const { teacher_id, student_id, subject, phase } = req.query;
+  console.log('🔍 Iniciando consulta de indicadores con filtros:', req.query);
+
   try {
-    const { teacher_id, student_id, subject, phase } = req.query;
+    // Si se proporciona un teacher_id, validar que exista
+    if (teacher_id) {
+      console.log(`🔍 Validando docente con ID: ${teacher_id}`);
+
+      
+      // Validar que el teacher_id sea un número
+      if (isNaN(teacher_id)) {
+        console.error('❌ ID de docente no válido:', teacher_id);
+        return res.status(400).json({
+          success: false,
+          message: 'ID de docente no válido',
+          teacher_id
+        });
+      }
+      
+      const [teacher] = await pool.query(
+        `SELECT t.id, t.user_id, u.name, u.email 
+         FROM teachers t 
+         JOIN users u ON t.user_id = u.id 
+         WHERE t.id = ?`, 
+        [teacher_id]
+      );
+      
+      if (teacher.length === 0) {
+        console.error(`❌ No se encontró docente con ID: ${teacher_id}`);
+        return res.status(404).json({ 
+          success: false, 
+          message: 'Docente no encontrado',
+          teacher_id: teacher_id
+        });
+      }
+      console.log(`✅ Docente encontrado:`, teacher[0]);
+    }
     
+    // Construir la consulta SQL según la estructura real de la tabla
     let query = `
-      SELECT i.*, t.subject as teacher_subject, u.name as teacher_name
+      SELECT 
+        i.id,
+        i.description,
+        i.subject,
+        i.phase,
+        i.achieved,
+        i.created_at,
+        i.teacher_id,
+        i.student_id,
+        t.subject as teacher_subject, 
+        u.name as teacher_name,
+        u.email as teacher_email
       FROM indicators i
-      JOIN teachers t ON i.teacher_id = t.id
-      JOIN users u ON t.user_id = u.id
+      LEFT JOIN teachers t ON i.teacher_id = t.id
+      LEFT JOIN users u ON t.user_id = u.id
+      LEFT JOIN students s ON i.student_id = s.id
       WHERE 1=1
     `;
+    
+    console.log('🔍 Consulta SQL base construida');
     
     const params = [];
     
     if (teacher_id) {
+      console.log(`🔍 Aplicando filtro por teacher_id: ${teacher_id}`);
       query += ' AND i.teacher_id = ?';
       params.push(teacher_id);
     }
@@ -41,8 +93,102 @@ router.get('/', async (req, res) => {
     
     query += ' ORDER BY i.phase, i.created_at DESC';
     
-    const [rows] = await pool.query(query, params);
-    res.json(rows);
+    console.log('🔍 Ejecutando consulta SQL:', query.replace(/\s+/g, ' ').trim());
+    console.log('📌 Parámetros:', params);
+    
+    try {
+      console.log('🔍 Ejecutando consulta SQL final:', query);
+      console.log('📌 Parámetros finales:', params);
+      
+      // Verificar la conexión a la base de datos
+      const connection = await pool.getConnection();
+      console.log('✅ Conexión a la base de datos establecida correctamente');
+      
+      try {
+        // Ejecutar la consulta
+        const [rows] = await connection.query(query, params);
+        console.log(`✅ Se encontraron ${rows.length} indicadores`);
+        
+        if (rows.length > 0) {
+          console.log('📝 Muestra del primer indicador encontrado:', {
+            id: rows[0].id,
+            description: rows[0].description,
+            teacher_id: rows[0].teacher_id,
+            student_id: rows[0].student_id,
+            subject: rows[0].subject,
+            phase: rows[0].phase
+          });
+        } else {
+          console.log('ℹ️ No se encontraron indicadores con los filtros proporcionados');
+        }
+      
+        // Asegurarnos de que la respuesta tenga el formato correcto
+        const response = {
+          success: true,
+          count: rows.length,
+          data: rows
+        };
+        
+        // Liberar la conexión
+        connection.release();
+        
+        console.log('✅ Respuesta preparada correctamente');
+        return res.json(response);
+        
+      } catch (queryError) {
+        console.error('❌ Error al ejecutar la consulta SQL:', queryError);
+        console.error('🔍 Detalles del error:', {
+          code: queryError.code,
+          errno: queryError.errno,
+          sqlMessage: queryError.sqlMessage,
+          sqlState: queryError.sqlState,
+          sql: queryError.sql
+        });
+        
+        // Liberar la conexión en caso de error
+        if (connection) connection.release();
+        
+        // Devolver un error más descriptivo
+        return res.status(500).json({
+          success: false,
+          message: 'Error al ejecutar la consulta en la base de datos',
+          error: {
+            code: queryError.code,
+            message: queryError.message,
+            sqlMessage: queryError.sqlMessage,
+            sqlState: queryError.sqlState
+          }
+        });
+      }
+    } catch (connectionError) {
+      console.error('❌ Error de conexión a la base de datos:', connectionError);
+      return res.status(500).json({
+        success: false,
+        message: 'Error al conectar con la base de datos',
+        error: connectionError.message
+      });
+      console.error('❌ Error al ejecutar la consulta SQL:', error);
+      console.error('🔍 Detalles del error:', {
+        code: error.code,
+        errno: error.errno,
+        sqlMessage: error.sqlMessage,
+        sqlState: error.sqlState,
+        sql: error.sql
+      });
+      
+      // Devolver un error más descriptivo
+      res.status(500).json({
+        success: false,
+        message: 'Error al ejecutar la consulta en la base de datos',
+        error: {
+          code: error.code,
+          message: error.message,
+          sqlMessage: error.sqlMessage,
+          sqlState: error.sqlState
+        }
+      });
+      return;
+    }
   } catch (error) {
     console.error('❌ Error al obtener indicadores:', error);
     res.status(500).json({ message: 'Error al obtener indicadores' });
@@ -55,10 +201,20 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     
     const [rows] = await pool.query(`
-      SELECT i.*, t.subject as teacher_subject, u.name as teacher_name
+      SELECT 
+        i.*, 
+        t.subject as teacher_subject, 
+        u.name as teacher_name,
+        q.title as questionnaire_title,
+        q.grade as questionnaire_grade,
+        q.phase as questionnaire_phase,
+        s.name as student_name,
+        s.grade as student_grade
       FROM indicators i
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
+      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
+      LEFT JOIN students s ON i.student_id = s.id
       WHERE i.id = ?
     `, [id]);
     
@@ -76,13 +232,13 @@ router.get('/:id', async (req, res) => {
 // Crear un nuevo indicador
 router.post('/', async (req, res) => {
   try {
-    const { teacher_id, student_id, description, subject, phase, achieved, questionnaire_id, grade } = req.body;
+    const { teacher_id, student_id, description, subject, phase, achieved } = req.body;
     
     const [result] = await pool.query(`
       INSERT INTO indicators 
-      (teacher_id, student_id, description, subject, phase, achieved, questionnaire_id, grade) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [teacher_id, student_id || null, description, subject, phase, achieved || 0, questionnaire_id || null, grade || null]);
+      (teacher_id, student_id, description, subject, phase, achieved) 
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [teacher_id, student_id || null, description, subject, phase, achieved || 0]);
     
     res.status(201).json({
       id: result.insertId,
@@ -187,13 +343,22 @@ router.get('/student/:userId', async (req, res) => {
     
     // Obtener indicadores para el estudiante con filtrado mejorado
     const [rows] = await pool.query(`
-      SELECT i.*, u.name as teacher_name,
-             q.title as questionnaire_title, q.grade as questionnaire_grade, 
-             q.phase as questionnaire_phase
+      SELECT 
+        i.*, 
+        t.subject as teacher_subject, 
+        u.name as teacher_name,
+        q.title as questionnaire_title, 
+        q.grade as questionnaire_grade, 
+        q.phase as questionnaire_phase,
+        s.name as student_name,
+        s.grade as student_grade,
+        c.name as course_name
       FROM indicators i
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
       LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
+      LEFT JOIN students s ON i.student_id = s.id
+      LEFT JOIN courses c ON q.course_id = c.id
       WHERE (
         i.student_id = ? 
         OR (i.student_id IS NULL AND (i.grade = ? OR i.grade IS NULL))

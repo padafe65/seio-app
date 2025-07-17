@@ -377,7 +377,7 @@ function AppContent() {
             </ProtectedRoute>
           }
         >
-                    <Route path="dashboard" element={<Dashboard />} />
+          <Route path="dashboard" element={<Dashboard />} />
           <Route path="super-admin-dashboard" element={<SuperAdminDashboard />} />
           <Route path="crear-pregunta" element={<CreateQuestionPage />} />
           <Route path="preguntas/:id/editar" element={<EditarPreguntas />} />

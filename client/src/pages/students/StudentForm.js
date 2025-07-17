@@ -395,7 +395,10 @@ const StudentForm = ({ isViewMode = false }) => {
           showConfirmButton: false,
           timer: 1500
         }).then(() => {
-          navigate('/estudiantes');
+          // Redirigir a 'mis-estudiantes' si el usuario es un docente
+          // o a 'estudiantes' si es administrador
+          const redirectPath = user?.role === 'docente' ? '/mis-estudiantes' : '/estudiantes';
+          navigate(redirectPath);
         });
       }
     } catch (error) {
