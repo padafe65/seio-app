@@ -62,11 +62,11 @@ export const AuthProvider = ({ children }) => {
   // Verificar token al cargar la aplicación
   useEffect(() => {
     const checkTokenOnLoad = async () => {
-      console.log("🔄 Verificando token al iniciar...");
+      console.log(" Verificando token al iniciar...");
       
       // Si no hay token o está expirado, hacer logout
       if (!authToken || isTokenExpired(authToken)) {
-        console.log("❌ Token inválido o expirado");
+        console.log(" Token inválido o expirado");
         logout();
         setIsAuthReady(true);
         return;
@@ -79,16 +79,16 @@ export const AuthProvider = ({ children }) => {
         };
         
         await axios.get(`${API_URL}/api/auth/verify`, config);
-        console.log("✅ Token verificado correctamente");
+        console.log(" Token verificado correctamente");
         
         // Si el token es válido, restaurar usuario
         const storedUser = localStorage.getItem("user");
         if (storedUser && !user) {
           setUser(JSON.parse(storedUser));
-          console.log("✅ Usuario restaurado desde localStorage");
+          console.log(" Usuario restaurado desde localStorage");
         }
       } catch (error) {
-        console.error("❌ Error al verificar token:", error);
+        console.error(" Error al verificar token:", error);
         logout();
       } finally {
         setIsAuthReady(true);

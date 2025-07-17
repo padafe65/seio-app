@@ -148,6 +148,61 @@ router.get('/students', verifyToken, isTeacherOrAdmin, async (req, res) => {
 });
 
 // Ruta para obtener el docente por ID de usuario
+// Obtener estudiantes de un docente filtrados por grado
+router.get('/:teacherId/students/by-grade/:grade', verifyToken, async (req, res) => {
+    try {
+        const { teacherId, grade } = req.params;
+        
+        console.log(`🔍 Buscando estudiantes para el docente ID: ${teacherId}, grado: ${grade}`);
+        
+        // Validar que el teacherId sea un número
+        if (isNaN(teacherId)) {
+            return res.status(400).json({
+                success: false,
+                message: 'ID de docente no válido'
+            });
+        }
+
+        // Validar que el grado sea un número
+        if (isNaN(grade)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Grado no válido'
+            });
+        }
+
+        const query = `
+            SELECT 
+                s.id,
+                u.name,
+                s.grade,
+                c.name as courseName
+            FROM students s
+            JOIN users u ON s.user_id = u.id
+            JOIN teacher_students ts ON s.id = ts.student_id
+            LEFT JOIN courses c ON s.course_id = c.id
+            WHERE ts.teacher_id = ? AND s.grade = ?
+            ORDER BY u.name ASC
+        `;
+        
+        console.log('🔍 Ejecutando consulta SQL:', query.replace(/\s+/g, ' ').trim());
+        console.log('📌 Parámetros:', [teacherId, grade]);
+        
+        const [students] = await pool.query(query, [teacherId, grade]);
+        
+        console.log(`✅ Se encontraron ${students.length} estudiantes para el grado ${grade}`);
+        res.json(students);
+        
+    } catch (error) {
+        console.error('❌ Error al obtener estudiantes por grado:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error al obtener estudiantes',
+            error: error.message
+        });
+    }
+});
+
 router.get('/by-user/:userId', verifyToken, async (req, res) => {
     try {
         const { userId } = req.params;

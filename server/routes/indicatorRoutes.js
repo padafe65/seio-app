@@ -200,23 +200,25 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    console.log(`🔍 Obteniendo indicador con ID: ${id}`);
+    
     const [rows] = await pool.query(`
       SELECT 
         i.*, 
         t.subject as teacher_subject, 
         u.name as teacher_name,
-        q.title as questionnaire_title,
-        q.grade as questionnaire_grade,
-        q.phase as questionnaire_phase,
-        s.name as student_name,
+        -- Obtener el nombre del estudiante desde la tabla users
+        (SELECT name FROM users WHERE id = s.user_id) as student_name,
+        -- Obtener el grado del estudiante desde la tabla students
         s.grade as student_grade
       FROM indicators i
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
-      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       LEFT JOIN students s ON i.student_id = s.id
       WHERE i.id = ?
     `, [id]);
+    
+    console.log(`✅ Resultado de la consulta:`, rows[0]);
     
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Indicador no encontrado' });
