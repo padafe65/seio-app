@@ -176,12 +176,15 @@ router.get('/:teacherId/students/by-grade/:grade', verifyToken, async (req, res)
                 s.id,
                 u.name,
                 s.grade,
-                c.name as courseName
+                c.name as courseName,
+                s.course_id
             FROM students s
             JOIN users u ON s.user_id = u.id
             JOIN teacher_students ts ON s.id = ts.student_id
             LEFT JOIN courses c ON s.course_id = c.id
-            WHERE ts.teacher_id = ? AND s.grade = ?
+            WHERE ts.teacher_id = ? 
+              AND s.grade = ? 
+              AND u.estado = 'activo'
             ORDER BY u.name ASC
         `;
         
