@@ -7,16 +7,14 @@ const router = express.Router();
 
 // Obtener todos los indicadores (con filtros opcionales)
 router.get('/', verifyToken, async (req, res) => {
-  const { teacher_id, student_id, subject, phase } = req.query;
+  const { teacher_id, student_id, subject, phase, questionnaire_id } = req.query;
   console.log('🔍 Iniciando consulta de indicadores con filtros:', req.query);
 
   try {
-    // Si se proporciona un teacher_id, validar que exista
+    // Validar teacher_id si se proporciona
     if (teacher_id) {
       console.log(`🔍 Validando docente con ID: ${teacher_id}`);
-
       
-      // Validar que el teacher_id sea un número
       if (isNaN(teacher_id)) {
         console.error('❌ ID de docente no válido:', teacher_id);
         return res.status(400).json({
@@ -39,45 +37,45 @@ router.get('/', verifyToken, async (req, res) => {
         return res.status(404).json({ 
           success: false, 
           message: 'Docente no encontrado',
-          teacher_id: teacher_id
+          teacher_id
         });
       }
       console.log(`✅ Docente encontrado:`, teacher[0]);
     }
     
-    // Construir la consulta SQL según la estructura real de la tabla
+    // Construir la consulta base para obtener indicadores
     let query = `
-      SELECT 
+      SELECT DISTINCT
         i.id,
         i.description,
         i.subject,
         i.phase,
-        i.achieved,
         i.created_at,
         i.teacher_id,
-        i.student_id,
         t.subject as teacher_subject, 
         u.name as teacher_name,
-        u.email as teacher_email
+        u.email as teacher_email,
+        GROUP_CONCAT(DISTINCT CONCAT(si.student_id, '|', 
+          IFNULL((SELECT name FROM users WHERE id = s.user_id), ''), '|', 
+          IFNULL(s.grade, '')) SEPARATOR ';') as students_info
       FROM indicators i
       LEFT JOIN teachers t ON i.teacher_id = t.id
       LEFT JOIN users u ON t.user_id = u.id
-      LEFT JOIN students s ON i.student_id = s.id
+      LEFT JOIN student_indicators si ON i.id = si.indicator_id
+      LEFT JOIN students s ON si.student_id = s.id
       WHERE 1=1
     `;
     
-    console.log('🔍 Consulta SQL base construida');
-    
     const params = [];
     
+    // Aplicar filtros
     if (teacher_id) {
-      console.log(`🔍 Aplicando filtro por teacher_id: ${teacher_id}`);
       query += ' AND i.teacher_id = ?';
       params.push(teacher_id);
     }
     
     if (student_id) {
-      query += ' AND (i.student_id = ? OR i.student_id IS NULL)';
+      query += ' AND si.student_id = ?';
       params.push(student_id);
     }
     
@@ -91,310 +89,721 @@ router.get('/', verifyToken, async (req, res) => {
       params.push(phase);
     }
     
+    if (questionnaire_id) {
+      query += ' AND i.questionnaire_id = ?';
+      params.push(questionnaire_id);
+    }
+    
+    // Agrupar por indicador para manejar múltiples estudiantes
+    query += ' GROUP BY i.id';
     query += ' ORDER BY i.phase, i.created_at DESC';
     
     console.log('🔍 Ejecutando consulta SQL:', query.replace(/\s+/g, ' ').trim());
     console.log('📌 Parámetros:', params);
     
     try {
-      console.log('🔍 Ejecutando consulta SQL final:', query);
-      console.log('📌 Parámetros finales:', params);
+      const [rows] = await pool.query(query, params);
+      console.log(`✅ Se encontraron ${rows.length} indicadores`);
       
-      // Verificar la conexión a la base de datos
-      const connection = await pool.getConnection();
-      console.log('✅ Conexión a la base de datos establecida correctamente');
-      
-      try {
-        // Ejecutar la consulta
-        const [rows] = await connection.query(query, params);
-        console.log(`✅ Se encontraron ${rows.length} indicadores`);
-        
-        if (rows.length > 0) {
-          console.log('📝 Muestra del primer indicador encontrado:', {
-            id: rows[0].id,
-            description: rows[0].description,
-            teacher_id: rows[0].teacher_id,
-            student_id: rows[0].student_id,
-            subject: rows[0].subject,
-            phase: rows[0].phase
+      // Procesar los estudiantes asociados a cada indicador
+      const processedRows = rows.map(row => {
+        const studentsData = [];
+        if (row.students_info) {
+          const studentEntries = row.students_info.split(';');
+          studentEntries.forEach(entry => {
+            const [id, name, grade] = entry.split('|');
+            if (id && id !== 'null') {
+              studentsData.push({
+                id: parseInt(id),
+                name: name || 'Estudiante sin nombre',
+                grade: grade || ''
+              });
+            }
           });
-        } else {
-          console.log('ℹ️ No se encontraron indicadores con los filtros proporcionados');
         }
-      
-        // Asegurarnos de que la respuesta tenga el formato correcto
-        const response = {
-          success: true,
-          count: rows.length,
-          data: rows
+        
+        return {
+          ...row,
+          students: studentsData,
+          student_count: studentsData.length
         };
-        
-        // Liberar la conexión
-        connection.release();
-        
-        console.log('✅ Respuesta preparada correctamente');
-        return res.json(response);
-        
-      } catch (queryError) {
-        console.error('❌ Error al ejecutar la consulta SQL:', queryError);
-        console.error('🔍 Detalles del error:', {
-          code: queryError.code,
-          errno: queryError.errno,
-          sqlMessage: queryError.sqlMessage,
-          sqlState: queryError.sqlState,
-          sql: queryError.sql
-        });
-        
-        // Liberar la conexión en caso de error
-        if (connection) connection.release();
-        
-        // Devolver un error más descriptivo
-        return res.status(500).json({
-          success: false,
-          message: 'Error al ejecutar la consulta en la base de datos',
-          error: {
-            code: queryError.code,
-            message: queryError.message,
-            sqlMessage: queryError.sqlMessage,
-            sqlState: queryError.sqlState
-          }
-        });
-      }
-    } catch (connectionError) {
-      console.error('❌ Error de conexión a la base de datos:', connectionError);
-      return res.status(500).json({
-        success: false,
-        message: 'Error al conectar con la base de datos',
-        error: connectionError.message
-      });
-      console.error('❌ Error al ejecutar la consulta SQL:', error);
-      console.error('🔍 Detalles del error:', {
-        code: error.code,
-        errno: error.errno,
-        sqlMessage: error.sqlMessage,
-        sqlState: error.sqlState,
-        sql: error.sql
       });
       
-      // Devolver un error más descriptivo
-      res.status(500).json({
+      const response = {
+        success: true,
+        count: processedRows.length,
+        data: processedRows
+      };
+      
+      return res.json(response);
+      
+    } catch (queryError) {
+      console.error('❌ Error al ejecutar la consulta SQL:', queryError);
+      console.error('🔍 Detalles del error:', {
+        code: queryError.code,
+        sqlMessage: queryError.sqlMessage,
+        sql: queryError.sql
+      });
+      
+      return res.status(500).json({
         success: false,
         message: 'Error al ejecutar la consulta en la base de datos',
         error: {
-          code: error.code,
-          message: error.message,
-          sqlMessage: error.sqlMessage,
-          sqlState: error.sqlState
+          code: queryError.code,
+          message: queryError.message,
+          sqlMessage: queryError.sqlMessage,
+          sqlState: queryError.sqlState
         }
       });
-      return;
     }
   } catch (error) {
     console.error('❌ Error al obtener indicadores:', error);
-    res.status(500).json({ message: 'Error al obtener indicadores' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener indicadores',
+      error: error.message 
+    });
   }
 });
 
-// Obtener un indicador específico
+// Obtener un indicador específico con sus estudiantes asociados
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
     console.log(`🔍 Obteniendo indicador con ID: ${id}`);
     
-    const [rows] = await pool.query(`
+    // Obtener la información básica del indicador
+    const [indicatorRows] = await pool.query(`
       SELECT 
         i.*, 
         t.subject as teacher_subject, 
         u.name as teacher_name,
-        -- Obtener el nombre del estudiante desde la tabla users
-        (SELECT name FROM users WHERE id = s.user_id) as student_name,
-        -- Obtener el grado del estudiante desde la tabla students
-        s.grade as student_grade
+        u.email as teacher_email
       FROM indicators i
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
-      LEFT JOIN students s ON i.student_id = s.id
       WHERE i.id = ?
     `, [id]);
     
-    console.log(`✅ Resultado de la consulta:`, rows[0]);
-    
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Indicador no encontrado' });
+    if (indicatorRows.length === 0) {
+      console.log(`❌ No se encontró el indicador con ID: ${id}`);
+      return res.status(404).json({ 
+        success: false,
+        message: 'Indicador no encontrado' 
+      });
     }
     
-    res.json(rows[0]);
+    // Obtener los estudiantes asociados a este indicador
+    const [studentRows] = await pool.query(`
+      SELECT 
+        s.id,
+        u.name as student_name,
+        s.grade,
+        si.achieved,
+        si.assigned_at
+      FROM student_indicators si
+      JOIN students s ON si.student_id = s.id
+      JOIN users u ON s.user_id = u.id
+      WHERE si.indicator_id = ?
+      ORDER BY u.name
+    `, [id]);
+    
+    // Procesar los estudiantes para el formato de respuesta
+    const students = studentRows.map(row => ({
+      id: row.id,
+      name: row.student_name,
+      grade: row.grade,
+      achieved: row.achieved === 1,
+      assigned_at: row.assigned_at
+    }));
+    
+    // Combinar la información del indicador con los estudiantes
+    const indicatorData = {
+      ...indicatorRows[0],
+      students: students,
+      student_count: students.length
+    };
+    
+    console.log(`✅ Indicador obtenido correctamente con ${students.length} estudiantes`);
+    
+    res.json({
+      success: true,
+      data: indicatorData
+    });
+    
   } catch (error) {
     console.error('❌ Error al obtener indicador:', error);
-    res.status(500).json({ message: 'Error al obtener indicador' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener indicador',
+      error: error.message 
+    });
   }
 });
 
-// Crear un nuevo indicador
-router.post('/', async (req, res) => {
+// Crear un nuevo indicador con un estudiante asociado (opcional)
+router.post('/', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
-    const { teacher_id, student_id, description, subject, phase, achieved } = req.body;
+    await connection.beginTransaction();
     
-    const [result] = await pool.query(`
+    const { 
+      teacher_id, 
+      student_id = null, // Cambiado a student_id singular
+      description, 
+      subject, 
+      phase, 
+      achieved = false,
+      questionnaire_id = null,
+      grade
+    } = req.body;
+    
+    console.log('📝 Datos recibidos para crear indicador:', {
+      teacher_id,
+      student_id,
+      description_length: description?.length,
+      subject,
+      phase,
+      grade,
+      achieved,
+      questionnaire_id
+    });
+    
+    // Validar campos requeridos
+    if (!teacher_id || !description || !subject || !phase || !grade) {
+      throw new Error('Faltan campos requeridos');
+    }
+    
+    // Validar que el docente existe
+    const [teacher] = await connection.query(
+      'SELECT id FROM teachers WHERE id = ?', 
+      [teacher_id]
+    );
+    
+    if (teacher.length === 0) {
+      throw new Error('El docente especificado no existe');
+    }
+
+    // Validar questionnaire_id si se proporciona
+    if (questionnaire_id) {
+      const [questionnaire] = await connection.query(
+        'SELECT id FROM questionnaires WHERE id = ? AND created_by = ?',
+        [questionnaire_id, teacher_id]
+      );
+      
+      if (questionnaire.length === 0) {
+        throw new Error('El cuestionario especificado no existe o no pertenece al docente');
+      }
+    }
+    
+    // Validar student_id si se proporciona
+    if (student_id) {
+      const [student] = await connection.query(
+        'SELECT id FROM students WHERE id = ?',
+        [student_id]
+      );
+      
+      if (student.length === 0) {
+        throw new Error('El estudiante especificado no existe');
+      }
+    }
+    
+    // Crear el indicador
+    const [result] = await connection.query(`
       INSERT INTO indicators 
-      (teacher_id, student_id, description, subject, phase, achieved) 
+      (teacher_id, description, subject, phase, questionnaire_id, grade) 
       VALUES (?, ?, ?, ?, ?, ?)
-    `, [teacher_id, student_id || null, description, subject, phase, achieved || 0]);
+    `, [
+      teacher_id, 
+      description, 
+      subject, 
+      phase, 
+      questionnaire_id,
+      grade
+    ]);
+    
+    const indicatorId = result.insertId;
+    console.log(`✅ Indicador creado con ID: ${indicatorId}`);
+    
+    // Si se proporcionó un estudiante, asociarlo al indicador
+    if (student_id) {
+      console.log(`🔗 Asociando estudiante ${student_id} al indicador...`);
+      
+      await connection.query(`
+        INSERT INTO student_indicators 
+        (student_id, indicator_id, achieved, assigned_at) 
+        VALUES (?, ?, ?, ?)
+      `, [
+        student_id,
+        indicatorId,
+        achieved ? 1 : 0,
+        new Date()
+      ]);
+      
+      console.log('✅ Estudiante asociado al indicador');
+    }
+    
+    await connection.commit();
+    
+    // Obtener el indicador creado para la respuesta
+    const [newIndicator] = await connection.query(`
+      SELECT i.*, 
+        t.subject as teacher_subject,
+        u.name as teacher_name
+      FROM indicators i
+      JOIN teachers t ON i.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      WHERE i.id = ?
+    `, [indicatorId]);
     
     res.status(201).json({
-      id: result.insertId,
+      success: true,
+      id: indicatorId,
+      data: newIndicator[0],
       message: 'Indicador creado correctamente'
     });
+    
   } catch (error) {
+    await connection.rollback();
     console.error('❌ Error al crear indicador:', error);
-    res.status(500).json({ message: 'Error al crear indicador' });
+    
+    res.status(500).json({ 
+      success: false,
+      message: error.message || 'Error al crear indicador'
+    });
+  } finally {
+    connection.release();
   }
 });
 
 
-// Actualizar un indicador existente
-router.put('/:id', async (req, res) => {
+// Actualizar un indicador existente con sus estudiantes asociados
+router.put('/:id', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
-    const { id } = req.params;
-    const { description, subject, phase, achieved, questionnaire_id, grade } = req.body;
-    // Eliminar esta línea: alert(grade);
-    console.log("Grade recibido:", grade);
+    await connection.beginTransaction();
     
-    await pool.query(`
+    const { id } = req.params;
+    const { 
+      description, 
+      subject, 
+      phase, 
+      achieved = false,
+      questionnaire_id = null,
+      student_ids = [] // Array de IDs de estudiantes actualizado
+    } = req.body;
+    
+    console.log(`🔄 Actualizando indicador ID: ${id}`, {
+      description_length: description?.length,
+      subject,
+      phase,
+      achieved,
+      questionnaire_id,
+      student_count: student_ids?.length || 0
+    });
+    
+    // 1. Actualizar la información básica del indicador
+    await connection.query(`
       UPDATE indicators 
-      SET description = ?, subject = ?, phase = ?, achieved = ?, questionnaire_id = ?, grade = ?
+      SET 
+        description = COALESCE(?, description),
+        subject = COALESCE(?, subject),
+        phase = COALESCE(?, phase),
+        questionnaire_id = ?,
+        updated_at = NOW()
       WHERE id = ?
-    `, [description, subject, phase, achieved, questionnaire_id, grade || null, id]);
+    `, [
+      description, 
+      subject, 
+      phase, 
+      questionnaire_id || null,
+      id
+    ]);
     
-    res.json({ message: 'Indicador actualizado correctamente' });
+    console.log(`✅ Información básica del indicador ${id} actualizada`);
+    
+    // 2. Si se proporcionaron estudiantes, actualizar las relaciones
+    if (Array.isArray(student_ids)) {
+      console.log(`🔄 Actualizando estudiantes asociados al indicador ${id}...`);
+      
+      // Obtener estudiantes actuales
+      const [currentStudents] = await connection.query(
+        'SELECT student_id FROM student_indicators WHERE indicator_id = ?',
+        [id]
+      );
+      
+      const currentStudentIds = currentStudents.map(s => s.student_id);
+      const newStudentIds = student_ids;
+      
+      // Identificar estudiantes a eliminar
+      const studentsToRemove = currentStudentIds.filter(id => !newStudentIds.includes(id));
+      
+      // Identificar estudiantes a agregar
+      const studentsToAdd = newStudentIds.filter(id => !currentStudentIds.includes(id));
+      
+      // Eliminar relaciones que ya no existen
+      if (studentsToRemove.length > 0) {
+        await connection.query(
+          'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id IN (?)',
+          [id, studentsToRemove]
+        );
+        console.log(`🗑️  Eliminadas ${studentsToRemove.length} relaciones de estudiantes`);
+      }
+      
+      // Agregar nuevas relaciones
+      if (studentsToAdd.length > 0) {
+        // Validar que los estudiantes existan
+        const [existingStudents] = await connection.query(
+          'SELECT id FROM students WHERE id IN (?)',
+          [studentsToAdd]
+        );
+        
+        const existingStudentIds = new Set(existingStudents.map(s => s.id));
+        const invalidStudentIds = studentsToAdd.filter(id => !existingStudentIds.has(id));
+        
+        if (invalidStudentIds.length > 0) {
+          throw new Error(`Los siguientes IDs de estudiantes no son válidos: ${invalidStudentIds.join(', ')}`);
+        }
+        
+        // Insertar nuevas relaciones
+        const studentValues = studentsToAdd.map(studentId => [
+          studentId,
+          id,
+          achieved ? 1 : 0, // Convertir a 1/0 para MySQL
+          new Date() // assigned_at
+        ]);
+        
+        await connection.query(
+          'INSERT INTO student_indicators (student_id, indicator_id, achieved, assigned_at) VALUES ?',
+          [studentValues]
+        );
+        
+        console.log(`✅ Añadidas ${studentsToAdd.length} nuevas relaciones de estudiantes`);
+      }
+      
+      // Actualizar el estado 'achieved' para todos los estudiantes asociados
+      await connection.query(
+        'UPDATE student_indicators SET achieved = ? WHERE indicator_id = ?',
+        [achieved ? 1 : 0, id]
+      );
+    }
+    
+    await connection.commit();
+    
+    // Obtener el indicador actualizado con sus estudiantes
+    const [updatedIndicator] = await connection.query(
+      'SELECT * FROM indicators WHERE id = ?',
+      [id]
+    );
+    
+    res.json({
+      success: true,
+      data: updatedIndicator[0],
+      message: 'Indicador actualizado correctamente'
+    });
+    
   } catch (error) {
+    await connection.rollback();
     console.error('❌ Error al actualizar indicador:', error);
-    res.status(500).json({ message: 'Error al actualizar indicador' });
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al actualizar indicador',
+      error: error.message 
+    });
+  } finally {
+    connection.release();
   }
 });
 
 
-// Eliminar un indicador
-router.delete('/:id', async (req, res) => {
+// Eliminar un indicador y sus relaciones con estudiantes
+router.delete('/:id', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
+    await connection.beginTransaction();
+    
     const { id } = req.params;
+    console.log(`🗑️  Solicitada eliminación del indicador ID: ${id}`);
     
-    await pool.query('DELETE FROM indicators WHERE id = ?', [id]);
+    // 1. Verificar que el indicador existe
+    const [indicator] = await connection.query(
+      'SELECT id FROM indicators WHERE id = ?',
+      [id]
+    );
     
-    res.json({ message: 'Indicador eliminado correctamente' });
+    if (indicator.length === 0) {
+      console.log(`❌ No se encontró el indicador con ID: ${id}`);
+      return res.status(404).json({
+        success: false,
+        message: 'El indicador especificado no existe'
+      });
+    }
+    
+    // 2. Eliminar las relaciones con estudiantes primero (por restricciones de clave foránea)
+    await connection.query(
+      'DELETE FROM student_indicators WHERE indicator_id = ?',
+      [id]
+    );
+    
+    console.log(`✅ Relaciones de estudiantes eliminadas para el indicador ${id}`);
+    
+    // 3. Ahora eliminar el indicador
+    await connection.query(
+      'DELETE FROM indicators WHERE id = ?',
+      [id]
+    );
+    
+    await connection.commit();
+    
+    console.log(`✅ Indicador ${id} eliminado correctamente`);
+    
+    res.json({
+      success: true,
+      message: 'Indicador eliminado correctamente',
+      id: parseInt(id)
+    });
+    
   } catch (error) {
+    await connection.rollback();
     console.error('❌ Error al eliminar indicador:', error);
-    res.status(500).json({ message: 'Error al eliminar indicador' });
+    
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar indicador',
+      error: error.message
+    });
+  } finally {
+    connection.release();
   }
 });
 
-// Obtener cuestionarios para el combo box - MODIFICADO para usar user_id en lugar de teacher_id
-router.get('/questionnaires/teacher/:userId', async (req, res) => {
+// Obtener cuestionarios para el combo box
+router.get('/questionnaires/teacher/:userId', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
     const { userId } = req.params;
-    console.log("Buscando cuestionarios para el usuario ID:", userId);
+    console.log("🔍 Buscando cuestionarios para el usuario ID:", userId);
     
-    // Primero obtener el ID del profesor a partir del ID de usuario
-    const [teacherRows] = await pool.query(
+    // 1. Obtener el ID del profesor a partir del ID de usuario
+    const [teacherRows] = await connection.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [userId]
     );
     
     if (teacherRows.length === 0) {
-      return res.status(404).json({ message: 'Profesor no encontrado' });
+      console.log(`❌ No se encontró un profesor con user_id: ${userId}`);
+      return res.status(404).json({ 
+        success: false,
+        message: 'Profesor no encontrado' 
+      });
     }
     
     const teacherId = teacherRows[0].id;
-    console.log("ID del profesor encontrado:", teacherId);
+    console.log("✅ ID del profesor encontrado:", teacherId);
     
-    // Ahora obtener los cuestionarios usando el ID correcto del profesor
-    const [rows] = await pool.query(`
-      SELECT q.id, q.title, q.grade, q.phase, q.category, q.created_by, q.course_id
+    // 2. Obtener los cuestionarios creados por este profesor
+    const [rows] = await connection.query(`
+      SELECT 
+        q.id, 
+        q.title,
+        q.description,
+        q.grade, 
+        q.phase, 
+        q.created_at,
+        q.course_id,
+        c.name as course_name
       FROM questionnaires q
+      LEFT JOIN courses c ON q.course_id = c.id
       WHERE q.created_by = ?
       ORDER BY q.created_at DESC
     `, [teacherId]);
     
-    console.log("Cuestionarios encontrados:", rows.length);
-    res.json(rows);
+    console.log(`✅ Se encontraron ${rows.length} cuestionarios para el profesor ${teacherId}`);
+    
+    res.json({
+      success: true,
+      count: rows.length,
+      data: rows
+    });
+    
   } catch (error) {
-    console.error('❌ Error detallado al obtener cuestionarios:', error.message, error.stack);
-    res.status(500).json({ message: 'Error al obtener cuestionarios', error: error.message });
+    console.error('❌ Error al obtener cuestionarios:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener cuestionarios', 
+      error: error.message 
+    });
+  } finally {
+    connection.release();
   }
 });
 
 // Obtener indicadores para un estudiante específico
-// Obtener indicadores para un estudiante específico
-router.get('/student/:userId', async (req, res) => {
+router.get('/student/:userId', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
     const { userId } = req.params;
+    console.log(`🔍 Obteniendo indicadores para el estudiante con user_id: ${userId}`);
     
-    // Obtener el ID y grado del estudiante
-    const [studentRows] = await pool.query(
-      'SELECT id, grade FROM students WHERE user_id = ?',
-      [userId]
-    );
+    // 1. Obtener la información básica del estudiante
+    const [studentRows] = await connection.query(`
+      SELECT s.id, s.grade, u.name as student_name
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.user_id = ?
+    `, [userId]);
     
     if (studentRows.length === 0) {
-      return res.status(404).json({ message: 'Estudiante no encontrado' });
+      console.log(`❌ No se encontró un estudiante con user_id: ${userId}`);
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Estudiante no encontrado' 
+      });
     }
     
-    const studentId = studentRows[0].id;
-    const studentGrade = studentRows[0].grade;
+    const student = studentRows[0];
+    console.log(`✅ Estudiante encontrado: ${student.student_name} (Grado: ${student.grade})`);
     
-    // Obtener indicadores para el estudiante con filtrado mejorado
-    const [rows] = await pool.query(`
+    // 2. Obtener los indicadores asociados al estudiante a través de student_indicators
+    const [indicatorRows] = await connection.query(`
       SELECT 
-        i.*, 
-        t.subject as teacher_subject, 
+        i.id,
+        i.description,
+        i.subject,
+        i.phase,
+        i.created_at,
+        i.updated_at,
+        si.achieved,
+        si.assigned_at,
+        t.id as teacher_id,
         u.name as teacher_name,
-        q.title as questionnaire_title, 
-        q.grade as questionnaire_grade, 
+        t.subject as teacher_subject,
+        q.id as questionnaire_id,
+        q.title as questionnaire_title,
+        q.grade as questionnaire_grade,
         q.phase as questionnaire_phase,
-        s.name as student_name,
-        s.grade as student_grade,
+        c.id as course_id,
         c.name as course_name
-      FROM indicators i
+      FROM student_indicators si
+      JOIN indicators i ON si.indicator_id = i.id
       JOIN teachers t ON i.teacher_id = t.id
       JOIN users u ON t.user_id = u.id
       LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
-      LEFT JOIN students s ON i.student_id = s.id
       LEFT JOIN courses c ON q.course_id = c.id
-      WHERE (
-        i.student_id = ? 
-        OR (i.student_id IS NULL AND (i.grade = ? OR i.grade IS NULL))
-      )
-      ORDER BY i.phase, i.created_at DESC
-    `, [studentId, studentGrade]);
+      WHERE si.student_id = ?
+      ORDER BY i.phase, i.subject, i.created_at DESC
+    `, [student.id]);
     
-    res.json(rows);
+    console.log(`✅ Se encontraron ${indicatorRows.length} indicadores para el estudiante`);
+    
+    // 3. Formatear la respuesta
+    const formattedIndicators = indicatorRows.map(row => ({
+      id: row.id,
+      description: row.description,
+      subject: row.subject,
+      phase: row.phase,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      achieved: row.achieved === 1, // Convertir a booleano
+      assigned_at: row.assigned_at,
+      teacher: {
+        id: row.teacher_id,
+        name: row.teacher_name,
+        subject: row.teacher_subject
+      },
+      questionnaire: row.questionnaire_id ? {
+        id: row.questionnaire_id,
+        title: row.questionnaire_title,
+        grade: row.questionnaire_grade,
+        phase: row.questionnaire_phase,
+        course: row.course_id ? {
+          id: row.course_id,
+          name: row.course_name
+        } : null
+      } : null
+    }));
+    
+    res.json({
+      success: true,
+      student: {
+        id: student.id,
+        name: student.student_name,
+        grade: student.grade
+      },
+      count: formattedIndicators.length,
+      data: formattedIndicators
+    });
+    
   } catch (error) {
     console.error('❌ Error al obtener indicadores del estudiante:', error);
-    res.status(500).json({ message: 'Error al obtener indicadores del estudiante' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener indicadores del estudiante',
+      error: error.message 
+    });
+  } finally {
+    connection.release();
   }
 });
 
 
-// Añade esta ruta a tu archivo indicatorRoutes.js
-router.get('/subjects/teacher/:userId', async (req, res) => {
+// Obtener la materia de un profesor por su ID de usuario
+router.get('/subjects/teacher/:userId', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
   try {
     const { userId } = req.params;
+    console.log(`🔍 Obteniendo materia para el profesor con user_id: ${userId}`);
     
-    // Obtener el ID del profesor a partir del ID de usuario
-    const [teacherRows] = await pool.query(
-      'SELECT id, subject FROM teachers WHERE user_id = ?',
-      [userId]
-    );
+    // 1. Obtener la información del profesor
+    const [teacherRows] = await connection.query(`
+      SELECT 
+        t.id,
+        t.subject,
+        u.name as teacher_name,
+        u.email as teacher_email
+      FROM teachers t
+      JOIN users u ON t.user_id = u.id
+      WHERE t.user_id = ?
+    `, [userId]);
     
     if (teacherRows.length === 0) {
-      return res.status(404).json({ message: 'Profesor no encontrado' });
+      console.log(`❌ No se encontró un profesor con user_id: ${userId}`);
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Profesor no encontrado' 
+      });
     }
     
-    res.json({ subject: teacherRows[0].subject });
+    const teacher = teacherRows[0];
+    console.log(`✅ Materia del profesor ${teacher.teacher_name}: ${teacher.subject}`);
+    
+    res.json({
+      success: true,
+      data: {
+        teacher_id: teacher.id,
+        subject: teacher.subject,
+        teacher_name: teacher.teacher_name,
+        teacher_email: teacher.teacher_email
+      }
+    });
+    
   } catch (error) {
     console.error('❌ Error al obtener materia del profesor:', error);
-    res.status(500).json({ message: 'Error al obtener materia del profesor' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener materia del profesor',
+      error: error.message 
+    });
+  } finally {
+    connection.release();
   }
 });
 
