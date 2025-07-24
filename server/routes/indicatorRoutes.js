@@ -201,7 +201,8 @@ router.get('/:id', async (req, res) => {
         u.name as student_name,
         s.grade,
         si.achieved,
-        si.assigned_at
+        si.assigned_at,
+        si.id as assignment_id
       FROM student_indicators si
       JOIN students s ON si.student_id = s.id
       JOIN users u ON s.user_id = u.id
@@ -218,14 +219,17 @@ router.get('/:id', async (req, res) => {
       assigned_at: row.assigned_at
     }));
     
+    // Obtener los IDs de los estudiantes ya asignados para facilitar el filtrado
+    const assignedStudentIds = studentRows.map(student => student.id);
+    
     // Combinar la información del indicador con los estudiantes
     const indicatorData = {
       ...indicatorRows[0],
       students: students,
-      student_count: students.length
+      assignedStudentIds // Añadimos los IDs de los estudiantes asignados
     };
     
-    console.log(`✅ Indicador obtenido correctamente con ${students.length} estudiantes`);
+    console.log(`✅ Indicador ${id} obtenido correctamente con ${studentRows.length} estudiantes asignados`);
     
     res.json({
       success: true,
@@ -393,7 +397,8 @@ router.put('/:id', verifyToken, async (req, res) => {
       phase, 
       achieved = false,
       questionnaire_id = null,
-      student_ids = [] // Array de IDs de estudiantes actualizado
+      student_ids = [], // Array de IDs de estudiantes actualizado
+      grade = null // Nuevo campo grade
     } = req.body;
     
     console.log(`🔄 Actualizando indicador ID: ${id}`, {
@@ -412,83 +417,77 @@ router.put('/:id', verifyToken, async (req, res) => {
         description = COALESCE(?, description),
         subject = COALESCE(?, subject),
         phase = COALESCE(?, phase),
-        questionnaire_id = ?,
-        updated_at = NOW()
+        grade = COALESCE(?, grade)
       WHERE id = ?
-    `, [
-      description, 
-      subject, 
-      phase, 
-      questionnaire_id || null,
-      id
-    ]);
+    `, [description, subject, phase, grade, id]);
     
     console.log(`✅ Información básica del indicador ${id} actualizada`);
     
-    // 2. Si se proporcionaron estudiantes, actualizar las relaciones
-    if (Array.isArray(student_ids)) {
-      console.log(`🔄 Actualizando estudiantes asociados al indicador ${id}...`);
-      
-      // Obtener estudiantes actuales
-      const [currentStudents] = await connection.query(
-        'SELECT student_id FROM student_indicators WHERE indicator_id = ?',
+    // 2. Manejar las relaciones con estudiantes
+    console.log(`🔄 Actualizando relaciones con estudiantes para el indicador ${id}...`);
+    
+    // Primero, obtener las relaciones existentes
+    const [existingRelations] = await connection.query(
+      'SELECT student_id, questionnaire_id, achieved FROM student_indicators WHERE indicator_id = ?',
+      [id]
+    );
+    
+    // Convertir a un mapa para fácil búsqueda
+    const existingMap = new Map(
+      existingRelations.map(r => [r.student_id, {
+        id: r.student_id,
+        questionnaire_id: r.questionnaire_id,
+        achieved: r.achieved
+      }])
+    );
+    
+    // Procesar los estudiantes proporcionados
+    const processedStudents = new Set();
+    
+    // Si se proporcionaron estudiantes, procesarlos
+    if (Array.isArray(student_ids) && student_ids.length > 0) {
+      for (const studentId of student_ids) {
+        if (!studentId || studentId === 'none') continue;
+        
+        processedStudents.add(studentId);
+        
+        // Verificar si ya existe la relación
+        const existing = existingMap.get(studentId);
+        
+        if (existing) {
+          // Actualizar relación existente si es necesario
+          if (existing.achieved !== achieved) {
+            await connection.query(
+              'UPDATE student_indicators SET achieved = ? WHERE indicator_id = ? AND student_id = ?',
+              [achieved, id, studentId]
+            );
+          }
+        } else {
+          // Crear nueva relación
+          await connection.query(
+            'INSERT INTO student_indicators (indicator_id, student_id, achieved) VALUES (?, ?, ?)',
+            [id, studentId, achieved]
+          );
+        }
+      }
+    }
+    
+    // Si no se proporcionaron estudiantes, eliminamos todas las relaciones
+    if (processedStudents.size === 0) {
+      await connection.query(
+        'DELETE FROM student_indicators WHERE indicator_id = ?',
         [id]
       );
-      
-      const currentStudentIds = currentStudents.map(s => s.student_id);
-      const newStudentIds = student_ids;
-      
-      // Identificar estudiantes a eliminar
-      const studentsToRemove = currentStudentIds.filter(id => !newStudentIds.includes(id));
-      
-      // Identificar estudiantes a agregar
-      const studentsToAdd = newStudentIds.filter(id => !currentStudentIds.includes(id));
-      
+    } else {
       // Eliminar relaciones que ya no existen
-      if (studentsToRemove.length > 0) {
-        await connection.query(
-          'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id IN (?)',
-          [id, studentsToRemove]
-        );
-        console.log(`🗑️  Eliminadas ${studentsToRemove.length} relaciones de estudiantes`);
-      }
-      
-      // Agregar nuevas relaciones
-      if (studentsToAdd.length > 0) {
-        // Validar que los estudiantes existan
-        const [existingStudents] = await connection.query(
-          'SELECT id FROM students WHERE id IN (?)',
-          [studentsToAdd]
-        );
-        
-        const existingStudentIds = new Set(existingStudents.map(s => s.id));
-        const invalidStudentIds = studentsToAdd.filter(id => !existingStudentIds.has(id));
-        
-        if (invalidStudentIds.length > 0) {
-          throw new Error(`Los siguientes IDs de estudiantes no son válidos: ${invalidStudentIds.join(', ')}`);
+      for (const [studentId] of existingMap) {
+        if (!processedStudents.has(studentId)) {
+          await connection.query(
+            'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
+            [id, studentId]
+          );
         }
-        
-        // Insertar nuevas relaciones
-        const studentValues = studentsToAdd.map(studentId => [
-          studentId,
-          id,
-          achieved ? 1 : 0, // Convertir a 1/0 para MySQL
-          new Date() // assigned_at
-        ]);
-        
-        await connection.query(
-          'INSERT INTO student_indicators (student_id, indicator_id, achieved, assigned_at) VALUES ?',
-          [studentValues]
-        );
-        
-        console.log(`✅ Añadidas ${studentsToAdd.length} nuevas relaciones de estudiantes`);
       }
-      
-      // Actualizar el estado 'achieved' para todos los estudiantes asociados
-      await connection.query(
-        'UPDATE student_indicators SET achieved = ? WHERE indicator_id = ?',
-        [achieved ? 1 : 0, id]
-      );
     }
     
     await connection.commit();

@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 const IndicatorForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, setUser } = useAuth();
+  const { user } = useAuth();
   const isEditing = !!id;
   
   // Estado inicial del formulario
@@ -15,7 +15,7 @@ const IndicatorForm = () => {
     subject: '',
     phase: '',
     achieved: false,
-    student_id: 'all',
+    student_id: 'none', // Valor por defecto: no asignar a estudiantes
     teacher_id: '',
     questionnaire_id: null,
     students: [],
@@ -27,10 +27,18 @@ const IndicatorForm = () => {
   const [manualEntry, setManualEntry] = useState(true);
   const [error, setError] = useState(null);
   const [teacherId, setTeacherId] = useState(null);
-  const [students, setStudents] = useState([{ 
-    id: 'all', 
-    name: 'Todos los estudiantes del curso' 
-  }]);
+  const [students, setStudents] = useState([
+    { 
+      id: 'none', 
+      name: 'No aplicar aún',
+      grade: ''
+    },
+    { 
+      id: 'all', 
+      name: 'Todos los estudiantes del curso',
+      grade: ''
+    }
+  ]);
   const [questionnaires, setQuestionnaires] = useState([]);
   const [teacherSubject, setTeacherSubject] = useState('');
   
@@ -38,103 +46,16 @@ const IndicatorForm = () => {
 
 
   
-  // Función para cargar estudiantes por grado
-  const fetchStudents = useCallback(async (teacherId, grade) => {
-    if (!grade) {
-      console.log('⚠️ No se ha especificado un grado para cargar estudiantes');
-      return [];
-    }
-    
-    try {
-      console.log(`🔍 Cargando estudiantes para el docente ${teacherId}, grado ${grade}`);
-      setLoading(true);
-      
-      const response = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
-        headers: { 
-          Authorization: `Bearer ${localStorage.getItem('authToken')}`,
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      });
-      
-      const studentsList = Array.isArray(response.data) ? response.data : [];
-      
-      const formattedStudents = [
-        { 
-          id: 'all', 
-          name: 'Todos los estudiantes del curso',
-          grade: grade
-        },
-        ...studentsList.map(student => ({
-          ...student,
-          name: student.name || `Estudiante ${student.id}`,
-          grade: student.grade || grade
-        }))
-      ];
-      
-      setStudents(formattedStudents);
-      
-      if (studentsList.length === 1) {
-        setFormData(prev => ({
-          ...prev,
-          student_id: studentsList[0].id
-        }));
-      }
-    } catch (error) {
-      console.error('❌ Error al cargar estudiantes:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
-      
-      let errorMessage = 'No se pudieron cargar los estudiantes. Intente nuevamente.';
-      
-      if (error.response) {
-        switch(error.response.status) {
-          case 400: errorMessage = 'Datos de solicitud incorrectos.'; break;
-          case 401: errorMessage = 'No autorizado. Inicie sesión nuevamente.'; break;
-          case 403: errorMessage = 'No tiene permiso para ver estos estudiantes.'; break;
-          case 404: errorMessage = 'No se encontraron estudiantes para el grado seleccionado.'; break;
-          case 500: errorMessage = 'Error en el servidor. Intente más tarde.'; break;
-          default: errorMessage = `Error del servidor (${error.response.status})`;
-        }
-      } else if (error.request) {
-        errorMessage = 'No se recibió respuesta del servidor.';
-      }
-      
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Manejador para cuando cambia el grado
-  const handleGradeChange = (e) => {
-    const selectedGrade = e.target.value;
-    setFormData(prev => ({
-      ...prev,
-      grade: selectedGrade,
-      student_id: 'all'
-    }));
-    
-    if (teacherId && selectedGrade) {
-      fetchStudents(teacherId, selectedGrade);
-    }
-  };
-
-
-
-  // Cargar cuestionarios del docente
-  const fetchQuestionnaires = useCallback(async () => {
-    if (!user?.id) return [];
+  // Función auxiliar para cargar cuestionarios
+  const loadQuestionnaires = async (userId, editing = false) => {
+    if (!userId) return [];
     
     try {
       setLoading(true);
-      console.log('🔍 Obteniendo cuestionarios para el usuario:', user.id);
+      console.log('🔍 Obteniendo cuestionarios para el usuario:', userId);
       
-      // Obtener los cuestionarios del docente
       const response = await axios.get(
-        `/api/indicators/questionnaires/teacher/${user.id}`, 
+        `/api/indicators/questionnaires/teacher/${userId}`, 
         {
           headers: { 
             'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -148,11 +69,9 @@ const IndicatorForm = () => {
         const questionnairesData = response.data.data || [];
         setQuestionnaires(questionnairesData);
         
-        // Si estamos creando un nuevo indicador y hay cuestionarios disponibles
-        if (!isEditing && questionnairesData.length > 0) {
+        if (!editing && questionnairesData.length > 0) {
           setManualEntry(false);
           
-          // Seleccionar el primer cuestionario por defecto
           if (questionnairesData.length === 1) {
             const firstQuestionnaire = questionnairesData[0];
             setFormData(prev => ({
@@ -175,9 +94,8 @@ const IndicatorForm = () => {
         }
         
         return questionnairesData;
-      } else {
-        throw new Error('No se pudieron cargar los cuestionarios');
       }
+      throw new Error('No se pudieron cargar los cuestionarios');
     } catch (error) {
       console.error('❌ Error al cargar cuestionarios:', error);
       setError('No se pudieron cargar los cuestionarios. Por favor, intente nuevamente.');
@@ -186,45 +104,254 @@ const IndicatorForm = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Cargar cuestionarios del docente
+  const fetchQuestionnaires = useCallback(() => {
+    return loadQuestionnaires(user?.id, isEditing);
   }, [user?.id, isEditing, teacherSubject]);
+
+  // Función para cargar estudiantes por grado
+  const fetchStudents = useCallback(async (teacherId, grade) => {
+    if (!grade) {
+      console.log('⚠️ No se ha especificado un grado para cargar estudiantes');
+      return [];
+    }
+    
+    try {
+      console.log(`🔍 Cargando estudiantes para el docente ${teacherId}, grado ${grade}`);
+      setLoading(true);
+      
+      const response = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
+        headers: { 
+          Authorization: `Bearer ${localStorage.getItem('authToken')}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      // Verificar si la respuesta es un array
+      let studentsList = [];
+      if (Array.isArray(response.data)) {
+        studentsList = response.data;
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
+        studentsList = response.data.data;
+      } else if (response.data?.success && response.data.data) {
+        studentsList = Array.isArray(response.data.data) ? response.data.data : [response.data.data];
+      }
+      
+      console.log(`📊 ${studentsList.length} estudiantes encontrados para el grado ${grade}`);
+      
+      // Siempre incluir las opciones por defecto
+      const defaultOptions = [
+        { 
+          id: 'none', 
+          name: 'No aplicar aún',
+          grade: grade
+        },
+        { 
+          id: 'all', 
+          name: 'Todos los estudiantes del curso',
+          grade: grade
+        }
+      ];
+      
+      // Mapear los estudiantes de la respuesta
+      const studentOptions = studentsList.map(student => ({
+        id: student.id || student.user_id,
+        name: student.name || student.full_name || `Estudiante ${student.id || student.user_id}`,
+        grade: student.grade || grade,
+        email: student.email
+      }));
+      
+      // Combinar opciones por defecto con estudiantes
+      const formattedStudents = [...defaultOptions, ...studentOptions];
+      
+      console.log('📋 Opciones de estudiantes:', formattedStudents);
+      setStudents(formattedStudents);
+      
+      // Si solo hay un estudiante, seleccionarlo por defecto
+      if (studentsList.length === 1) {
+        console.log('✅ Seleccionando único estudiante disponible');
+        setFormData(prev => ({
+          ...prev,
+          student_id: studentsList[0].id || studentsList[0].user_id
+        }));
+      }
+      
+      return formattedStudents;
+    } catch (error) {
+      console.error('❌ Error al cargar estudiantes:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: error.config?.headers
+        }
+      });
+      
+      let errorMessage = 'No se pudieron cargar los estudiantes. Intente nuevamente.';
+      
+      if (error.response) {
+        switch(error.response.status) {
+          case 400: 
+            errorMessage = 'Datos de solicitud incorrectos.'; 
+            break;
+          case 401: 
+            errorMessage = 'No autorizado. Inicie sesión nuevamente.'; 
+            break;
+          case 403: 
+            errorMessage = 'No tiene permiso para ver estos estudiantes.'; 
+            break;
+          case 404: 
+            errorMessage = 'No se encontraron estudiantes para el grado seleccionado.'; 
+            break;
+          case 500: 
+            errorMessage = 'Error en el servidor. Intente más tarde.'; 
+            break;
+          default: 
+            errorMessage = `Error del servidor (${error.response.status})`;
+        }
+      } else if (error.request) {
+        errorMessage = 'No se recibió respuesta del servidor. Verifique su conexión.';
+      }
+      
+      setError(errorMessage);
+      
+      // Mantener las opciones por defecto
+      const defaultOptions = [
+        { 
+          id: 'none', 
+          name: 'No aplicar aún',
+          grade: grade
+        },
+        { 
+          id: 'all', 
+          name: 'No se pudieron cargar los estudiantes',
+          grade: grade,
+          disabled: true
+        }
+      ];
+      
+      setStudents(defaultOptions);
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Manejador para cuando cambia el grado
+  const handleGradeChange = (e) => {
+    const selectedGrade = e.target.value;
+    
+    // Actualizar el estado del formulario
+    setFormData(prev => ({
+      ...prev,
+      grade: selectedGrade,
+      student_id: 'none' // Reiniciar a 'No aplicar aún' al cambiar el grado
+    }));
+    
+    // Cargar estudiantes para el grado seleccionado
+    if (teacherId && selectedGrade) {
+      console.log(`🔄 Cargando estudiantes para el docente ${teacherId}, grado ${selectedGrade}`);
+      fetchStudents(teacherId, selectedGrade).then(() => {
+        console.log('✅ Estudiantes cargados correctamente');
+      }).catch(error => {
+        console.error('❌ Error al cargar estudiantes:', error);
+        setError('No se pudieron cargar los estudiantes. Por favor, intente nuevamente.');
+      });
+    } else {
+      console.log('⚠️ No se pudo cargar estudiantes - Falta teacherId o grado');
+    }
+  };
+
+
+
+  // Cargar datos del indicador
+  const fetchIndicator = useCallback(async () => {
+    if (!id) return;
+    
+    try {
+      setLoading(true);
+      
+      const indicatorResponse = await axios.get(`/api/indicators/${id}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+      });
+      
+      if (indicatorResponse.data.success) {
+        const indicatorData = indicatorResponse.data.data;
+        setFormData(prev => ({
+          ...prev,
+          description: indicatorData.description || '',
+          subject: indicatorData.subject || '',
+          phase: indicatorData.phase || '',
+          grade: indicatorData.grade || '',
+          student_id: indicatorData.student_id || 'none',
+          questionnaire_id: indicatorData.questionnaire_id || null,
+          questionnaire_data: indicatorData.questionnaire_data || null
+        }));
+        
+        setManualEntry(!indicatorData.questionnaire_id);
+        
+        // Si hay un grado, cargar los estudiantes
+        if (indicatorData.grade && teacherId) {
+          await fetchStudents(teacherId, indicatorData.grade);
+        }
+      }
+    } catch (error) {
+      console.error('Error al cargar el indicador:', error);
+      setError('Error al cargar el indicador. Intente recargar la página.');
+    } finally {
+      setLoading(false);
+    }
+  }, [id, teacherId, fetchStudents]);
+
+  // Cargar información del docente
+  useEffect(() => {
+    const loadTeacherInfo = async () => {
+      if (!user?.id) return;
+      
+      try {
+        const response = await axios.get(`/api/teachers/user/${user.id}`, {
+          headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+        });
+        
+        if (response.data?.success) {
+          setTeacherId(response.data.id);
+          setTeacherSubject(response.data.subject || '');
+          
+          // Si hay una materia, actualizamos el formulario
+          if (response.data.subject) {
+            setFormData(prev => ({
+              ...prev,
+              subject: response.data.subject
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('Error al cargar información del docente:', error);
+      }
+    };
+    
+    loadTeacherInfo();
+  }, [user?.id]);
 
   // Cargar datos iniciales
   useEffect(() => {
     const loadInitialData = async () => {
-      if (!user) return;
+      if (!user?.id) return;
       
       try {
         setLoading(true);
         
-        // 1. Cargar cuestionarios (esto también obtendrá el teacherId)
-        await fetchQuestionnaires();
+        // 1. Cargar cuestionarios
+        await loadQuestionnaires(user.id, isEditing);
         
-        // 2. Si estamos editando, cargar los datos del indicador
-        if (isEditing && id) {
-          const indicatorResponse = await axios.get(`/api/indicators/${id}`, {
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
-          });
-          
-          if (indicatorResponse.data.success) {
-            const indicatorData = indicatorResponse.data.data;
-            setFormData(prev => ({
-              ...prev,
-              description: indicatorData.description || '',
-              subject: indicatorData.subject || '',
-              phase: indicatorData.phase || '',
-              grade: indicatorData.grade || '',
-              student_id: indicatorData.student_id || 'all',
-              questionnaire_id: indicatorData.questionnaire_id || null,
-              questionnaire_data: indicatorData.questionnaire_data || null
-            }));
-            
-            setManualEntry(!indicatorData.questionnaire_id);
-            
-            // Si hay un grado, cargar los estudiantes
-            if (indicatorData.grade && teacherId) {
-              await fetchStudents(teacherId, indicatorData.grade);
-            }
-          }
+        // 2. Si estamos editando, cargar el indicador
+        if (isEditing) {
+          await fetchIndicator();
         }
       } catch (error) {
         console.error('Error al cargar los datos iniciales:', error);
@@ -235,7 +362,7 @@ const IndicatorForm = () => {
     };
     
     loadInitialData();
-  }, [id, isEditing, user, teacherId, fetchStudents]);
+  }, [user?.id, isEditing]);
 
   // Inicializar con la opción por defecto
   useEffect(() => {
@@ -297,14 +424,27 @@ const IndicatorForm = () => {
 
   const handleStudentChange = (e) => {
     const selectedStudentId = e.target.value;
+    console.log('🔄 Cambiando estudiante seleccionado a:', selectedStudentId);
     
-    setFormData(prev => ({
-      ...prev,
-      student_id: selectedStudentId,
-      ...(selectedStudentId !== 'all' && students.length > 0 ? {
-        grade: students.find(s => s.id === selectedStudentId)?.grade || prev.grade
-      } : {})
-    }));
+    // Encontrar el estudiante seleccionado
+    const selectedStudent = students.find(s => s.id === selectedStudentId);
+    
+    // Actualizar el estado del formulario
+    setFormData(prev => {
+      const newState = {
+        ...prev,
+        student_id: selectedStudentId
+      };
+      
+      // Si se selecciona un estudiante específico, actualizar el grado si es necesario
+      if (selectedStudentId !== 'all' && selectedStudentId !== 'none' && selectedStudent) {
+        newState.grade = selectedStudent.grade || prev.grade;
+      }
+      
+      return newState;
+    });
+    
+    console.log('✅ Estado actualizado con estudiante:', selectedStudentId);
   };
 
   const toggleManualEntry = () => {
@@ -330,14 +470,24 @@ const IndicatorForm = () => {
     setError(null);
 
     try {
+      console.log('📤 Iniciando envío del formulario...');
+      
       // Validar campos requeridos
-      if (!formData.description || !formData.subject || !formData.phase || !formData.grade) {
-        throw new Error('Por favor complete todos los campos requeridos');
+      const requiredFields = ['description', 'subject', 'phase', 'grade'];
+      const missingFields = requiredFields.filter(field => !formData[field]);
+      
+      if (missingFields.length > 0) {
+        throw new Error(`Por favor complete los campos requeridos: ${missingFields.join(', ')}`);
       }
 
       // Validar que si no es entrada manual, debe tener un cuestionario seleccionado
       if (!manualEntry && !formData.questionnaire_id) {
         throw new Error('Debe seleccionar un cuestionario o habilitar la entrada manual');
+      }
+
+      // Validar la selección de estudiantes
+      if (formData.student_id === '') {
+        throw new Error('Debe seleccionar una opción para "Aplicar a"');
       }
 
       // Preparar datos para enviar
@@ -349,14 +499,26 @@ const IndicatorForm = () => {
         achieved: formData.achieved,
         teacher_id: teacherId,
         questionnaire_id: manualEntry ? null : formData.questionnaire_id,
-        student_id: formData.student_id === 'all' ? null : formData.student_id
+        student_ids: formData.student_id === 'all' 
+          ? 'all' 
+          : formData.student_id === 'none'
+            ? []
+            : [formData.student_id]
       };
 
-      console.log('Enviando datos al servidor:', dataToSend);
+      console.log('📝 Datos a enviar al servidor:', JSON.stringify(dataToSend, null, 2));
 
+      const url = isEditing 
+        ? `/api/indicators/${id}`
+        : '/api/indicators';
+      
+      const method = isEditing ? 'put' : 'post';
+      
+      console.log(`🔄 Enviando solicitud ${method.toUpperCase()} a ${url}`);
+      
       const response = await axios({
-        method: isEditing ? 'put' : 'post',
-        url: isEditing ? `/api/indicators/${id}` : '/api/indicators',
+        method,
+        url,
         data: dataToSend,
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
@@ -364,46 +526,65 @@ const IndicatorForm = () => {
         }
       });
 
+      console.log('✅ Respuesta del servidor:', response.data);
+
       if (response.data.success) {
+        console.log('🎉 Indicador guardado exitosamente');
+        // Mostrar mensaje de éxito y redirigir
+        alert(isEditing ? 'Indicador actualizado correctamente' : 'Indicador creado correctamente');
         navigate('/indicators');
       } else {
         throw new Error(response.data.message || 'Error al guardar el indicador');
       }
     } catch (error) {
-      console.error('Error al guardar indicador:', error);
-      setError(error.response?.data?.message || error.message || 'Error al guardar el indicador. Por favor, intente nuevamente.');
+      console.error('❌ Error al guardar indicador:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          data: error.config?.data
+        }
+      });
+      
+      const errorMessage = error.response?.data?.message || 
+                         error.message || 
+                         'Error al guardar el indicador. Por favor, intente nuevamente.';
+      
+      setError(errorMessage);
+      
+      // Desplazarse al principio del formulario para mostrar el error
+      window.scrollTo(0, 0);
     } finally {
       setLoading(false);
     }
   };
 
-  const studentSelect = (
-    <div className="mb-3">
-      <label className="form-label">Aplicar a</label>
+  const renderStudentSelect = () => (
+    <div className="mb-4">
+      <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="student_id">
+        Aplicar a:
+      </label>
       <select
         id="student_id"
         name="student_id"
-        value={formData.student_id || 'all'}
-        onChange={handleStudentChange}
-        className="form-select"
+        value={formData.student_id}
+        onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
+        className="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
         disabled={loading || !formData.grade}
-        required
       >
-        {students.map(student => (
-          <option key={student.id} value={student.id}>
-            {student.name} {student.grade ? `- Grado ${student.grade}` : ''}
-          </option>
-        ))}
-        {students.length === 1 && (
-          <option value="" disabled>No hay estudiantes disponibles</option>
-        )}
+        <option value="none">No aplicar aún</option>
+        <option value="all">Todos los estudiantes del curso</option>
+        {students
+          .filter(student => student.id !== 'all' && student.id !== 'none')
+          .map(student => (
+            <option key={student.id} value={student.id}>
+              {student.name} - Grado {student.grade}
+            </option>
+          ))
+        }
       </select>
-      <div className="form-text">
-        {formData.grade 
-          ? `Mostrando estudiantes de grado ${formData.grade}`
-          : 'Seleccione un grado para ver las opciones'}
-        {loading && <span className="ms-2">Cargando estudiantes...</span>}
-      </div>
     </div>
   );
 
@@ -570,40 +751,52 @@ const IndicatorForm = () => {
           </select>
         </div>
 
-        <div className="mb-3">
-          <label htmlFor="student_id" className="form-label">Aplicar a:</label>
+        <div className="mb-4">
+          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="student_id">
+            Aplicar a:
+          </label>
           <select
             id="student_id"
-            className="form-select"
+            name="student_id"
             value={formData.student_id}
-            onChange={(e) => setFormData(prev => ({ ...prev, student_id: e.target.value }))}
+            onChange={handleStudentChange}
+            className="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            disabled={loading || !formData.grade}
             required
-            disabled={!formData.grade || loading}
           >
             {!formData.grade ? (
-              <option>Seleccione un grado primero</option>
+              <option value="">Seleccione un grado primero</option>
             ) : loading ? (
-              <option>Cargando estudiantes...</option>
-            ) : students.length === 0 ? (
-              <option>No hay estudiantes disponibles para este grado</option>
-            ) : (
-              [
-                <option key="all" value="all">
-                  Todos los estudiantes del curso
-                </option>,
-                ...students
-                  .filter(student => student.id !== 'all')
-                  .map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.name}
-                    </option>
-                  ))
-              ]
-            )}
+              <option value="">Cargando estudiantes...</option>
+            ) : students.length <= 2 ? ( // Solo las opciones por defecto
+              <option value="">No hay estudiantes disponibles para este grado</option>
+            ) : null}
+            
+            {students.map((student) => (
+              <option 
+                key={student.id} 
+                value={student.id}
+                disabled={student.disabled}
+                className={student.disabled ? 'text-gray-400' : ''}
+              >
+                {student.name} {student.email ? `(${student.email})` : ''}
+              </option>
+            ))}
           </select>
+          
+          <p className="text-gray-600 text-xs mt-1">
+            {formData.student_id === 'none' 
+              ? 'El indicador no se aplicará a ningún estudiante por ahora.'
+              : formData.student_id === 'all'
+                ? 'El indicador se aplicará a todos los estudiantes del grado seleccionado.'
+                : formData.student_id
+                  ? 'El indicador se aplicará solo al estudiante seleccionado.'
+                  : 'Seleccione una opción'}
+          </p>
+          
           {error && (
-            <div className="text-danger mt-2">
-              <small>{error}</small>
+            <div className="text-red-500 text-xs mt-1">
+              {error}
             </div>
           )}
         </div>
