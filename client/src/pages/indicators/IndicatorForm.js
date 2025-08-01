@@ -15,7 +15,11 @@ const IndicatorForm = () => {
     subject: '',
     phase: '',
     achieved: false,
+<<<<<<< HEAD
     student_ids: [], // Ahora manejamos un array de IDs
+=======
+    student_id: 'none', // Valor por defecto: no asignar a estudiantes
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
     teacher_id: '',
     questionnaire_id: null,
     grade: ''
@@ -38,9 +42,12 @@ const IndicatorForm = () => {
       grade: ''
     }
   ]);
+<<<<<<< HEAD
   
   // Estado para controlar la vista de selección (tabla o combo)
   const [showTableView, setShowTableView] = useState(true);
+=======
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
   const [questionnaires, setQuestionnaires] = useState([]);
   const [teacherSubject, setTeacherSubject] = useState('');
   
@@ -124,22 +131,32 @@ const IndicatorForm = () => {
       console.log(`🔍 Cargando estudiantes para el docente ${teacherId}, grado ${grade}`);
       setLoading(true);
       
+<<<<<<< HEAD
       // Obtener los estudiantes del docente para el grado especificado
       const response = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
         headers: { 
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+=======
+      const response = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
+        headers: { 
+          Authorization: `Bearer ${localStorage.getItem('authToken')}`,
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache'
         }
       });
       
+<<<<<<< HEAD
       console.log('📊 Respuesta de la API:', response);
       console.log('📊 Datos de estudiantes:', response.data);
       
+=======
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       // Verificar si la respuesta es un array
       let studentsList = [];
       if (Array.isArray(response.data)) {
         studentsList = response.data;
+<<<<<<< HEAD
       } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
         // Si es un objeto de respuesta estándar, extraer el array de datos
         if (response.data.data) {
@@ -153,6 +170,12 @@ const IndicatorForm = () => {
           // Otro formato de respuesta posible
           studentsList = Array.isArray(response.data.data) ? response.data.data : [response.data.data];
         }
+=======
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
+        studentsList = response.data.data;
+      } else if (response.data?.success && response.data.data) {
+        studentsList = Array.isArray(response.data.data) ? response.data.data : [response.data.data];
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       }
       
       console.log(`📊 ${studentsList.length} estudiantes encontrados para el grado ${grade}`);
@@ -172,6 +195,7 @@ const IndicatorForm = () => {
       ];
       
       // Mapear los estudiantes de la respuesta
+<<<<<<< HEAD
       const studentOptions = studentsList
         .filter(student => student && (student.id || student.user_id)) // Filtrar estudiantes válidos
         .map(student => ({
@@ -182,6 +206,14 @@ const IndicatorForm = () => {
         }));
         
       console.log('👥 Estudiantes mapeados:', studentOptions);
+=======
+      const studentOptions = studentsList.map(student => ({
+        id: student.id || student.user_id,
+        name: student.name || student.full_name || `Estudiante ${student.id || student.user_id}`,
+        grade: student.grade || grade,
+        email: student.email
+      }));
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       
       // Combinar opciones por defecto con estudiantes
       const formattedStudents = [...defaultOptions, ...studentOptions];
@@ -189,6 +221,7 @@ const IndicatorForm = () => {
       console.log('📋 Opciones de estudiantes:', formattedStudents);
       setStudents(formattedStudents);
       
+<<<<<<< HEAD
       // Si hay estudiantes, actualizar el estado del formulario
       if (studentOptions.length > 0) {
         console.log(`✅ ${studentOptions.length} estudiantes cargados correctamente`);
@@ -203,6 +236,15 @@ const IndicatorForm = () => {
         }
       } else {
         console.log('ℹ️ No se encontraron estudiantes para este grado');
+=======
+      // Si solo hay un estudiante, seleccionarlo por defecto
+      if (studentsList.length === 1) {
+        console.log('✅ Seleccionando único estudiante disponible');
+        setFormData(prev => ({
+          ...prev,
+          student_id: studentsList[0].id || studentsList[0].user_id
+        }));
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       }
       
       return formattedStudents;
@@ -324,6 +366,7 @@ const IndicatorForm = () => {
         // Si hay un grado, cargar los estudiantes
         if (indicatorData.grade && teacherId) {
           await fetchStudents(teacherId, indicatorData.grade);
+<<<<<<< HEAD
           
           // Si estamos editando, cargar los estudiantes asociados al indicador
           if (indicatorData.student_ids) {
@@ -334,6 +377,8 @@ const IndicatorForm = () => {
                 : (indicatorData.student_ids === 'all' ? ['all'] : [])
             }));
           }
+=======
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
         }
       }
     } catch (error) {
@@ -382,6 +427,7 @@ const IndicatorForm = () => {
       try {
         setLoading(true);
         
+<<<<<<< HEAD
         // 1. Obtener información del docente actual
         const teacherResponse = await axios.get(`/api/teachers/user/${user.id}`, {
           headers: { 
@@ -406,6 +452,14 @@ const IndicatorForm = () => {
           }
         } else {
           throw new Error('No se pudo obtener la información del docente');
+=======
+        // 1. Cargar cuestionarios
+        await loadQuestionnaires(user.id, isEditing);
+        
+        // 2. Si estamos editando, cargar el indicador
+        if (isEditing) {
+          await fetchIndicator();
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
         }
       } catch (error) {
         console.error('Error al cargar los datos iniciales:', error);
@@ -498,6 +552,7 @@ const IndicatorForm = () => {
 
   const handleStudentChange = (e) => {
     const selectedStudentId = e.target.value;
+<<<<<<< HEAD
     console.log('🔄 Cambiando selección de estudiante a:', selectedStudentId);
     
     // Manejar opciones especiales: 'none' o 'all'
@@ -560,6 +615,29 @@ const IndicatorForm = () => {
   // Toggle para cambiar entre vista de tabla y combo
   const toggleViewMode = () => {
     setShowTableView(!showTableView);
+=======
+    console.log('🔄 Cambiando estudiante seleccionado a:', selectedStudentId);
+    
+    // Encontrar el estudiante seleccionado
+    const selectedStudent = students.find(s => s.id === selectedStudentId);
+    
+    // Actualizar el estado del formulario
+    setFormData(prev => {
+      const newState = {
+        ...prev,
+        student_id: selectedStudentId
+      };
+      
+      // Si se selecciona un estudiante específico, actualizar el grado si es necesario
+      if (selectedStudentId !== 'all' && selectedStudentId !== 'none' && selectedStudent) {
+        newState.grade = selectedStudent.grade || prev.grade;
+      }
+      
+      return newState;
+    });
+    
+    console.log('✅ Estado actualizado con estudiante:', selectedStudentId);
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
   };
 
   const toggleManualEntry = () => {
@@ -601,8 +679,13 @@ const IndicatorForm = () => {
       }
 
       // Validar la selección de estudiantes
+<<<<<<< HEAD
       if (formData.student_ids.length === 0 && !formData.student_ids.includes('all')) {
         throw new Error('Debe seleccionar al menos un estudiante o elegir "Aplicar a todos"');
+=======
+      if (formData.student_id === '') {
+        throw new Error('Debe seleccionar una opción para "Aplicar a"');
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       }
 
       // Preparar datos para enviar
@@ -614,9 +697,17 @@ const IndicatorForm = () => {
         achieved: formData.achieved,
         teacher_id: teacherId,
         questionnaire_id: manualEntry ? null : formData.questionnaire_id,
+<<<<<<< HEAD
         student_ids: formData.student_ids.includes('all') 
           ? 'all' 
           : formData.student_ids
+=======
+        student_ids: formData.student_id === 'all' 
+          ? 'all' 
+          : formData.student_id === 'none'
+            ? []
+            : [formData.student_id]
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       };
 
       console.log('📝 Datos a enviar al servidor:', JSON.stringify(dataToSend, null, 2));
@@ -645,7 +736,11 @@ const IndicatorForm = () => {
         console.log('🎉 Indicador guardado exitosamente');
         // Mostrar mensaje de éxito y redirigir
         alert(isEditing ? 'Indicador actualizado correctamente' : 'Indicador creado correctamente');
+<<<<<<< HEAD
         navigate('/indicadores');
+=======
+        navigate('/indicators');
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
       } else {
         throw new Error(response.data.message || 'Error al guardar el indicador');
       }
@@ -674,6 +769,7 @@ const IndicatorForm = () => {
     }
   };
 
+<<<<<<< HEAD
   const renderStudentSelection = () => {
     // Filtrar solo estudiantes reales (excluir opciones especiales)
     const realStudents = students.filter(s => s.id !== 'all' && s.id !== 'none');
@@ -846,6 +942,34 @@ const IndicatorForm = () => {
       </div>
     );
   };
+=======
+  const renderStudentSelect = () => (
+    <div className="mb-4">
+      <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="student_id">
+        Aplicar a:
+      </label>
+      <select
+        id="student_id"
+        name="student_id"
+        value={formData.student_id}
+        onChange={(e) => setFormData({ ...formData, student_id: e.target.value })}
+        className="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+        disabled={loading || !formData.grade}
+      >
+        <option value="none">No aplicar aún</option>
+        <option value="all">Todos los estudiantes del curso</option>
+        {students
+          .filter(student => student.id !== 'all' && student.id !== 'none')
+          .map(student => (
+            <option key={student.id} value={student.id}>
+              {student.name} - Grado {student.grade}
+            </option>
+          ))
+        }
+      </select>
+    </div>
+  );
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
 
   if (loading) {
     return <div className="text-center py-5"><div className="spinner-border text-primary" role="status"></div></div>;
@@ -1010,6 +1134,7 @@ const IndicatorForm = () => {
           </select>
         </div>
 
+<<<<<<< HEAD
         {/* Selección de estudiantes */}
         <div className="mb-4 p-4 border rounded-lg bg-white">
           <h3 className="text-lg font-medium text-gray-900 mb-3">Aplicar indicador a estudiantes</h3>
@@ -1033,6 +1158,53 @@ const IndicatorForm = () => {
           
           {error && (
             <div className="mt-3 p-3 bg-red-50 text-red-700 rounded-md text-sm">
+=======
+        <div className="mb-4">
+          <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="student_id">
+            Aplicar a:
+          </label>
+          <select
+            id="student_id"
+            name="student_id"
+            value={formData.student_id}
+            onChange={handleStudentChange}
+            className="shadow border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+            disabled={loading || !formData.grade}
+            required
+          >
+            {!formData.grade ? (
+              <option value="">Seleccione un grado primero</option>
+            ) : loading ? (
+              <option value="">Cargando estudiantes...</option>
+            ) : students.length <= 2 ? ( // Solo las opciones por defecto
+              <option value="">No hay estudiantes disponibles para este grado</option>
+            ) : null}
+            
+            {students.map((student) => (
+              <option 
+                key={student.id} 
+                value={student.id}
+                disabled={student.disabled}
+                className={student.disabled ? 'text-gray-400' : ''}
+              >
+                {student.name} {student.email ? `(${student.email})` : ''}
+              </option>
+            ))}
+          </select>
+          
+          <p className="text-gray-600 text-xs mt-1">
+            {formData.student_id === 'none' 
+              ? 'El indicador no se aplicará a ningún estudiante por ahora.'
+              : formData.student_id === 'all'
+                ? 'El indicador se aplicará a todos los estudiantes del grado seleccionado.'
+                : formData.student_id
+                  ? 'El indicador se aplicará solo al estudiante seleccionado.'
+                  : 'Seleccione una opción'}
+          </p>
+          
+          {error && (
+            <div className="text-red-500 text-xs mt-1">
+>>>>>>> 54205e2be54d76b459f8b747513aa2675681d5f6
               {error}
             </div>
           )}
