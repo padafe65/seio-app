@@ -25,6 +25,9 @@ export const verifyToken = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Token inválido: no contiene ID de usuario.', error: 'INVALID_TOKEN_PAYLOAD' });
     }
     
+    // Incluir el token en el request para su posible uso posterior
+    req.token = token;
+    
     // Consulta optimizada para obtener toda la info del usuario y sus roles de una vez.
     const query = `
       SELECT 
