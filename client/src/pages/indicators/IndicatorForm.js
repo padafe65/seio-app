@@ -120,40 +120,94 @@ const IndicatorForm = () => {
       return [];
     }
     
+    console.log(`🔍 Cargando estudiantes para el docente ${teacherId}, grado ${grade}`);
+    setLoading(true);
+    
     try {
-      console.log(`🔍 Cargando estudiantes para el docente ${teacherId}, grado ${grade}`);
-      setLoading(true);
-      
-      // Obtener los estudiantes del docente para el grado especificado
-      const response = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
+      // 1. Obtener los estudiantes del docente para el grado especificado
+      const studentsResponse = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
         headers: { 
           'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache'
         }
-      });     
-      // Verificar si la respuesta es un array
+      });
+      
+      // 2. Procesar la lista de estudiantes
       let studentsList = [];
-      if (Array.isArray(response.data)) {
-        studentsList = response.data;
-      } else if (response.data && typeof response.data === 'object' && !Array.isArray(response.data)) {
-        // Si es un objeto de respuesta estándar, extraer el array de datos
-        if (response.data.data) {
-          if (Array.isArray(response.data.data)) {
-            studentsList = response.data.data;
-          } else if (response.data.data && typeof response.data.data === 'object') {
-            // Si es un solo estudiante, convertirlo a array
-            studentsList = [response.data.data];
-          }
-        } else if (response.data.success && response.data.data) {
-          // Otro formato de respuesta posible
-          studentsList = Array.isArray(response.data.data) ? response.data.data : [response.data.data];
-        }
+      if (studentsResponse.data && Array.isArray(studentsResponse.data)) {
+        studentsList = studentsResponse.data;
+      } else if (studentsResponse.data?.data) {
+        // Si la respuesta viene en formato { data: [...] }
+        studentsList = Array.isArray(studentsResponse.data.data) 
+          ? studentsResponse.data.data 
+          : [];
+      } else {
+        console.error('Formato de respuesta inesperado al cargar estudiantes:', studentsResponse);
+        studentsList = [];
       }
       
       console.log(`📊 ${studentsList.length} estudiantes encontrados para el grado ${grade}`);
       
-      // Siempre incluir las opciones por defecto
+      // 3. Si estamos editando, obtener estudiantes con indicador asignado
+      let assignedStudents = [];
+      if (isEditing && id) {
+        try {
+          const assignedResponse = await axios.get(`/api/indicators/${id}`, {
+            headers: { 
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          });
+          
+          if (assignedResponse.data?.success) {
+            const indicatorData = assignedResponse.data.data;
+            if (indicatorData.students_info) {
+              // El formato es: "id|nombre|grado;id2|nombre2|grado2;..."
+              const studentEntries = indicatorData.students_info.split(';');
+              
+              assignedStudents = studentEntries
+                .filter(entry => entry) // Filtrar entradas vacías
+                .map(entry => {
+                  const [studentId, studentName, studentGrade] = entry.split('|');
+                  return {
+                    id: studentId,
+                    name: studentName || `Estudiante ${studentId}`,
+                    grade: studentGrade || grade,
+                    hasIndicator: true
+                  };
+                });
+              
+              console.log('👥 Estudiantes con indicador asignado:', assignedStudents);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error al cargar estudiantes con indicador asignado:', error);
+        }
+      }
+      
+      // 4. Combinar estudiantes con información de asignación
+      const assignedStudentIds = new Set(assignedStudents.map(s => String(s.id)));
+      
+      const processedStudents = studentsList
+        .filter(student => student && (student.id || student.user_id))
+        .map(student => {
+          const studentId = String(student.id || student.user_id);
+          const isAssigned = assignedStudentIds.has(studentId);
+          const assignedInfo = assignedStudents.find(s => String(s.id) === studentId) || {};
+          
+          return {
+            id: studentId,
+            name: student.name || student.full_name || `Estudiante ${studentId}`,
+            grade: student.grade || grade,
+            email: student.email || '',
+            hasIndicator: isAssigned,
+            ...assignedInfo
+          };
+        });
+      
+      // 5. Agregar opciones por defecto
       const defaultOptions = [
         { 
           id: 'none', 
@@ -167,41 +221,24 @@ const IndicatorForm = () => {
         }
       ];
       
-      // Mapear los estudiantes de la respuesta
-      const studentOptions = studentsList
-        .filter(student => student && (student.id || student.user_id)) // Filtrar estudiantes válidos
-        .map(student => ({
-          id: student.id || student.user_id,
-          name: student.name || student.full_name || `Estudiante ${student.id || student.user_id}`,
-          grade: student.grade || grade,
-          email: student.email || ''
+      // 6. Combinar opciones por defecto con estudiantes
+      const allStudents = [...defaultOptions, ...processedStudents];
+      
+      console.log('👥 Estudiantes mapeados:', allStudents);
+      
+      // 7. Actualizar el estado
+      setStudents(allStudents);
+      
+      // 8. Actualizar los IDs de estudiantes seleccionados si hay asignados
+      if (assignedStudents.length > 0) {
+        setFormData(prev => ({
+          ...prev,
+          student_ids: assignedStudents.map(s => s.id)
         }));
-        
-      console.log('👥 Estudiantes mapeados:', studentOptions);
-      
-      // Combinar opciones por defecto con estudiantes
-      const formattedStudents = [...defaultOptions, ...studentOptions];
-      
-      console.log('📋 Opciones de estudiantes:', formattedStudents);
-      setStudents(formattedStudents);
-      
-      // Si hay estudiantes, actualizar el estado del formulario
-      if (studentOptions.length > 0) {
-        console.log(`✅ ${studentOptions.length} estudiantes cargados correctamente`);
-        
-        // Si solo hay un estudiante, seleccionarlo por defecto
-        if (studentOptions.length === 1) {
-          console.log('✅ Seleccionando único estudiante disponible');
-          setFormData(prev => ({
-            ...prev,
-            student_ids: [studentOptions[0].id]
-          }));
-        }
-      } else {
-        console.log('ℹ️ No se encontraron estudiantes para este grado');
       }
       
-      return formattedStudents;
+      return allStudents;
+      
     } catch (error) {
       console.error('❌ Error al cargar estudiantes:', {
         message: error.message,
@@ -214,9 +251,11 @@ const IndicatorForm = () => {
         }
       });
       
-      let errorMessage = 'No se pudieron cargar los estudiantes. Intente nuevamente.';
+      // Manejar diferentes tipos de errores
+      let errorMessage = 'Error al cargar la lista de estudiantes. Por favor, intente nuevamente.';
       
       if (error.response) {
+        // El servidor respondió con un código de estado fuera del rango 2xx
         switch(error.response.status) {
           case 400: 
             errorMessage = 'Datos de solicitud incorrectos.'; 
@@ -237,12 +276,14 @@ const IndicatorForm = () => {
             errorMessage = `Error del servidor (${error.response.status})`;
         }
       } else if (error.request) {
+        // La solicitud fue hecha pero no se recibió respuesta
         errorMessage = 'No se recibió respuesta del servidor. Verifique su conexión.';
       }
       
+      // Mostrar el mensaje de error al usuario
       setError(errorMessage);
       
-      // Mantener las opciones por defecto
+      // Opciones por defecto en caso de error
       const defaultOptions = [
         { 
           id: 'none', 
@@ -258,7 +299,7 @@ const IndicatorForm = () => {
       ];
       
       setStudents(defaultOptions);
-      return [];
+      return defaultOptions;
     } finally {
       setLoading(false);
     }
@@ -289,8 +330,6 @@ const IndicatorForm = () => {
     }
   };
 
-
-
   // Cargar datos del indicador
   const fetchIndicator = useCallback(async () => {
     if (!id) return;
@@ -304,15 +343,20 @@ const IndicatorForm = () => {
       
       if (indicatorResponse.data.success) {
         const indicatorData = indicatorResponse.data.data;
+        
+        // Obtener los IDs de los estudiantes asignados
+        const assignedStudentIds = Array.isArray(indicatorData.student_ids) 
+          ? indicatorData.student_ids 
+          : (indicatorData.student_ids === 'all' ? ['all'] : []);
+        
+        // Actualizar el estado del formulario con los datos del indicador
         setFormData(prev => ({
           ...prev,
           description: indicatorData.description || '',
           subject: indicatorData.subject || '',
           phase: indicatorData.phase || '',
           grade: indicatorData.grade || '',
-          student_ids: Array.isArray(indicatorData.student_ids) 
-            ? indicatorData.student_ids 
-            : (indicatorData.student_ids === 'all' ? ['all'] : []),
+          student_ids: assignedStudentIds,
           questionnaire_id: indicatorData.questionnaire_id || null,
           questionnaire_data: indicatorData.questionnaire_data || null
         }));
@@ -321,17 +365,18 @@ const IndicatorForm = () => {
         
         // Si hay un grado, cargar los estudiantes
         if (indicatorData.grade && teacherId) {
-          await fetchStudents(teacherId, indicatorData.grade);
-          
-          // Si estamos editando, cargar los estudiantes asociados al indicador
-          if (indicatorData.student_ids) {
-            setFormData(prev => ({
-              ...prev,
-              student_ids: Array.isArray(indicatorData.student_ids) 
-                ? indicatorData.student_ids 
-                : (indicatorData.student_ids === 'all' ? ['all'] : [])
-            }));
-          }
+          // Esperar a que se carguen los estudiantes antes de marcar los asignados
+          await fetchStudents(teacherId, indicatorData.grade).then(() => {
+            // Marcar los estudiantes que ya tienen este indicador asignado
+            setStudents(prevStudents => 
+              prevStudents.map(student => ({
+                ...student,
+                hasIndicator: assignedStudentIds.includes('all') || 
+                            assignedStudentIds.includes(student.id) || 
+                            false
+              }))
+            );
+          });
         }
       }
     } catch (error) {
@@ -601,11 +646,8 @@ const handleSubmit = async (e) => {
       throw new Error('Debe seleccionar un cuestionario o habilitar la entrada manual');
     }
 
-    // Validar la selección de estudiantes
-    // Validar que se haya seleccionado al menos un estudiante o la opción 'todos'
-    if (formData.student_ids.length === 0 && !formData.student_ids.includes('all')) {
-      throw new Error('Debe seleccionar al menos un estudiante o elegir "Aplicar a todos"');
-    }
+    // No es obligatorio seleccionar estudiantes para actualizar el indicador
+    // Solo se aplicará a los estudiantes seleccionados si hay alguno
 
     // Preparar datos para enviar
     const dataToSend = { 
@@ -615,11 +657,14 @@ const handleSubmit = async (e) => {
       grade: formData.grade,
       achieved: formData.achieved,
       teacher_id: teacherId,
-      questionnaire_id: manualEntry ? null : formData.questionnaire_id,
-      student_ids: formData.student_ids.includes('all') 
-        ? 'all' 
-        : formData.student_ids
+      questionnaire_id: manualEntry ? null : formData.questionnaire_id
     };
+    
+    // Solo incluir student_ids si hay estudiantes seleccionados
+    // Si no se selecciona ningún estudiante, solo se actualizará el indicador sin afectar a los estudiantes
+    if (formData.student_ids.length > 0) {
+      dataToSend.student_ids = formData.student_ids.includes('all') ? 'all' : formData.student_ids;
+    }
 
     console.log('📝 Datos a enviar al servidor:', JSON.stringify(dataToSend, null, 2));
 
@@ -659,7 +704,7 @@ const handleSubmit = async (e) => {
       
       // Mostrar mensaje de éxito y redirigir
       alert(isEditing ? 'Indicador actualizado correctamente' : 'Indicador creado correctamente');
-      navigate('/indicators');
+      navigate('/indicadores');
     } else {
       throw new Error(response.data.message || 'Error al guardar el indicador');
     }
@@ -732,114 +777,175 @@ const renderStudentSelectionInfo = () => (
   </div>
 );
 
-// JSX para mostrar la selección actual de estudiantes
-  const renderStudentSelection = () => {
-    // Filtrar solo estudiantes reales (excluyendo opciones especiales)
-    const realStudents = students.filter(s => s.id !== 'all' && s.id !== 'none');
+// Función para manejar la eliminación de un indicador
+const handleRemoveIndicator = async (student) => {
+  const confirmRemove = window.confirm(
+    `¿Está seguro que desea eliminar este indicador de ${student.name}?\n\nEsta acción no se puede deshacer.`
+  );
+  
+  if (!confirmRemove) return false;
+  
+  try {
+    const response = await axios.delete(`/api/indicators/${id}/students/${student.id}`, {
+      headers: { 
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+      }
+    });
     
-    return (
-      <div className="mb-4">
-        <div className="flex flex-col space-y-4">
-          {/* Opción para aplicar a todos */}
-          <div className="flex items-center">
-            <input
-              type="radio"
-              id="apply-all"
-              name="apply-to"
-              checked={formData.student_ids.includes('all')}
-              onChange={() => setFormData(prev => ({ ...prev, student_ids: ['all'] }))}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-            />
-            <label htmlFor="apply-all" className="ml-2 block text-sm text-gray-700">
-              Aplicar a todos los estudiantes del grado
-            </label>
-          </div>
-          
-          {/* Opción para seleccionar estudiantes específicos */}
-          <div className="flex items-center">
-            <input
-              type="radio"
-              id="apply-specific"
-              name="apply-to"
-              checked={!formData.student_ids.includes('all') && formData.student_ids.length > 0}
-              onChange={() => setFormData(prev => ({ ...prev, student_ids: [] }))}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-            />
-            <label htmlFor="apply-specific" className="ml-2 block text-sm text-gray-700">
-              Seleccionar estudiantes específicos
-            </label>
-          </div>
-          
-          {/* Lista de estudiantes (solo si no se seleccionó 'todos') */}
-          {!formData.student_ids.includes('all') && realStudents.length > 0 && (
-            <div className="mt-2 ml-6 space-y-2 max-h-60 overflow-y-auto p-2 border rounded">
-              {realStudents.map(student => (
-                <div key={student.id} className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id={`student-${student.id}`}
-                    checked={formData.student_ids.includes(student.id)}
-                    onChange={() => {
-                      setFormData(prev => {
-                        const newStudentIds = prev.student_ids.includes(student.id)
-                          ? prev.student_ids.filter(id => id !== student.id)
-                          : [...prev.student_ids, student.id];
-                        return { ...prev, student_ids: newStudentIds };
-                      });
-                    }}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor={`student-${student.id}`} className="ml-2 block text-sm text-gray-700">
-                    {student.name}
-                  </label>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          {/* Resumen de selección */}
-          {formData.student_ids.length > 0 && !formData.student_ids.includes('all') && (
-            <div className="mt-3 p-3 bg-blue-50 rounded-md">
-              <p className="text-sm text-blue-700">
-                <span className="font-medium">Estudiantes seleccionados:</span>{' '}
-                {formData.student_ids.length === 0 ? 'Ninguno' : formData.student_ids.length}
-                
-                {formData.student_ids.length > 0 && formData.student_ids.length <= 5 && (
-                  <span className="block mt-1 text-blue-600">
-                    {students
-                      .filter(s => formData.student_ids.includes(s.id))
-                      .map(s => s.name)
-                      .join(', ')}
-                  </span>
-                )}
-                
-                {formData.student_ids.length > 5 && (
-                  <span className="block mt-1 text-blue-600">
-                    {students
-                      .filter(s => formData.student_ids.includes(s.id))
-                      .slice(0, 3)
-                      .map(s => s.name)
-                      .join(', ')}
-                    ... y {formData.student_ids.length - 3} más
-                  </span>
-                )}
-              </p>
-            </div>
-          )}
+    if (response.data.success) {
+      // Actualizar el estado local
+      setStudents(prevStudents => 
+        prevStudents.map(s => 
+          s.id === student.id 
+            ? { ...s, hasIndicator: false, assignmentId: null } 
+            : s
+        )
+      );
+      
+      // Si el estudiante estaba seleccionado, quitarlo
+      if (formData.student_ids.includes(student.id)) {
+        setFormData(prev => ({
+          ...prev,
+          student_ids: prev.student_ids.filter(id => id !== student.id)
+        }));
+      }
+      
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Error al eliminar la asignación:', error);
+    alert('Ocurrió un error al eliminar la asignación. Por favor, intente nuevamente.');
+    return false;
+  }
+};
+
+// JSX para mostrar la selección actual de estudiantes
+const renderStudentSelection = () => {
+  // Filtrar solo estudiantes reales (excluyendo opciones especiales)
+  const realStudents = students.filter(s => s.id !== 'all' && s.id !== 'none');
+  
+  return (
+    <div className="mb-4">
+      <div className="flex flex-col space-y-4">
+        {/* Opción para aplicar a todos */}
+        <div className="flex items-center">
+          <input
+            type="radio"
+            id="apply-all"
+            name="apply-to"
+            checked={formData.student_ids.includes('all')}
+            onChange={() => {
+              // Verificar si hay estudiantes con indicador asignado
+              if (isEditing && realStudents.some(s => s.hasIndicator)) {
+                alert('No puede seleccionar "Todos" porque ya hay estudiantes con este indicador asignado.');
+                return;
+              }
+              setFormData(prev => ({ ...prev, student_ids: ['all'] }));
+            }}
+            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+            disabled={isEditing && realStudents.some(s => s.hasIndicator)}
+          />
+          <label 
+            htmlFor="apply-all" 
+            className={`ml-2 block text-sm ${isEditing && realStudents.some(s => s.hasIndicator) ? 'text-gray-400' : 'text-gray-700'}`}
+          >
+            Aplicar a todos los estudiantes del grado
+            {isEditing && realStudents.some(s => s.hasIndicator) && (
+              <span className="ml-2 text-xs text-yellow-600">(No disponible: ya hay estudiantes con indicador asignado)</span>
+            )}
+          </label>
         </div>
+        
+        {/* Opción para seleccionar estudiantes específicos */}
+        <div className="flex items-center">
+          <input
+            type="radio"
+            id="apply-specific"
+            name="apply-to"
+            checked={!formData.student_ids.includes('all') && formData.student_ids.length > 0}
+            onChange={() => setFormData(prev => ({ ...prev, student_ids: [] }))}
+            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+          />
+          <label htmlFor="apply-specific" className="ml-2 block text-sm text-gray-700">
+            Seleccionar estudiantes específicos
+          </label>
+        </div>
+        
+        {/* Lista de estudiantes (solo si no se seleccionó 'todos') */}
+        {!formData.student_ids.includes('all') && realStudents.length > 0 && (
+          <div className="mt-2 ml-6 space-y-2 max-h-60 overflow-y-auto p-2 border rounded">
+            {realStudents.map(student => {
+              const hasIndicator = student.hasIndicator || false;
+              const isSelected = formData.student_ids.includes(student.id);
+              const assignmentDate = student.assignedAt || student.created_at || new Date().toISOString();
+              const formattedDate = assignmentDate ? new Date(assignmentDate).toLocaleDateString('es-ES') : '';
+              
+              return (
+                <div 
+                  key={student.id} 
+                  className={`flex items-center p-3 rounded-md transition-colors ${
+                    hasIndicator ? 'bg-green-50 border-l-4 border-green-500' : 'hover:bg-gray-50 border-l-4 border-transparent'
+                  }`}
+                >
+                  <div className="flex items-center w-full justify-between">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id={`student-${student.id}`}
+                        checked={isSelected || hasIndicator}
+                        disabled={hasIndicator}
+                        onChange={async (e) => {
+                          if (hasIndicator) {
+                            e.preventDefault();
+                            await handleRemoveIndicator(student);
+                          } else {
+                            // Si no tiene indicador, manejar selección normal
+                            handleStudentChange({
+                              target: { 
+                                value: student.id,
+                                type: 'checkbox',
+                                checked: !isSelected
+                              }
+                            });
+                          }
+                        }}
+                        className={`h-4 w-4 rounded ${hasIndicator ? 'text-green-600 border-green-300' : 'text-blue-600 border-gray-300'}`}
+                      />
+                      <label 
+                        htmlFor={`student-${student.id}`} 
+                        className={`ml-2 text-sm ${hasIndicator ? 'font-medium text-green-700' : 'text-gray-700'}`}
+                      >
+                        {student.name}
+                      </label>
+                    </div>
+                    
+                    {hasIndicator && (
+                      <div className="flex items-center text-xs text-green-600">
+                        <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        <span>Asignado el {formattedDate}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
-    );
-  };
+    </div>
+  );
+};
 
   if (loading) {
     return <div className="text-center py-5"><div className="spinner-border text-primary" role="status"></div></div>;
   }
   
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-6">
-        {isEditing ? 'Editar Indicador' : 'Nuevo Indicador'}
-      </h1>
+    <div className="container mt-4">
+      <h2 className="mb-4">{isEditing ? 'Editar' : 'Crear Nuevo'} Indicador</h2>
       
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -1041,7 +1147,7 @@ const renderStudentSelectionInfo = () => (
           <button 
             type="button" 
             className="btn btn-secondary" 
-            onClick={() => navigate('/indicators')}
+            onClick={() => navigate('/indicadores')}
           >
             Cancelar
           </button>
