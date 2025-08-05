@@ -1,7 +1,7 @@
 // routes/indicatorRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
-import { verifyToken } from '../middleware/authMiddleware.js';
+import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -1118,106 +1118,141 @@ router.get('/:id/students', verifyToken, async (req, res) => {
   }
 });
 
-// Eliminar relación estudiante-indicador
-router.delete('/:indicatorId/students/:studentId', verifyToken, async (req, res) => {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
+// Ruta para eliminar un indicador de un estudiante
+// Ruta para eliminar un indicador de un estudiante (versión mejorada)
+router.delete('/:indicatorId/students/:studentId', 
+  verifyToken,
+  isTeacherOrAdmin,
+  async (req, res) => {
+    const connection = await pool.getConnection();
     
-    const { indicatorId, studentId } = req.params;
-    const userId = req.user.id; // ID del usuario autenticado
+    try {
+      await connection.beginTransaction();
+      
+      const { indicatorId, studentId } = req.params;
+      const userId = req.user.id; // Este es el ID del usuario autenticado (users.id)
 
-    console.log(`🗑️  Solicitada eliminación de relación: estudiante ${studentId} del indicador ${indicatorId}`);
+      console.log(`🗑️  Solicitada eliminación de relación: estudiante ${studentId} del indicador ${indicatorId} por usuario ${userId}`);
 
-    // 1. Obtener el ID del profesor
-    const [teacher] = await connection.query(
-      'SELECT id FROM teachers WHERE user_id = ?',
-      [userId]
-    );
+      // 1. Obtener el ID del profesor a partir del user_id
+      const [teacher] = await connection.query(
+        'SELECT id, user_id FROM teachers WHERE user_id = ?',
+        [userId]
+      );
 
-    if (teacher.length === 0) {
-      return res.status(403).json({
-        success: false,
-        message: 'Acceso denegado: no eres un profesor'
+      if (teacher.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Acceso denegado: no tienes permisos de profesor'
+        });
+      }
+
+      const teacherId = teacher[0].id; // Este es el ID del profesor en la tabla teachers
+
+      // 2. Verificar que el indicador pertenece al docente
+      const [indicator] = await connection.query(
+        'SELECT i.id, i.teacher_id, i.description FROM indicators i WHERE i.id = ? AND i.teacher_id = ?',
+        [indicatorId, teacherId]
+      );
+
+      if (indicator.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Indicador no encontrado o no autorizado'
+        });
+      }
+
+      // 3. Verificar que el estudiante existe y pertenece al docente
+      const [student] = await connection.query(
+        `SELECT s.id, u.name 
+         FROM students s 
+         JOIN users u ON s.user_id = u.id 
+         JOIN teacher_students ts ON s.id = ts.student_id 
+         WHERE s.id = ? AND ts.teacher_id = ?`,
+        [studentId, teacherId]
+      );
+
+      if (student.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Estudiante no encontrado o no tienes permisos para acceder a él'
+        });
+      }
+
+      // 3. Verificar que existe la relación
+      const [relation] = await connection.query(
+        'SELECT id FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
+        [indicatorId, studentId]
+      );
+
+      if (relation.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'La relación estudiante-indicador no existe'
+        });
+      }
+
+      // 4. Eliminar la relación
+      await connection.query(
+        'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
+        [indicatorId, studentId]
+      );
+      
+      // 5. Registrar la acción en el log de auditoría (si la tabla existe)
+      try {
+        await connection.query(
+          `INSERT INTO audit_logs 
+           (action, description, user_id, table_name, record_id, created_at)
+           VALUES (?, ?, ?, ?, ?, NOW())`,
+          [
+            'DELETE_INDICATOR_ASSIGNMENT',
+            `Se eliminó el indicador (ID: ${indicatorId}) del estudiante ${student[0].name} (ID: ${student[0].id})`,
+            teacherId, // user_id del usuario autenticado
+            'student_indicators',
+            relation[0].id // ID de la relación eliminada
+          ]
+        );
+        console.log('✅ Acción registrada en el log de auditoría');
+      } catch (auditError) {
+        // Si hay un error al registrar en el log, solo lo mostramos en consola
+        // pero no detenemos el flujo ya que la eliminación ya se realizó
+        console.warn('⚠️ No se pudo registrar en el log de auditoría. Continuando con la operación...', auditError.message);
+      }
+      
+      await connection.commit();
+      
+      console.log('✅ Relación eliminada correctamente');
+      
+      res.json({ 
+        success: true,
+        message: 'Indicador eliminado correctamente del estudiante',
+        data: {
+          studentId: student[0].id,
+          studentName: student[0].name,
+          indicatorId: indicator[0].id,
+          indicatorName: indicator[0].description.substring(0, 50) + '...',
+          relationId: relation[0].id
+        }
       });
-    }
-
-    const teacherId = teacher[0].id;
-
-    // 2. Verificar que el indicador pertenece al profesor
-    const [indicator] = await connection.query(
-      'SELECT id, teacher_id FROM indicators WHERE id = ?',
-      [indicatorId]
-    );
-
-    if (indicator.length === 0) {
-      return res.status(404).json({
+      
+    } catch (error) {
+      if (connection) {
+        await connection.rollback();
+      }
+      
+      console.error('❌ Error al eliminar relación estudiante-indicador:', error);
+      
+      res.status(500).json({ 
         success: false,
-        message: 'Indicador no encontrado'
+        message: 'Error al eliminar la asignación del indicador',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
+    } finally {
+      if (connection) {
+        connection.release();
+      }
     }
-
-    if (indicator[0].teacher_id !== teacherId && req.user.role !== 'super_administrador') {
-      return res.status(403).json({
-        success: false,
-        message: 'No tienes permiso para modificar este indicador'
-      });
-    }
-
-    // 3. Verificar que el estudiante pertenece al profesor
-    const [student] = await connection.query(
-      'SELECT id FROM students s INNER JOIN teacher_students ts ON s.id = ts.student_id WHERE s.id = ? AND ts.teacher_id = ?',
-      [studentId, teacherId]
-    );
-
-    if (student.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Estudiante no encontrado o no tienes permiso para acceder a él'
-      });
-    }
-
-    // 4. Verificar que existe la relación
-    const [relation] = await connection.query(
-      'SELECT id FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
-      [indicatorId, studentId]
-    );
-
-    if (relation.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'La relación estudiante-indicador no existe'
-      });
-    }
-
-    // 5. Eliminar la relación
-    await connection.query(
-      'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
-      [indicatorId, studentId]
-    );
-    
-    await connection.commit();
-    
-    console.log(`✅ Relación eliminada correctamente`);
-    
-    res.json({ 
-      success: true,
-      message: 'Indicador desasignado correctamente'
-    });
-    
-  } catch (error) {
-    await connection.rollback();
-    console.error('❌ Error al eliminar relación estudiante-indicador:', error);
-    
-    res.status(500).json({ 
-      success: false,
-      message: 'Error al desasignar el indicador',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  } finally {
-    connection.release();
   }
-});
+);
 
 export default router;

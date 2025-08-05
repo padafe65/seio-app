@@ -46,6 +46,7 @@ const IndicatorForm = () => {
   const [showTableView, setShowTableView] = useState(true);
   const [questionnaires, setQuestionnaires] = useState([]);
   const [teacherSubject, setTeacherSubject] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
   
 
 
@@ -727,63 +728,104 @@ const IndicatorForm = () => {
     }
   };
 
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  setError(null);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
 
-  try {
-    console.log('📤 Iniciando envío del formulario...');
-    
-    // Validar campos requeridos
-    const requiredFields = ['description', 'subject', 'phase', 'grade'];
-    const missingFields = requiredFields.filter(field => !formData[field]);
-    
-    if (missingFields.length > 0) {
-      throw new Error(`Por favor complete los campos requeridos: ${missingFields.join(', ')}`);
-    }
+    try {
+      console.log('📤 Iniciando envío del formulario...');
+      
+      // Validar campos requeridos
+      const requiredFields = ['description', 'subject', 'phase', 'grade'];
+      const missingFields = requiredFields.filter(field => !formData[field]);
+      
+      if (missingFields.length > 0) {
+        setLoading(false);
+        throw new Error(`Por favor complete los campos requeridos: ${missingFields.join(', ')}`);
+      }
 
-    // Validar que si no es entrada manual, debe tener un cuestionario seleccionado
-    if (!manualEntry && !formData.questionnaire_id) {
-      throw new Error('Debe seleccionar un cuestionario o habilitar la entrada manual');
-    }
+      // Validar que si no es entrada manual, debe tener un cuestionario seleccionado
+      if (!manualEntry && !formData.questionnaire_id) {
+        setLoading(false);
+        throw new Error('Debe seleccionar un cuestionario o habilitar la entrada manual');
+      }
 
-    // No es obligatorio seleccionar estudiantes para actualizar el indicador
-    // Solo se aplicará a los estudiantes seleccionados si hay alguno
+      // Identificar estudiantes que tenían el indicador pero fueron desmarcados
+      const studentsWithIndicator = students.filter(s => s.hasIndicator);
+      const removedStudents = studentsWithIndicator.filter(
+        student => !formData.student_ids.includes(student.id)
+      );
+      
+      // Mostrar confirmación para eliminar relaciones
+      if (removedStudents.length > 0) {
+        const studentNames = removedStudents.map(s => s.name).join('\n• ');
+        const confirmMessage = `¿Está seguro que desea eliminar este indicador de los siguientes estudiantes?\n\n• ${studentNames}\n\nEsta acción no se puede deshacer.`;
+        
+        if (!window.confirm(confirmMessage)) {
+          console.log('❌ Usuario canceló la eliminación de estudiantes');
+          setLoading(false);
+          return;
+        }
+        
+        console.log(`🔄 Procesando eliminación de ${removedStudents.length} estudiantes...`);
+        
+        // Eliminar las relaciones de los estudiantes desmarcados
+        const removalResults = await Promise.allSettled(
+          removedStudents.map(student => handleRemoveIndicator(student))
+        );
+        
+        // Verificar si hubo errores en la eliminación
+        const failedRemovals = removalResults
+          .map((result, index) => ({
+            student: removedStudents[index],
+            result
+          }))
+          .filter(({ result }) => result.status === 'rejected' || result.value === false);
+        
+        if (failedRemovals.length > 0) {
+          console.error('❌ Errores al eliminar indicadores:', failedRemovals);
+          const errorMessage = `No se pudieron eliminar los indicadores de ${failedRemovals.length} estudiante(s). Por favor, intente nuevamente.`;
+          setError(errorMessage);
+          throw new Error(errorMessage);
+        }
+        
+        console.log('✅ Eliminación de estudiantes completada correctamente');
+      }
 
-    // Preparar datos para enviar
-    const dataToSend = { 
-      description: formData.description,
-      subject: formData.subject,
-      phase: formData.phase,
-      grade: formData.grade,
-      achieved: formData.achieved,
-      teacher_id: teacherId,
-      questionnaire_id: manualEntry ? null : formData.questionnaire_id
-    };
-    
-    // Solo incluir student_ids si hay estudiantes seleccionados
-    // Si no se selecciona ningún estudiante, solo se actualizará el indicador sin afectar a los estudiantes
-    if (formData.student_ids.length > 0) {
-      dataToSend.student_ids = formData.student_ids.includes('all') ? 'all' : formData.student_ids;
-    }
+      // Preparar datos para enviar
+      const dataToSend = { 
+        description: formData.description,
+        subject: formData.subject,
+        phase: formData.phase,
+        grade: formData.grade,
+        achieved: formData.achieved,
+        teacher_id: teacherId,
+        questionnaire_id: manualEntry ? null : formData.questionnaire_id
+      };
+      
+      // Incluir student_ids solo si hay estudiantes seleccionados
+      // Si no se selecciona ningún estudiante, se eliminarán todas las asociaciones
+      dataToSend.student_ids = formData.student_ids.includes('all') 
+        ? 'all' 
+        : formData.student_ids.filter(id => id !== 'none');
 
-    console.log('📝 Datos a enviar al servidor:', JSON.stringify(dataToSend, null, 2));
+      console.log('📝 Datos a enviar al servidor:', JSON.stringify(dataToSend, null, 2));
 
-    const url = isEditing 
-      ? `/api/indicators/${id}`
-      : '/api/indicators';
-    
-    const method = isEditing ? 'put' : 'post';
-    
-    console.log(`🔄 Enviando solicitud ${method.toUpperCase()} a ${url}`);
-    
-    const response = await axios({
-      method,
-      url,
-      data: dataToSend,
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+      const url = isEditing 
+        ? `/api/indicators/${id}`
+        : '/api/indicators';
+      
+      const method = isEditing ? 'put' : 'post';
+      
+      console.log(`🔄 Enviando solicitud ${method.toUpperCase()} a ${url}`);
+      
+      const response = await axios({
+        method,
+        url,
+        data: dataToSend,
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
         'Content-Type': 'application/json'
       },
       validateStatus: function (status) {
@@ -861,80 +903,212 @@ const handleSubmit = async (e) => {
   }
 };
 
-const renderStudentSelectionInfo = () => (
-  <div>
-    <span className="block mt-1 text-blue-600">
-      {students
-        .filter(s => formData.student_ids.includes(s.id))
-        .map(s => s.name)
-        .join(', ')}
-    </span>
-    <p className="text-sm text-gray-500 mt-1">
-      {formData.student_ids.includes('all')
-        ? 'El indicador se aplicará a todos los estudiantes del grado.'
-        : formData.student_ids.length > 0
-          ? `Se aplicará a ${formData.student_ids.length} estudiante(s) seleccionado(s).`
-          : 'No se aplicará a ningún estudiante por ahora.'}
-    </p>
-  </div>
-);
-
-// Función para manejar la eliminación de un indicador
-const handleRemoveIndicator = async (student) => {
-  const confirmRemove = window.confirm(
-    `¿Está seguro que desea eliminar este indicador de ${student.name}?`
+const renderStudentSelectionInfo = () => {
+  return (
+    <div>
+      <span className="block mt-1 text-blue-600">
+        {students
+          .filter(s => formData.student_ids.includes(s.id))
+          .map(s => s.name)
+          .join(', ')}
+      </span>
+      <p className="text-sm text-gray-500 mt-1">
+        {formData.student_ids.includes('all')
+          ? 'El indicador se aplicará a todos los estudiantes del grado.'
+          : formData.student_ids.length > 0
+            ? `Se aplicará a ${formData.student_ids.length} estudiante(s) seleccionado(s).`
+            : 'No se aplicará a ningún estudiante por ahora.'}
+      </p>
+    </div>
   );
-  
-  if (!confirmRemove) return false;
-  
-  try {
-    // Actualizar la UI inmediatamente para mejor experiencia de usuario
-    setStudents(prev => 
-      prev.map(s => 
-        s.id === student.id 
-          ? { ...s, hasIndicator: false } 
-          : s
-      )
-    );
+}
+
+  // Función para manejar el cambio de estado de un estudiante
+  const handleStudentToggle = async (student, isChecked) => {
+    console.log(`🔄 Cambiando estado de ${student.name} a ${isChecked ? 'marcado' : 'desmarcado'}`);
     
-    // Llamar a la API para eliminar la relación
-    const response = await axios.delete(`/api/indicators/${id}/students/${student.id}`, {
-      headers: { 
-        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+    // Si se está desmarcando un estudiante que ya tenía el indicador, pedir confirmación
+    if (!isChecked && student.hasIndicator) {
+      const confirmMessage = `¿Está seguro que desea eliminar este indicador del estudiante ${student.name}?\n\nEsta acción solo eliminará la relación, no el indicador en sí.`;
+      
+      if (!window.confirm(confirmMessage)) {
+        console.log('❌ Usuario canceló la eliminación del estudiante');
+        return; // No hacer ningún cambio si el usuario cancela
       }
-    });
-    
-    if (response.data.success) {
-      // Actualizar el estado del formulario
-      setFormData(prev => ({
-        ...prev,
-        student_ids: prev.student_ids.filter(id => id !== student.id)
-      }));
       
-      // Mostrar mensaje de éxito
-      setSuccess(`Indicador eliminado correctamente de ${student.name}`);
-      setTimeout(() => setSuccess(''), 3000);
+      console.log(`🔄 Iniciando eliminación de la relación para ${student.name}...`);
       
-      return true;
+      try {
+        const success = await handleRemoveIndicator(student);
+        
+        if (!success) {
+          // Si hay un error al eliminar, mantener el estado actual
+          setStudents(prev => 
+            prev.map(s => 
+              s.id === student.id 
+                ? { ...s, hasIndicator: true } 
+                : s
+            )
+          );
+          
+          // Mostrar mensaje de error
+          setError(`No se pudo eliminar el indicador de ${student.name}. Intente nuevamente.`);
+          setTimeout(() => setError(''), 5000);
+        }
+      } catch (error) {
+        console.error('❌ Error al eliminar la relación:', error);
+        
+        // Revertir el cambio en la UI en caso de error
+        setStudents(prev => 
+          prev.map(s => 
+            s.id === student.id 
+              ? { ...s, hasIndicator: true } 
+              : s
+          )
+        );
+        
+        // Mostrar mensaje de error
+        setError(`Error al eliminar el indicador: ${error.message}`);
+        setTimeout(() => setError(''), 5000);
+      }
+    } else if (isChecked) {
+      console.log(`✅ Marcando estudiante ${student.name} como seleccionado`);
+      
+      // Si se está marcando, actualizamos el estado local primero
+      setStudents(prev => 
+        prev.map(s => 
+          s.id === student.id 
+            ? { ...s, hasIndicator: true } 
+            : s
+        )
+      );
+      
+      // Luego actualizamos el estado del formulario
+      setFormData(prev => {
+        const newStudentIds = [
+          ...prev.student_ids.filter(id => id !== 'none' && id !== 'all'),
+          student.id
+        ];
+        
+        console.log('📝 Actualizando lista de estudiantes seleccionados:', newStudentIds);
+        
+        return {
+          ...prev,
+          student_ids: newStudentIds
+        };
+      });
     }
-    
-    // Si hay un error en la respuesta, revertir los cambios
-    fetchStudentsWithIndicator();
-    return false;
-    
-  } catch (error) {
-    console.error('Error al eliminar la asignación:', error);
-    
-    // Revertir cambios en caso de error
-    fetchStudentsWithIndicator();
-    
-    // Mostrar mensaje de error
-    setError('Ocurrió un error al eliminar la asignación. Por favor, intente nuevamente.');
-    setTimeout(() => setError(''), 5000);
-    
-    return false;
+  };
+
+  // Función para manejar la eliminación de un indicador
+  const handleRemoveIndicator = async (student) => {
+    if (!id || !student?.id) {
+      console.error('❌ ID de indicador o estudiante no válido:', { indicatorId: id, studentId: student?.id });
+      setError('No se pudo identificar el indicador o el estudiante');
+      return false;
+    }
+
+    try {
+      console.log(`🔄 [1/4] Iniciando eliminación de relación - Indicador: ${id}, Estudiante: ${student.name} (${student.id})`);
+      setIsUpdating(true);
+      
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        console.error('❌ No se encontró token de autenticación');
+        setError('Error de autenticación. Por favor, inicie sesión nuevamente.');
+        return false;
+      }
+      
+      console.log(`🔄 [2/4] Enviando petición DELETE a /api/indicators/${id}/students/${student.id}`);
+      
+      // Llamar a la API para eliminar la relación
+      const response = await axios.delete(`/api/indicators/${id}/students/${student.id}`, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        validateStatus: (status) => status < 500 // Aceptar códigos de estado menores a 500 como exitosos
+      });
+      
+      console.log('✅ [3/4] Respuesta del servidor al eliminar:', {
+        status: response.status,
+        data: response.data,
+        success: response.data?.success,
+        message: response.data?.message
+      });
+      
+      if (response.data.success) {
+        console.log(`✅ [4/4] Indicador eliminado correctamente de ${student.name}`);
+        
+        // Actualizar el estado local del estudiante
+        setStudents(prev => {
+          const updated = prev.map(s => 
+            s.id === student.id 
+              ? { 
+                  ...s, 
+                  hasIndicator: false,
+                  has_indicator: 0,
+                  indicator_id: null,
+                  assigned_at: null
+                } 
+              : s
+          );
+          console.log('🔄 Estado de estudiantes actualizado localmente');
+          return updated;
+        });
+        
+        // Actualizar el estado del formulario
+        setFormData(prev => {
+          const updatedStudentIds = prev.student_ids.filter(id => id !== student.id && id !== 'all');
+          console.log('🔄 IDs de estudiantes actualizados en el formulario:', updatedStudentIds);
+          return {
+            ...prev,
+            student_ids: updatedStudentIds
+          };
+        });
+        
+        // Mostrar mensaje de éxito
+        setSuccess(`Indicador eliminado correctamente de ${student.name}`);
+        setTimeout(() => setSuccess(''), 3000);
+        
+        // Forzar recarga de la lista de estudiantes para sincronizar con la base de datos
+        console.log('🔄 Recargando lista de estudiantes...');
+        await fetchStudentsWithIndicator();
+        
+        return true;
+      } else {
+        const errorMsg = response.data?.message || 'Error al eliminar la asignación';
+        console.error('❌ Error en la respuesta del servidor:', {
+          status: response.status,
+          message: errorMsg,
+          data: response.data
+        });
+        
+        // Mostrar mensaje de error al usuario
+        setError(`Error: ${errorMsg}`);
+        setTimeout(() => setError(''), 5000);
+        
+        return false;
+      }
+    } catch (error) {
+      console.error('Error al eliminar la asignación:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      
+      // Mostrar mensaje de error al usuario
+      setError(`Error al eliminar el indicador: ${error.message}`);
+      setTimeout(() => setError(''), 5000);
+      
+      // Revertir cambios en caso de error
+      await fetchStudentsWithIndicator();
+      
+      throw error; // Relanzar el error para manejarlo en el componente padre
+    } finally {
+      setIsUpdating(false);
+    }
   }
-};
 
 // JSX para mostrar la selección actual de estudiantes
 const renderStudentSelection = () => {
@@ -1037,60 +1211,44 @@ const renderStudentSelection = () => {
                 return (
                   <div 
                     key={student.id} 
-                    className={`flex items-center p-3 rounded-md transition-colors ${
-                      hasIndicator ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50 border-l-4 border-transparent'
+                    className={`flex items-center p-3 transition-colors ${
+                      student.hasIndicator 
+                        ? 'bg-green-50 border-l-4 border-l-green-500' 
+                        : 'hover:bg-gray-50 border-l-4 border-l-transparent'
                     }`}
                   >
-                    <div className="flex items-center w-full justify-between">
-                      <div className="flex items-center">
-                        <div className="flex items-center">
-                          <div className="relative">
-                            <input
-                              type="checkbox"
-                              id={`student-${student.id}`}
-                              checked={hasIndicator || isSelected}
-                              disabled={hasIndicator}
-                              onChange={async (e) => {
-                                if (hasIndicator) {
-                                  e.preventDefault();
-                                  await handleRemoveIndicator(student);
-                                } else {
-                                  setFormData(prev => {
-                                    const newIds = isSelected
-                                      ? prev.student_ids.filter(id => id !== student.id)
-                                      : [...prev.student_ids, student.id];
-                                    return { ...prev, student_ids: newIds };
-                                  });
-                                }
-                              }}
-                              className={`h-5 w-5 rounded ${
-                                hasIndicator 
-                                  ? 'text-green-600 border-green-300 bg-green-50' 
-                                  : 'text-gray-600 border-gray-300 hover:border-blue-400'
-                              } transition-colors`}
-                            />
-                            {hasIndicator && (
-                              <div className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-green-500 border-2 border-white"></div>
-                            )}
-                          </div>
-                          <label 
-                            htmlFor={`student-${student.id}`} 
-                            className="ml-2 flex-1 flex items-center justify-between"
-                          >
-                            <span className="flex-1">
-                              {student.name}
-                              {hasIndicator && (
-                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                  Asignado
-                                </span>
-                              )}
-                            </span>
-                            {hasIndicator && formattedDate && (
-                              <span className="text-xs text-gray-500">
-                                {formattedDate}
+                    <div className="flex items-center w-full">
+                      <div className="relative flex items-center">
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={student.hasIndicator}
+                            onChange={(e) => handleStudentToggle(student, e.target.checked)}
+                            className={`w-4 h-4 rounded border ${
+                              student.hasIndicator 
+                                ? 'bg-green-100 border-green-600 text-green-600 focus:ring-green-200' 
+                                : 'border-gray-300 hover:border-blue-500 bg-white hover:bg-gray-50 focus:ring-blue-200'
+                            } cursor-pointer transition-colors focus:ring-2 focus:ring-offset-1`}
+                            disabled={isUpdating}
+                            title={student.hasIndicator ? 'Quitar indicador' : 'Asignar indicador'}
+                          />
+                        </label>
+                      </div>
+                      <div className="ml-3 flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-800">
+                            {student.name}
+                            {student.hasIndicator && (
+                              <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">
+                                Asignado
                               </span>
                             )}
-                          </label>
+                          </span>
+                          {student.hasIndicator && student.assigned_at && (
+                            <span className="text-xs text-gray-500">
+                              {new Date(student.assigned_at).toLocaleDateString('es-ES')}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
