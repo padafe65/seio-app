@@ -25,6 +25,7 @@ const IndicatorForm = () => {
   const [loading, setLoading] = useState(true);
   const [manualEntry, setManualEntry] = useState(true);
   const [error, setError] = useState(null);
+  const [success, setSuccess] = useState('');
   const [teacherId, setTeacherId] = useState(null);
   const [students, setStudents] = useState([
     { 
@@ -38,6 +39,8 @@ const IndicatorForm = () => {
       grade: ''
     }
   ]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsError, setStudentsError] = useState(null);
   
   // Estado para controlar la vista de selección (tabla o combo)
   const [showTableView, setShowTableView] = useState(true);
@@ -125,13 +128,27 @@ const IndicatorForm = () => {
     
     try {
       // 1. Obtener los estudiantes del docente para el grado especificado
-      const studentsResponse = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
-        headers: { 
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      });
+      const [studentsResponse, indicatorStudentsResponse] = await Promise.all([
+        // Obtener estudiantes del grado
+        axios.get(`/api/teachers/${teacherId}/students/by-grade/${grade}`, {
+          headers: { 
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        }),
+        // Obtener estudiantes con indicador asignado (si estamos editando)
+        isEditing && id ? axios.get(`/api/indicators/${id}/students`, {
+          headers: { 
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        }).catch(error => {
+          console.error('❌ Error al cargar estudiantes con indicador:', error);
+          return { data: { success: false, data: [] } };
+        }) : { data: { success: false, data: [] } }
+      ]);
       
       // 2. Procesar la lista de estudiantes
       let studentsList = [];
@@ -149,47 +166,26 @@ const IndicatorForm = () => {
       
       console.log(`📊 ${studentsList.length} estudiantes encontrados para el grado ${grade}`);
       
-      // 3. Si estamos editando, obtener estudiantes con indicador asignado
-      let assignedStudents = [];
-      if (isEditing && id) {
-        try {
-          const assignedResponse = await axios.get(`/api/indicators/${id}`, {
-            headers: { 
-              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          });
-          
-          if (assignedResponse.data?.success) {
-            const indicatorData = assignedResponse.data.data;
-            if (indicatorData.students_info) {
-              // El formato es: "id|nombre|grado;id2|nombre2|grado2;..."
-              const studentEntries = indicatorData.students_info.split(';');
-              
-              assignedStudents = studentEntries
-                .filter(entry => entry) // Filtrar entradas vacías
-                .map(entry => {
-                  const [studentId, studentName, studentGrade] = entry.split('|');
-                  return {
-                    id: studentId,
-                    name: studentName || `Estudiante ${studentId}`,
-                    grade: studentGrade || grade,
-                    hasIndicator: true
-                  };
-                });
-              
-              console.log('👥 Estudiantes con indicador asignado:', assignedStudents);
-            }
+      // 3. Procesar estudiantes con indicador asignado
+      const assignedStudents = [];
+      const assignedStudentIds = new Set();
+      
+      if (indicatorStudentsResponse.data?.success && Array.isArray(indicatorStudentsResponse.data.data)) {
+        indicatorStudentsResponse.data.data.forEach(student => {
+          if (student.has_indicator === 1) {
+            assignedStudentIds.add(String(student.id));
+            assignedStudents.push({
+              ...student,
+              id: String(student.id),
+              hasIndicator: true
+            });
           }
-        } catch (error) {
-          console.error('❌ Error al cargar estudiantes con indicador asignado:', error);
-        }
+        });
+        
+        console.log('👥 Estudiantes con indicador asignado:', assignedStudents);
       }
       
       // 4. Combinar estudiantes con información de asignación
-      const assignedStudentIds = new Set(assignedStudents.map(s => String(s.id)));
-      
       const processedStudents = studentsList
         .filter(student => student && (student.id || student.user_id))
         .map(student => {
@@ -598,6 +594,112 @@ const IndicatorForm = () => {
     }
   };
 
+  // Función para cargar estudiantes con su estado de indicador
+  const fetchStudentsWithIndicator = useCallback(async () => {
+    if (!id || !teacherId) return;
+    
+    try {
+      setStudentsLoading(true);
+      setStudentsError(null);
+      
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error('No se encontró el token de autenticación');
+      }
+      
+      console.log(`🔍 Solicitando estudiantes para el indicador ${id} con token:`, token ? 'Token presente' : 'Sin token');
+      
+      const response = await axios.get(`/api/indicators/${id}/students`, {
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        withCredentials: true
+      });
+
+      if (response.data?.success) {
+        const studentsData = response.data.data || [];
+        console.log('📊 Datos de estudiantes recibidos:', JSON.stringify(studentsData, null, 2));
+        
+        // Crear un mapa de estudiantes con indicador para búsqueda rápida
+        const indicatorMap = new Map();
+        const studentsWithIndicator = [];
+        
+        // Procesar los datos de los estudiantes
+        studentsData.forEach(student => {
+          if (student.has_indicator === 1) {
+            const studentId = String(student.id);
+            const studentData = {
+              ...student,
+              id: studentId,
+              hasIndicator: true,
+              achieved: student.achieved || false,
+              assignedAt: student.assigned_at || null
+            };
+            
+            indicatorMap.set(studentId, studentData);
+            studentsWithIndicator.push(studentData);
+            
+            console.log(`✅ Estudiante ${studentId} - ${student.name} tiene el indicador asignado`);
+          }
+        });
+        
+        console.log('👥 Total de estudiantes con indicador:', studentsWithIndicator.length);
+        
+        // Actualizar el estado de los estudiantes para reflejar los indicadores
+        setStudents(prevStudents => 
+          prevStudents.map(student => {
+            const studentId = String(student.id);
+            const hasIndicator = indicatorMap.has(studentId);
+            
+            // Si el estudiante está en el mapa, combinar sus datos
+            if (hasIndicator) {
+              const indicatorData = indicatorMap.get(studentId);
+              return {
+                ...student,
+                ...indicatorData,
+                hasIndicator: true
+              };
+            }
+            
+            // Si no tiene indicador, mantener los datos existentes pero limpiar el estado de indicador
+            return {
+              ...student,
+              hasIndicator: false,
+              indicator_id: null,
+              achieved: null,
+              assigned_at: null
+            };
+          })
+        );
+        
+        // Actualizar los IDs de estudiantes seleccionados
+        if (studentsWithIndicator.length > 0) {
+          setFormData(prev => ({
+            ...prev,
+            student_ids: studentsWithIndicator.map(s => s.id)
+          }));
+        }
+        
+        return studentsWithIndicator;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('❌ Error al cargar estudiantes con indicador:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      });
+      setStudentsError('No se pudieron cargar los estudiantes con el estado del indicador');
+      return [];
+    } finally {
+      setStudentsLoading(false);
+    }
+  }, [id, teacherId]);
+
   // Verificar si un estudiante está seleccionado
   const isStudentSelected = (studentId) => {
     return formData.student_ids.includes(studentId) || formData.student_ids.includes('all');
@@ -780,12 +882,22 @@ const renderStudentSelectionInfo = () => (
 // Función para manejar la eliminación de un indicador
 const handleRemoveIndicator = async (student) => {
   const confirmRemove = window.confirm(
-    `¿Está seguro que desea eliminar este indicador de ${student.name}?\n\nEsta acción no se puede deshacer.`
+    `¿Está seguro que desea eliminar este indicador de ${student.name}?`
   );
   
   if (!confirmRemove) return false;
   
   try {
+    // Actualizar la UI inmediatamente para mejor experiencia de usuario
+    setStudents(prev => 
+      prev.map(s => 
+        s.id === student.id 
+          ? { ...s, hasIndicator: false } 
+          : s
+      )
+    );
+    
+    // Llamar a la API para eliminar la relación
     const response = await axios.delete(`/api/indicators/${id}/students/${student.id}`, {
       headers: { 
         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -793,29 +905,33 @@ const handleRemoveIndicator = async (student) => {
     });
     
     if (response.data.success) {
-      // Actualizar el estado local
-      setStudents(prevStudents => 
-        prevStudents.map(s => 
-          s.id === student.id 
-            ? { ...s, hasIndicator: false, assignmentId: null } 
-            : s
-        )
-      );
+      // Actualizar el estado del formulario
+      setFormData(prev => ({
+        ...prev,
+        student_ids: prev.student_ids.filter(id => id !== student.id)
+      }));
       
-      // Si el estudiante estaba seleccionado, quitarlo
-      if (formData.student_ids.includes(student.id)) {
-        setFormData(prev => ({
-          ...prev,
-          student_ids: prev.student_ids.filter(id => id !== student.id)
-        }));
-      }
+      // Mostrar mensaje de éxito
+      setSuccess(`Indicador eliminado correctamente de ${student.name}`);
+      setTimeout(() => setSuccess(''), 3000);
       
       return true;
     }
+    
+    // Si hay un error en la respuesta, revertir los cambios
+    fetchStudentsWithIndicator();
     return false;
+    
   } catch (error) {
     console.error('Error al eliminar la asignación:', error);
-    alert('Ocurrió un error al eliminar la asignación. Por favor, intente nuevamente.');
+    
+    // Revertir cambios en caso de error
+    fetchStudentsWithIndicator();
+    
+    // Mostrar mensaje de error
+    setError('Ocurrió un error al eliminar la asignación. Por favor, intente nuevamente.');
+    setTimeout(() => setError(''), 5000);
+    
     return false;
   }
 };
@@ -827,6 +943,13 @@ const renderStudentSelection = () => {
   
   return (
     <div className="mb-4">
+      {/* Mostrar mensajes de éxito o error */}
+      {success && (
+        <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-md text-sm">
+          {success}
+        </div>
+      )}
+      
       <div className="flex flex-col space-y-4">
         {/* Opción para aplicar a todos */}
         <div className="flex items-center">
@@ -872,67 +995,110 @@ const renderStudentSelection = () => {
           </label>
         </div>
         
-        {/* Lista de estudiantes (solo si no se seleccionó 'todos') */}
-        {!formData.student_ids.includes('all') && realStudents.length > 0 && (
-          <div className="mt-2 ml-6 space-y-2 max-h-60 overflow-y-auto p-2 border rounded">
-            {realStudents.map(student => {
-              const hasIndicator = student.hasIndicator || false;
-              const isSelected = formData.student_ids.includes(student.id);
-              const assignmentDate = student.assignedAt || student.created_at || new Date().toISOString();
-              const formattedDate = assignmentDate ? new Date(assignmentDate).toLocaleDateString('es-ES') : '';
-              
-              return (
-                <div 
-                  key={student.id} 
-                  className={`flex items-center p-3 rounded-md transition-colors ${
-                    hasIndicator ? 'bg-green-50 border-l-4 border-green-500' : 'hover:bg-gray-50 border-l-4 border-transparent'
-                  }`}
-                >
-                  <div className="flex items-center w-full justify-between">
-                    <div className="flex items-center">
-                      <input
-                        type="checkbox"
-                        id={`student-${student.id}`}
-                        checked={isSelected || hasIndicator}
-                        disabled={hasIndicator}
-                        onChange={async (e) => {
-                          if (hasIndicator) {
-                            e.preventDefault();
-                            await handleRemoveIndicator(student);
-                          } else {
-                            // Si no tiene indicador, manejar selección normal
-                            handleStudentChange({
-                              target: { 
-                                value: student.id,
-                                type: 'checkbox',
-                                checked: !isSelected
-                              }
-                            });
-                          }
-                        }}
-                        className={`h-4 w-4 rounded ${hasIndicator ? 'text-green-600 border-green-300' : 'text-blue-600 border-gray-300'}`}
-                      />
-                      <label 
-                        htmlFor={`student-${student.id}`} 
-                        className={`ml-2 text-sm ${hasIndicator ? 'font-medium text-green-700' : 'text-gray-700'}`}
-                      >
-                        {student.name}
-                      </label>
-                    </div>
-                    
-                    {hasIndicator && (
-                      <div className="flex items-center text-xs text-green-600">
-                        <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        <span>Asignado el {formattedDate}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+        {/* Mostrar estado de carga o error */}
+        {studentsLoading ? (
+          <div className="p-4 text-center">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+            <p className="mt-2 text-sm text-gray-600">Cargando estudiantes...</p>
           </div>
+        ) : studentsError ? (
+          <div className="p-4 bg-red-50 text-red-700 rounded-md text-sm">
+            {studentsError}
+            <button
+              onClick={fetchStudentsWithIndicator}
+              className="ml-2 text-blue-600 hover:text-blue-800"
+            >
+              Reintentar
+            </button>
+          </div>
+        ) : (
+          /* Lista de estudiantes (solo si no se seleccionó 'todos') */
+          !formData.student_ids.includes('all') && realStudents.length > 0 && (
+            <div className="mt-2 ml-6 space-y-2 max-h-60 overflow-y-auto p-2 border rounded">
+              {realStudents.map(student => {
+                const hasIndicator = student.hasIndicator === true || student.has_indicator === 1;
+                const isSelected = formData.student_ids.includes(student.id);
+                const assignmentDate = student.assignedAt || student.assigned_at || student.indicator_created_at || new Date().toISOString();
+                const formattedDate = assignmentDate ? new Date(assignmentDate).toLocaleDateString('es-ES') : '';
+                
+                // Debug: Mostrar información del estudiante en consola
+                console.log('👤 Estudiante:', {
+                  id: student.id,
+                  name: student.name,
+                  hasIndicator,
+                  has_indicator: student.has_indicator,
+                  indicator_id: student.indicator_id,
+                  current_indicator_id: id,
+                  assigned_at: student.assigned_at,
+                  isSelected,
+                  student_ids: formData.student_ids
+                });
+                
+                return (
+                  <div 
+                    key={student.id} 
+                    className={`flex items-center p-3 rounded-md transition-colors ${
+                      hasIndicator ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50 border-l-4 border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center w-full justify-between">
+                      <div className="flex items-center">
+                        <div className="flex items-center">
+                          <div className="relative">
+                            <input
+                              type="checkbox"
+                              id={`student-${student.id}`}
+                              checked={hasIndicator || isSelected}
+                              disabled={hasIndicator}
+                              onChange={async (e) => {
+                                if (hasIndicator) {
+                                  e.preventDefault();
+                                  await handleRemoveIndicator(student);
+                                } else {
+                                  setFormData(prev => {
+                                    const newIds = isSelected
+                                      ? prev.student_ids.filter(id => id !== student.id)
+                                      : [...prev.student_ids, student.id];
+                                    return { ...prev, student_ids: newIds };
+                                  });
+                                }
+                              }}
+                              className={`h-5 w-5 rounded ${
+                                hasIndicator 
+                                  ? 'text-green-600 border-green-300 bg-green-50' 
+                                  : 'text-gray-600 border-gray-300 hover:border-blue-400'
+                              } transition-colors`}
+                            />
+                            {hasIndicator && (
+                              <div className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-green-500 border-2 border-white"></div>
+                            )}
+                          </div>
+                          <label 
+                            htmlFor={`student-${student.id}`} 
+                            className="ml-2 flex-1 flex items-center justify-between"
+                          >
+                            <span className="flex-1">
+                              {student.name}
+                              {hasIndicator && (
+                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                  Asignado
+                                </span>
+                              )}
+                            </span>
+                            {hasIndicator && formattedDate && (
+                              <span className="text-xs text-gray-500">
+                                {formattedDate}
+                              </span>
+                            )}
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
         )}
       </div>
     </div>

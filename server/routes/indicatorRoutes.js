@@ -1011,4 +1011,213 @@ router.get('/subjects/teacher/:userId', verifyToken, async (req, res) => {
 });
 
 
+// Obtener estudiantes con su estado de indicador
+router.get('/:id/students', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { id: indicatorId } = req.params;
+    const userId = req.user.id; // ID del usuario autenticado
+
+    console.log(`🔍 Obteniendo estudiantes para el indicador ${indicatorId}`);
+
+    // 1. Obtener el ID del profesor
+    const [teacher] = await connection.query(
+      'SELECT id FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+
+    if (teacher.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Acceso denegado: no eres un profesor'
+      });
+    }
+
+    const teacherId = teacher[0].id;
+
+    // 2. Verificar que el indicador pertenece al profesor
+    const [indicator] = await connection.query(
+      'SELECT id, teacher_id FROM indicators WHERE id = ?',
+      [indicatorId]
+    );
+
+    if (indicator.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Indicador no encontrado'
+      });
+    }
+
+    if (indicator[0].teacher_id !== teacherId && req.user.role !== 'super_administrador') {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para ver este indicador'
+      });
+    }
+
+    // 3. Obtener estudiantes con información detallada del indicador
+    console.log('🔍 Obteniendo estudiantes para el indicador:', indicatorId);
+    console.log('👨‍🏫 ID del profesor:', teacherId);
+    
+    const [students] = await connection.query(`
+      SELECT 
+        s.id,
+        s.user_id,
+        u.name as name,
+        s.grade,
+        u.email,
+        si.achieved,
+        si.assigned_at,
+        si.indicator_id,
+        si.assigned_at as indicator_created_at,
+        CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END as has_indicator
+      FROM students s
+      INNER JOIN users u ON s.user_id = u.id
+      INNER JOIN teacher_students ts ON s.id = ts.student_id
+      LEFT JOIN (
+        SELECT si.* 
+        FROM student_indicators si
+        INNER JOIN indicators i ON si.indicator_id = i.id
+        WHERE si.indicator_id = ? AND i.teacher_id = ?
+      ) si ON s.id = si.student_id
+      WHERE ts.teacher_id = ? 
+        AND u.estado = 'activo'
+      ORDER BY u.name
+    `, [indicatorId, teacherId, teacherId]);
+    
+    console.log('📊 Estudiantes encontrados:', students.length);
+    if (students.length > 0) {
+      console.log('📝 Primer estudiante:', {
+        id: students[0].id,
+        name: students[0].name,
+        has_indicator: students[0].has_indicator,
+        indicator_id: students[0].indicator_id,
+        achieved: students[0].achieved
+      });
+    }
+    
+    console.log('📊 Estudiantes con estado de indicador:', JSON.stringify(students, null, 2));
+
+    console.log(`✅ Se encontraron ${students.length} estudiantes`);
+
+    res.json({
+      success: true,
+      data: students
+    });
+
+  } catch (error) {
+    console.error('❌ Error al obtener estudiantes con indicador:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error al cargar los estudiantes',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
+    connection.release();
+  }
+});
+
+// Eliminar relación estudiante-indicador
+router.delete('/:indicatorId/students/:studentId', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    const { indicatorId, studentId } = req.params;
+    const userId = req.user.id; // ID del usuario autenticado
+
+    console.log(`🗑️  Solicitada eliminación de relación: estudiante ${studentId} del indicador ${indicatorId}`);
+
+    // 1. Obtener el ID del profesor
+    const [teacher] = await connection.query(
+      'SELECT id FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+
+    if (teacher.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Acceso denegado: no eres un profesor'
+      });
+    }
+
+    const teacherId = teacher[0].id;
+
+    // 2. Verificar que el indicador pertenece al profesor
+    const [indicator] = await connection.query(
+      'SELECT id, teacher_id FROM indicators WHERE id = ?',
+      [indicatorId]
+    );
+
+    if (indicator.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Indicador no encontrado'
+      });
+    }
+
+    if (indicator[0].teacher_id !== teacherId && req.user.role !== 'super_administrador') {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para modificar este indicador'
+      });
+    }
+
+    // 3. Verificar que el estudiante pertenece al profesor
+    const [student] = await connection.query(
+      'SELECT id FROM students s INNER JOIN teacher_students ts ON s.id = ts.student_id WHERE s.id = ? AND ts.teacher_id = ?',
+      [studentId, teacherId]
+    );
+
+    if (student.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Estudiante no encontrado o no tienes permiso para acceder a él'
+      });
+    }
+
+    // 4. Verificar que existe la relación
+    const [relation] = await connection.query(
+      'SELECT id FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
+      [indicatorId, studentId]
+    );
+
+    if (relation.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'La relación estudiante-indicador no existe'
+      });
+    }
+
+    // 5. Eliminar la relación
+    await connection.query(
+      'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
+      [indicatorId, studentId]
+    );
+    
+    await connection.commit();
+    
+    console.log(`✅ Relación eliminada correctamente`);
+    
+    res.json({ 
+      success: true,
+      message: 'Indicador desasignado correctamente'
+    });
+    
+  } catch (error) {
+    await connection.rollback();
+    console.error('❌ Error al eliminar relación estudiante-indicador:', error);
+    
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al desasignar el indicador',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
+    connection.release();
+  }
+});
+
 export default router;
