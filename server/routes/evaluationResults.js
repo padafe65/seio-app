@@ -18,6 +18,8 @@ router.get('/:id', async (req, res) => {
         q.title as questionnaire_title,
         q.phase,
         q.id as questionnaire_id,
+        q.category as questionnaire_category,
+        q.description as questionnaire_description,
         c.name as course_name,
         c.id as course_id,
         er.status as evaluation_status,

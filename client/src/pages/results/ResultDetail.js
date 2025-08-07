@@ -115,7 +115,8 @@ const ResultDetail = () => {
             id: questionnaireId,
             title: resultData.questionnaire_title || (questionnaireData && questionnaireData.title) || 'Cuestionario',
             phase: resultData.phase || (questionnaireData && questionnaireData.phase),
-            description: resultData.questionnaire_description || (questionnaireData && questionnaireData.description),
+            category: resultData.questionnaire_category || (questionnaireData && questionnaireData.category) || 'Sin categoría',
+            description: resultData.questionnaire_description || (questionnaireData && questionnaireData.description) || 'Sin descripción',
             ...(questionnaireData || {})
           },
           attempt: {
