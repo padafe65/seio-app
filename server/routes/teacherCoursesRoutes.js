@@ -5,10 +5,15 @@ import pool from '../config/db.js';
 const router = express.Router();
 
 // Obtener todos los cursos asignados a un profesor
-// routes/teacherCoursesRoutes.js
-router.get('/teacher/:teacherId', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { teacherId } = req.params;
+    const { teacherId } = req.query;
+    
+    if (!teacherId) {
+      return res.status(400).json({ message: 'Se requiere el ID del profesor' });
+    }
+    
+    console.log(`🔍 Buscando cursos para el profesor ID: ${teacherId}`);
     
     const [rows] = await pool.query(`
       SELECT tc.id, c.id as course_id, c.name as course_name
@@ -17,10 +22,39 @@ router.get('/teacher/:teacherId', async (req, res) => {
       WHERE tc.teacher_id = ?
     `, [teacherId]);
     
+    console.log(`✅ Cursos encontrados:`, rows);
     res.json(rows);
   } catch (error) {
     console.error('Error al obtener cursos del profesor:', error);
-    res.status(500).json({ message: 'Error al obtener cursos del profesor' });
+    res.status(500).json({ 
+      message: 'Error al obtener cursos del profesor',
+      error: error.message 
+    });
+  }
+});
+
+// Obtener todos los cursos asignados a un profesor (ruta alternativa con parámetro en la URL)
+router.get('/teacher/:teacherId', async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    
+    console.log(`🔍 [RUTA ALTERNATIVA] Buscando cursos para el profesor ID: ${teacherId}`);
+    
+    const [rows] = await pool.query(`
+      SELECT tc.id, c.id as course_id, c.name as course_name
+      FROM teacher_courses tc
+      JOIN courses c ON tc.course_id = c.id
+      WHERE tc.teacher_id = ?
+    `, [teacherId]);
+    
+    console.log(`✅ [RUTA ALTERNATIVA] Cursos encontrados:`, rows);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error al obtener cursos del profesor (ruta alternativa):', error);
+    res.status(500).json({ 
+      message: 'Error al obtener cursos del profesor',
+      error: error.message 
+    });
   }
 });
 

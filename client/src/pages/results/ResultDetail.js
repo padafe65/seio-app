@@ -1,7 +1,7 @@
 // pages/results/ResultDetail.js
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../config/axios';
 import { ArrowLeft } from 'lucide-react';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
@@ -15,51 +15,128 @@ const ResultDetail = () => {
   useEffect(() => {
     const fetchResultDetail = async () => {
       try {
-        // Obtener el resultado
-        const resultResponse = await axios.get(`${API_URL}/api/evaluation-results/${id}`);
-        const resultData = resultResponse.data;
+        console.log('🔍 Obteniendo detalles del resultado con ID:', id);
         
-        if (!resultData) {
-          throw new Error('No se encontró el resultado');
+        // Obtener el resultado
+        const resultResponse = await api.get(`/api/evaluation-results/${id}`);
+        console.log('📊 Respuesta completa de la API:', resultResponse);
+        
+        // Acceder a la propiedad data de la respuesta
+        const responseData = resultResponse.data;
+        console.log('📊 Datos del resultado:', responseData);
+        
+        // Verificar si hay datos y si la respuesta es exitosa
+        if (!responseData || !responseData.success) {
+          throw new Error('No se pudo obtener el resultado de la evaluación');
+        }
+        
+        // Extraer los datos del resultado
+        const resultData = responseData.data || responseData;
+        console.log('📝 Datos procesados:', resultData);
+        
+        // Verificar si tenemos el ID del intento
+        const selectedAttemptId = resultData.selected_attempt_id || 
+                                (resultData.attempt && resultData.attempt.id) || 
+                                (resultData.attempt_id);
+        
+        console.log('🔑 ID del intento seleccionado:', selectedAttemptId);
+        
+        if (!selectedAttemptId) {
+          console.error('❌ No se encontró el ID del intento en:', resultData);
+          throw new Error('No se encontró el ID del intento seleccionado en los datos del resultado');
         }
         
         // Obtener detalles del intento
-        const attemptResponse = await axios.get(
-          `${API_URL}/api/quiz-attempts/${resultData.selected_attempt_id}`
+        console.log('🔄 Obteniendo detalles del intento con ID:', selectedAttemptId);
+        const attemptResponse = await api.get(
+          `/api/evaluation-results/quiz-attempts/${selectedAttemptId}`
         );
         
-        const attemptData = attemptResponse.data;
+        console.log('📝 Respuesta del intento:', attemptResponse.data);
+        
+        const attemptData = attemptResponse.data.data || attemptResponse.data;
         
         // Obtener detalles del cuestionario
         let questionnaireData = null;
-        if (attemptData && attemptData.questionnaire_id) {
-          const questionnaireResponse = await axios.get(
-            `${API_URL}/api/questionnaires/${attemptData.questionnaire_id}`
-          );
-          questionnaireData = questionnaireResponse.data.questionnaire || questionnaireResponse.data;
+        const questionnaireId = attemptData.questionnaire_id || 
+                              (resultData.questionnaire && resultData.questionnaire.id) || 
+                              resultData.questionnaire_id;
+        
+        if (questionnaireId) {
+          console.log('📋 Obteniendo cuestionario con ID:', questionnaireId);
+          try {
+            const questionnaireResponse = await api.get(
+              `/api/questionnaires/${questionnaireId}`
+            );
+            questionnaireData = questionnaireResponse.data.questionnaire || 
+                              questionnaireResponse.data.data || 
+                              questionnaireResponse.data;
+          } catch (error) {
+            console.error('⚠️ Error al obtener el cuestionario:', error);
+            // Continuar sin los datos del cuestionario
+          }
         }
         
         // Obtener detalles del estudiante
         let studentData = null;
-        if (attemptData && attemptData.student_id) {
-          const studentResponse = await axios.get(
-            `${API_URL}/api/students/${attemptData.student_id}`
-          );
-          studentData = studentResponse.data;
+        const studentId = attemptData.student_id || 
+                         (resultData.student && resultData.student.id) || 
+                         resultData.student_id;
+        
+        if (studentId) {
+          console.log('👤 Obteniendo estudiante con ID:', studentId);
+          try {
+            const studentResponse = await api.get(
+              `/api/students/${studentId}`
+            );
+            studentData = studentResponse.data.student || 
+                         studentResponse.data.data || 
+                         studentResponse.data;
+          } catch (error) {
+            console.error('⚠️ Error al obtener el estudiante:', error);
+            // Continuar sin los datos del estudiante
+          }
         }
         
         // Combinar todos los datos
-        setResult({
-          ...resultData,
-          attempt: attemptData,
-          questionnaire: questionnaireData,
-          student: studentData
-        });
+        const combinedData = {
+          id: resultData.id,
+          best_score: resultData.best_score,
+          status: resultData.status,
+          recorded_at: resultData.recorded_at,
+          student: {
+            id: studentId,
+            name: resultData.student_name || (studentData && studentData.name) || 'Estudiante desconocido',
+            email: resultData.student_email || (studentData && studentData.email),
+            course_name: resultData.course_name || (studentData && studentData.course_name),
+            ...(studentData || {})
+          },
+          questionnaire: {
+            id: questionnaireId,
+            title: resultData.questionnaire_title || (questionnaireData && questionnaireData.title) || 'Cuestionario',
+            phase: resultData.phase || (questionnaireData && questionnaireData.phase),
+            description: resultData.questionnaire_description || (questionnaireData && questionnaireData.description),
+            ...(questionnaireData || {})
+          },
+          attempt: {
+            id: selectedAttemptId,
+            score: attemptData.score || resultData.score,
+            attempt_date: attemptData.attempt_date || resultData.completed_at,
+            answers: attemptData.answers,
+            correct_answers: attemptData.correct_answers,
+            incorrect_answers: attemptData.incorrect_answers,
+            total_questions: attemptData.total_questions,
+            ...attemptData
+          }
+        };
         
+        console.log('✅ Datos combinados para el estado:', combinedData);
+        setResult(combinedData);
         setLoading(false);
+        
       } catch (error) {
-        console.error('Error al cargar detalles:', error);
-        setError('No se pudieron cargar los detalles. Por favor, intenta de nuevo.');
+        console.error('❌ Error al cargar detalles:', error);
+        setError(`Error al cargar los detalles: ${error.message || 'Por favor, inténtalo de nuevo más tarde'}`);
         setLoading(false);
       }
     };

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Eye, Search, FileText, Filter } from 'lucide-react';
-import axios from 'axios';
+import api from '../../config/axios';
 import { useAuth } from '../../context/AuthContext';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
@@ -20,37 +20,53 @@ const ResultList = () => {
   
   useEffect(() => {
     const fetchResults = async () => {
-      if (!user) return;
+      console.log('🔍 Iniciando fetchResults');
+      if (!user) {
+        console.log('⚠️ No hay usuario autenticado');
+        return;
+      }
 
       setLoading(true);
       setError(null);
       try {
         let url;
         const params = new URLSearchParams();
+        console.log('👤 Rol del usuario:', user.role);
+        console.log('🆔 ID del profesor (si aplica):', user.teacher_id);
 
         if (user.role === 'docente' && user.teacher_id) {
           url = `${API_URL}/api/evaluation-results`;
           params.append('teacherId', user.teacher_id);
           if (selectedCourse) {
             params.append('courseId', selectedCourse);
+            console.log('📌 Curso seleccionado:', selectedCourse);
           }
           url += `?${params.toString()}`;
+          console.log('🌐 URL de la API (docente):', url);
         } else if (user.role === 'estudiante') {
-          const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
+          console.log('👨‍🎓 Usuario es estudiante, obteniendo ID de estudiante...');
+          const studentResponse = await api.get(`/api/students/by-user/${user.id}`);
+          console.log('📋 Respuesta de /api/students/by-user:', studentResponse);
+          
           if (studentResponse.data && studentResponse.data.id) {
             url = `${API_URL}/api/evaluation-results/student/${studentResponse.data.id}`;
+            console.log('🌐 URL de la API (estudiante):', url);
           } else {
+            console.warn('⚠️ No se pudo obtener el ID del estudiante');
             setResults([]);
             setLoading(false);
             return;
           }
         } else {
+          console.warn('⚠️ Usuario sin rol válido o sin ID de profesor');
           setResults([]);
           setLoading(false);
           return;
         }
 
-        const response = await axios.get(url);
+        console.log('🔄 Realizando petición a:', url);
+        const response = await api.get(url);
+        console.log('✅ Respuesta de la API:', response);
         
         // Mapear los resultados para que coincidan con la estructura que espera el componente
         const resultsWithDetails = response.data.map(result => ({
@@ -74,16 +90,60 @@ const ResultList = () => {
     };
 
     const fetchCourses = async () => {
-      if (!user || user.role !== 'docente') return;
+      console.log('🔍 Iniciando fetchCourses');
+      if (!user) {
+        console.log('⚠️ No hay usuario autenticado');
+        return;
+      }
+      if (user.role !== 'docente') {
+        console.log('⚠️ El usuario no es un docente, no se cargarán cursos');
+        return;
+      }
+      
       try {
-        const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+        console.log('👨‍🏫 Obteniendo ID del docente para el usuario:', user.id);
+        const teacherResponse = await api.get(`/api/teachers/by-user/${user.id}`);
+        console.log('📋 Respuesta de /api/teachers/by-user:', teacherResponse);
+        
         if (teacherResponse.data && teacherResponse.data.id) {
-          const url = `${API_URL}/api/teachers/${teacherResponse.data.id}/courses`;
-          const response = await axios.get(url);
-          setCourses(response.data);
+          const teacherId = teacherResponse.data.id;
+          console.log('📚 Obteniendo cursos para el docente ID:', teacherId);
+          const url = `/api/teacher-courses/teacher/${teacherId}`;
+          console.log('🌐 URL de la API de cursos:', url);
+          
+          try {
+            const response = await api.get(url);
+            console.log('✅ Cursos obtenidos:', response.data);
+            setCourses(response.data);
+          } catch (error) {
+            console.error('❌ Error al obtener cursos:', error);
+            // Intentar con la ruta alternativa
+            const altUrl = `/api/teacher-courses?teacherId=${teacherId}`;
+            console.log('🔄 Intentando con ruta alternativa:', altUrl);
+            try {
+              const altResponse = await api.get(altUrl);
+              console.log('✅ Cursos obtenidos (ruta alternativa):', altResponse.data);
+              setCourses(altResponse.data);
+            } catch (altError) {
+              console.error('❌ Error en ruta alternativa:', altError);
+              throw altError; // Relanzar el error para que lo maneje el catch externo
+            }
+          }
+        } else {
+          console.warn('⚠️ No se pudo obtener el ID del docente');
         }
       } catch (error) {
-        console.error('Error al cargar cursos:', error);
+        console.error('❌ Error al cargar cursos:', error);
+        console.error('Detalles del error:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            headers: error.config?.headers
+          }
+        });
       }
     };
     
@@ -216,23 +276,22 @@ const ResultList = () => {
               <table className="table table-hover">
                 <thead>
                   <tr>
-                      <th>Estudiante</th>
-                      <th>Cuestionario</th>
-                      <th>Curso</th> {/* Nueva columna */}
-                      <th>Fase</th>
-                      <th>Mejor Puntaje</th>
-                      <th>Estado</th>
-                      <th>Fecha</th>
-                      <th className="text-end">Acciones</th>
-                    </tr>
+                    <th>Estudiante</th>
+                    <th>Cuestionario</th>
+                    <th>Curso</th>
+                    <th>Fase</th>
+                    <th>Mejor Puntaje</th>
+                    <th>Estado</th>
+                    <th>Fecha</th>
+                    <th className="text-end">Acciones</th>
+                  </tr>
                 </thead>
                 <tbody>
-                {filteredResults.length > 0 ? (
-                  filteredResults.map((result) => (
+                  {filteredResults.length > 0 ? filteredResults.map((result) => (
                     <tr key={result.id}>
                       <td>{result.student?.name || 'N/A'}</td>
                       <td>{result.questionnaire?.title || 'N/A'}</td>
-                      <td>{result.student?.course_name || 'N/A'}</td> {/* Nueva celda */}
+                      <td>{result.student?.course_name || 'N/A'}</td>
                       <td>{result.attempt?.phase || 'N/A'}</td>
                       <td>
                         <span className={`badge ${parseFloat(result.best_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
@@ -251,24 +310,18 @@ const ResultList = () => {
                       <td>{formatDate(result.recorded_at)}</td>
                       <td className="text-end">
                         <div className="btn-group">
-                          <Link 
-                            to={`/resultados/${result.id}`} 
-                            className="btn btn-sm btn-outline-info"
-                          >
+                          <Link to={`/resultados/${result.id}`} className="btn btn-sm btn-outline-info">
                             <Eye size={16} className="me-1" /> Ver Detalles
                           </Link>
                         </div>
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="7" className="text-center py-3">
-                      No se encontraron resultados
-                    </td>
-                  </tr>
-                )}
-              </tbody>
+                  )) : (
+                    <tr>
+                      <td colSpan="8" className="text-center">No se encontraron resultados que coincidan con los filtros.</td>
+                    </tr>
+                  )}
+                </tbody>
               </table>
             </div>
           )}

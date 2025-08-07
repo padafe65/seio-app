@@ -4,6 +4,94 @@ import db from '../config/db.js';
 
 const router = express.Router();
 
+// Obtener un resultado de evaluación por ID
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Consulta para obtener el resultado de evaluación con información relacionada
+    const query = `
+      SELECT 
+        er.*, 
+        s.name as student_name,
+        s.email as student_email,
+        q.title as questionnaire_title,
+        q.phase,
+        q.id as questionnaire_id,
+        c.name as course_name,
+        c.id as course_id,
+        er.status as evaluation_status,
+        qa.id as attempt_id,
+        qa.score,
+        qa.attempt_date as completed_at,
+        st.id as student_id,
+        st.user_id as student_user_id
+      FROM evaluation_results er
+      JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
+      JOIN students st ON qa.student_id = st.id
+      JOIN users s ON st.user_id = s.id
+      JOIN questionnaires q ON qa.questionnaire_id = q.id
+      LEFT JOIN courses c ON st.course_id = c.id
+      WHERE er.id = ?
+    `;
+    
+    const [results] = await db.query(query, [id]);
+    
+    if (results.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Resultado de evaluación no encontrado' 
+      });
+    }
+    
+    const result = results[0];
+    
+    // Procesar datos JSON si existen
+    const jsonFields = ['questionnaire_data', 'answers'];
+    
+    jsonFields.forEach(field => {
+      if (result[field]) {
+        try {
+          result[field] = JSON.parse(result[field]);
+        } catch (e) {
+          console.error(`Error al parsear ${field}:`, e);
+          result[field] = null;
+        }
+      }
+    });
+    
+    // Asegurar que los campos numéricos sean números
+    const numericFields = ['score', 'correct_answers', 'incorrect_answers', 'total_questions'];
+    numericFields.forEach(field => {
+      if (result[field] !== undefined && result[field] !== null) {
+        result[field] = Number(result[field]);
+      }
+    });
+    
+    // Si hay respuestas, intentar parsearlas
+    if (result.answers) {
+      try {
+        result.answers = JSON.parse(result.answers);
+      } catch (e) {
+        console.error('Error al parsear answers:', e);
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: result
+    });
+    
+  } catch (error) {
+    console.error('Error al obtener el resultado de evaluación:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error al obtener el resultado de evaluación',
+      error: error.message 
+    });
+  }
+});
+
 // Obtener todos los resultados de evaluación
 router.get('/', async (req, res) => {
   try {
