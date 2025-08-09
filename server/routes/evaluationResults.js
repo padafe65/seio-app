@@ -1,6 +1,6 @@
 // routes/evaluationResults.js
 import express from 'express';
-import db from '../config/db.js';
+import db, { withTransaction } from '../config/db.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -34,23 +34,115 @@ async function checkQuestionnaireOwnership(teacherId, questionnaireId) {
 
 // Obtener un resultado de evaluación por ID
 // Actualizar un resultado de evaluación
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, async (req, res) => {
   const { id } = req.params;
   const userId = req.user?.id;
   const userRole = req.user?.role;
+  const teacherId = req.user?.teacher_id;
   const updateData = req.body;
 
+  console.log('Solicitud de actualización recibida:', { 
+    userId, 
+    userRole, 
+    teacherId,
+    updateData 
+  });
+
   try {
-    // Verificar que el resultado existe
-    const [existingResult] = await db.query('SELECT * FROM evaluation_results WHERE id = ?', [id]);
-    if (existingResult.length === 0) {
+    // Verificar que el resultado existe y obtener información adicional
+    const [existingResults] = await db.query(
+      `SELECT er.*, 
+              q.created_by as questionnaire_teacher_id, 
+              er.student_id,
+              q.phase as questionnaire_phase,
+              (SELECT MIN(score) FROM quiz_attempts 
+               WHERE student_id = er.student_id 
+               AND questionnaire_id = er.questionnaire_id) as min_score,
+              (SELECT MAX(score) FROM quiz_attempts 
+               WHERE student_id = er.student_id 
+               AND questionnaire_id = er.questionnaire_id) as max_score,
+              (SELECT COUNT(*) FROM quiz_attempts 
+               WHERE student_id = er.student_id 
+               AND questionnaire_id = er.questionnaire_id) as total_attempts
+       FROM evaluation_results er
+       JOIN questionnaires q ON er.questionnaire_id = q.id
+       WHERE er.id = ?`, 
+      [id]
+    );
+    
+    // Obtener todos los intentos del estudiante para este cuestionario
+    if (existingResults && existingResults.length > 0) {
+      const [attempts] = await db.query(
+        `SELECT * FROM quiz_attempts 
+         WHERE student_id = ? AND questionnaire_id = ?
+         ORDER BY attempt_number`,
+        [existingResults[0].student_id, existingResults[0].questionnaire_id]
+      );
+      
+      // Agregar los intentos a los resultados
+      existingResults[0].all_attempts = attempts || [];
+      
+      // Agregar información de puntuaciones
+      if (existingResults[0].all_attempts.length > 0) {
+        // Ordenar intentos por puntuación para encontrar el mínimo y máximo
+        const sortedAttempts = [...existingResults[0].all_attempts].sort((a, b) => a.score - b.score);
+        existingResults[0].min_score = parseFloat(sortedAttempts[0].score);
+        existingResults[0].max_score = parseFloat(sortedAttempts[sortedAttempts.length - 1].score);
+      } else {
+        // Si no hay intentos, usar los valores de la evaluación
+        existingResults[0].min_score = parseFloat(existingResults[0].score) || 0;
+        existingResults[0].max_score = parseFloat(existingResults[0].score) || 0;
+      }
+      
+      // Asegurarse de que best_score y min_score estén definidos
+      existingResults[0].best_score = existingResults[0].best_score || existingResults[0].max_score || 0;
+    }
+    
+    if (existingResults.length === 0) {
+      console.log('Resultado de evaluación no encontrado para ID:', id);
       return res.status(404).json({
         success: false,
         message: 'Resultado de evaluación no encontrado'
       });
     }
 
-    const result = existingResult[0];
+    const result = existingResults[0];
+    
+    // Verificar permisos
+    if (userRole === 'estudiante') {
+      // Los estudiantes solo pueden ver sus propios resultados, no editarlos
+      console.log('Intento de actualización denegado: rol estudiante no tiene permisos');
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para actualizar este resultado'
+      });
+    } else if (userRole === 'docente') {
+      // Verificar que el cuestionario pertenece al docente
+      if (result.questionnaire_teacher_id !== teacherId) {
+        console.log('Intento de actualización denegado: el cuestionario no pertenece al docente');
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para actualizar este resultado'
+        });
+      }
+      
+      // Verificar que el estudiante está asignado al docente
+      const hasAccess = await checkTeacherStudentAccess(teacherId, result.student_id);
+      if (!hasAccess) {
+        console.log('Intento de actualización denegado: el estudiante no está asignado al docente');
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para actualizar este resultado'
+        });
+      }
+    } else if (userRole !== 'super_administrador') {
+      // Solo super administradores pueden hacer cualquier cosa
+      console.log('Intento de actualización denegado: rol no autorizado');
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para realizar esta acción'
+      });
+    }
     
     // Verificación de permisos (similar a la ruta GET)
     if (userRole === 'docente') {
@@ -90,123 +182,372 @@ router.put('/:id', async (req, res) => {
       }
     });
 
-    // Iniciar transacción
-    await db.beginTransaction();
-
+    // Usar la función withTransaction para manejar la transacción
+    let updatedResult;
     try {
-      // Obtener el ID del intento
-      const [attemptResult] = await db.query(
-        'SELECT id FROM quiz_attempts WHERE id = ?', 
+      updatedResult = await withTransaction(async (connection) => {
+      // 1. Verificar que todas las referencias existen antes de actualizar
+      const [existingAttempt] = await connection.query(
+        'SELECT id, student_id, questionnaire_id, score FROM quiz_attempts WHERE id = ?', 
         [result.selected_attempt_id]
       );
       
-      if (attemptResult.length === 0) {
-        throw new Error('Intento no encontrado');
+      if (existingAttempt.length === 0) {
+        throw new Error('El intento seleccionado no existe');
       }
       
-      const attemptId = attemptResult[0].id;
-
-      // Actualizar datos del estudiante si es necesario
-      if (Object.keys(updates.student).length > 0) {
-        await db.query('UPDATE students SET ? WHERE id = ?', 
-          [updates.student, result.student_id]);
-      }
-
-      // Actualizar datos del intento si es necesario
-      if (Object.keys(updates.attempt).length > 0) {
-        await db.query('UPDATE quiz_attempts SET ? WHERE id = ?', 
-          [updates.attempt, attemptId]);
-      }
-
-      // Actualizar datos del resultado si es necesario
-      if (Object.keys(updates.result).length > 0) {
-        await db.query('UPDATE evaluation_results SET ? WHERE id = ?', 
-          [updates.result, id]);
-      }
-
-      // Actualizar datos del cuestionario si es necesario
-      if (Object.keys(updates.questionnaire).length > 0) {
-        await db.query('UPDATE questionnaires SET ? WHERE id = ?', 
-          [updates.questionnaire, result.questionnaire_id]);
-      }
-
-      await db.commit();
+      const attemptId = existingAttempt[0].id;
+      const student_id = result.student_id;
+      const questionnaire_id = result.questionnaire_id;
       
-      // Obtener los datos actualizados
-      const [updatedResults] = await db.query(`
+      // Verificar que el estudiante existe
+      const [student] = await connection.query(
+        'SELECT id FROM students WHERE id = ?',
+        [student_id]
+      );
+      
+      if (student.length === 0) {
+        throw new Error('El estudiante especificado no existe');
+      }
+      
+      // Verificar que el cuestionario existe
+      const [questionnaire] = await connection.query(
+        'SELECT id, phase FROM questionnaires WHERE id = ?',
+        [questionnaire_id]
+      );
+      
+      if (questionnaire.length === 0) {
+        throw new Error('El cuestionario especificado no existe');
+      }
+      
+      const phase = updates.questionnaire?.phase !== undefined ? 
+                   updates.questionnaire.phase : 
+                   questionnaire[0].phase;
+      
+      const phaseField = `phase_${phase}_score`;
+      
+      // 2. Actualizar datos del cuestionario si es necesario
+      if (updates.questionnaire && Object.keys(updates.questionnaire).length > 0) {
+        const updateData = { ...updates.questionnaire };
+        
+        // Asegurarse de que la fase sea un número si está presente
+        if (updateData.phase !== undefined) {
+          // Convertir 'Fase X' a número (1, 2, 3, etc.)
+          if (typeof updateData.phase === 'string' && updateData.phase.startsWith('Fase ')) {
+            updateData.phase = parseInt(updateData.phase.replace('Fase ', ''), 10);
+          }
+          // Asegurarse de que sea un número válido
+          updateData.phase = isNaN(updateData.phase) ? 0 : updateData.phase;
+          
+          console.log(`Actualizando fase del cuestionario ${questionnaire_id} a:`, updateData.phase);
+        }
+        
+        await connection.query(
+          'UPDATE questionnaires SET ? WHERE id = ?',
+          [updateData, questionnaire_id]
+        );
+        
+        console.log('Cuestionario actualizado con éxito');
+      }
+      
+      // 3. Actualizar el intento si hay cambios
+      if (updates.attempt && Object.keys(updates.attempt).length > 0) {
+        // Actualizar el intento específico
+        await connection.query(
+          'UPDATE quiz_attempts SET ? WHERE id = ?',
+          [updates.attempt, attemptId]
+        );
+        
+        // Obtener todos los intentos para este estudiante y cuestionario
+        const [allAttempts] = await connection.query(
+          'SELECT id, score FROM quiz_attempts WHERE student_id = ? AND questionnaire_id = ?',
+          [student_id, questionnaire_id]
+        );
+        
+        // Encontrar el mejor puntaje entre todos los intentos
+        let bestScore = 0;
+        let bestAttemptId = null;
+        
+        allAttempts.forEach(attempt => {
+          const score = parseFloat(attempt.score);
+          if (score > bestScore) {
+            bestScore = score;
+            bestAttemptId = attempt.id;
+          }
+        });
+        
+        console.log(`Mejor puntaje encontrado: ${bestScore} (intento ${bestAttemptId})`);
+        
+        // Actualizar el mejor puntaje y la fase en la tabla de resultados
+        const updateData = {
+          best_score: bestScore,
+          selected_attempt_id: bestAttemptId,
+          phase: phase // Asegurarse de actualizar la fase
+        };
+        
+        await connection.query(
+          'UPDATE evaluation_results SET ? WHERE id = ?',
+          [updateData, id]
+        );
+        
+        console.log(`Resultado actualizado con mejor puntaje: ${bestScore}, intento: ${bestAttemptId}, fase: ${phase}`);
+        
+        // Actualizar la tabla de promedios de fase
+        const [phaseAveragesResult] = await connection.query(
+          `SELECT AVG(CAST(qa.score AS DECIMAL(10,2))) as avg_score, 
+                  COUNT(*) as count
+           FROM quiz_attempts qa
+           JOIN evaluation_results er ON qa.id = er.selected_attempt_id
+           JOIN questionnaires q ON er.questionnaire_id = q.id
+           WHERE er.student_id = ? AND q.phase = ?`,
+          [student_id, phase]
+        );
+        
+        const phaseAverageScore = parseFloat(phaseAveragesResult[0]?.avg_score || 0);
+        const phaseEvaluationsCount = parseInt(phaseAveragesResult[0]?.count || 0);
+        
+        console.log(`Promedio calculado para fase ${phase}: ${phaseAverageScore} (${phaseEvaluationsCount} evaluaciones)`);
+        
+        // Actualizar o insertar en phase_averages
+        await connection.query(
+          `INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, evaluations_completed)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE 
+             average_score = VALUES(average_score),
+             evaluations_completed = VALUES(evaluations_completed)`,
+          [student_id, teacherId, phase, phaseAverageScore, phaseEvaluationsCount]
+        );
+        
+        // Actualizar la tabla de calificaciones (grades) si es necesario
+        const [existingGrade] = await connection.query(
+          'SELECT * FROM grades WHERE student_id = ?',
+          [student_id]
+        );
+        
+        if (existingGrade.length > 0) {
+          // Actualizar la fase específica solo si el nuevo puntaje es mayor
+          const currentPhaseScore = parseFloat(existingGrade[0][phaseField] || 0);
+          if (bestScore > currentPhaseScore) {
+            await connection.query(
+              `UPDATE grades SET ${phaseField} = ? WHERE student_id = ?`,
+              [bestScore, student_id]
+            );
+            console.log(`Fase ${phase} actualizada en la tabla grades`);
+          }
+        } else {
+          // Insertar un nuevo registro con la fase actual
+          const gradeData = { student_id };
+          gradeData[phaseField] = bestScore;
+          
+          await connection.query(
+            'INSERT INTO grades SET ?',
+            [gradeData]
+          );
+          console.log(`Nuevo registro creado en grades para el estudiante ${student_id}`);
+        }
+        
+        // El código de actualización de promedios ya se ejecutó anteriormente, no es necesario repetirlo
+      } else {
+        // Si no se está actualizando el score, solo actualizar los demás campos normalmente
+        if (Object.keys(updates.attempt).length > 0) {
+          await connection.query('UPDATE quiz_attempts SET ? WHERE id = ?', 
+            [updates.attempt, attemptId]);
+        }
+        
+        if (Object.keys(updates.result).length > 0) {
+          await connection.query('UPDATE evaluation_results SET ? WHERE id = ?', 
+            [updates.result, id]);
+        }
+      }
+
+      // 5. Actualizar los intentos si vienen en la petición
+      if (updates.attempts && Array.isArray(updates.attempts)) {
+        for (const attempt of updates.attempts) {
+          await connection.query(
+            'UPDATE quiz_attempts SET score = ? WHERE id = ?',
+            [attempt.score, attempt.id]
+          );
+        }
+        
+        // Recalcular el mejor puntaje basado en todos los intentos
+        const [allAttempts] = await connection.query(
+          'SELECT * FROM quiz_attempts WHERE student_id = ? AND questionnaire_id = ?',
+          [result.student_id, result.questionnaire_id]
+        );
+        
+        // Encontrar el mejor puntaje
+        const bestAttempt = allAttempts.reduce((prev, current) => {
+          return (parseFloat(prev?.score) > parseFloat(current?.score)) ? prev : current;
+        }, { score: 0 });
+        
+        // Actualizar el best_score en evaluation_results
+        await connection.query(
+          'UPDATE evaluation_results SET best_score = ? WHERE id = ?',
+          [bestAttempt.score, id]
+        );
+        
+        console.log(`Mejor puntaje recalculado: ${bestAttempt.score}`);
+      }
+        
+      // 6. Actualizar otros campos del resultado si los hay
+      if (updates.result) {
+        const resultUpdates = { ...updates.result };
+        delete resultUpdates.best_score; // Ya manejamos best_score por separado
+        
+        if (Object.keys(resultUpdates).length > 0) {
+          await connection.query(
+            'UPDATE evaluation_results SET ? WHERE id = ?',
+            [resultUpdates, id]
+          );
+        }
+      }
+      
+      // Obtener el resultado actualizado con todos los intentos
+      console.log('Obteniendo datos actualizados para el resultado ID:', id);
+      
+      // Primero obtener los datos básicos del resultado
+      const [resultData] = await connection.query(`
         SELECT 
-          er.*, 
-          s.name as student_name,
-          s.email as student_email,
+          er.*,
+          s.id as student_id,
+          s.user_id as student_user_id,
+          us.name as student_name,
+          us.email as student_email,
           s.grade as student_grade,
+          q.id as questionnaire_id,
           q.title as questionnaire_title,
           q.description as questionnaire_description,
-          q.phase,
-          q.id as questionnaire_id,
-          c.name as course_name,
+          q.phase as questionnaire_phase,
+          t.id as created_by_teacher_id,
+          u.name as teacher_name,
           c.id as course_id,
-          qa.id as attempt_id,
-          qa.score,
-          qa.attempt_date as completed_at,
-          qa.attempt_number,
-          qa.attempt_date,
-          st.id as student_id,
-          st.user_id as student_user_id
+          c.name as course_name
         FROM evaluation_results er
-        JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
-        JOIN students st ON qa.student_id = st.id
-        JOIN users s ON st.user_id = s.id
-        JOIN questionnaires q ON qa.questionnaire_id = q.id
-        LEFT JOIN courses c ON st.course_id = c.id
-        WHERE er.id = ?
-      `, [id]);
-
+        JOIN students s ON er.student_id = s.id
+        JOIN users us ON s.user_id = us.id
+        JOIN questionnaires q ON er.questionnaire_id = q.id
+        JOIN teachers t ON q.created_by = t.id
+        JOIN users u ON t.user_id = u.id
+        LEFT JOIN courses c ON s.course_id = c.id
+        WHERE er.id = ?`,
+        [id]);
+      
+      if (resultData.length === 0) {
+        throw new Error('No se pudo recuperar el resultado actualizado');
+      }
+      
+      // Obtener todos los intentos para este estudiante y cuestionario
+      const [attempts] = await connection.query(`
+        SELECT 
+          id as attempt_id,
+          attempt_number,
+          score as attempt_score,
+          attempt_date,
+          CASE WHEN id = ? THEN 1 ELSE 0 END as is_selected
+        FROM quiz_attempts 
+        WHERE student_id = ? AND questionnaire_id = ?
+        ORDER BY attempt_number`,
+        [resultData[0].selected_attempt_id, resultData[0].student_id, resultData[0].questionnaire_id]);
+      
+      // Combinar los datos del resultado con los intentos
+      const updatedResults = [{
+        ...resultData[0],
+        attempts: attempts,
+        total_attempts: attempts.length
+      }];
+      
+      console.log('Datos actualizados obtenidos de la base de datos:', updatedResults);
+      
       if (updatedResults.length === 0) {
         throw new Error('No se pudo recuperar el resultado actualizado');
       }
 
-      const updatedResult = updatedResults[0];
-      
-      // Formatear la respuesta
-      const responseData = {
-        ...updatedResult,
-        attempt: {
-          id: updatedResult.attempt_id,
-          attempt_number: updatedResult.attempt_number,
-          attempt_date: updatedResult.attempt_date,
-          score: updatedResult.score,
-          completed_at: updatedResult.completed_at
-        },
-        student: {
-          id: updatedResult.student_id,
-          user_id: updatedResult.student_user_id,
-          name: updatedResult.student_name,
-          email: updatedResult.student_email,
-          grade: updatedResult.student_grade
-        },
-        questionnaire: {
-          id: updatedResult.questionnaire_id,
-          title: updatedResult.questionnaire_title,
-          description: updatedResult.questionnaire_description,
-          phase: updatedResult.phase
-        }
-      };
-
-      // Eliminar campos duplicados
-      [
-        'attempt_id', 'attempt_number', 'attempt_date', 'score', 'completed_at',
-        'student_id', 'student_user_id', 'student_name', 'student_email', 'student_grade',
-        'questionnaire_id', 'questionnaire_title', 'questionnaire_description', 'phase'
-      ].forEach(field => delete responseData[field]);
-
-      res.json({
-        success: true,
-        data: responseData
-      });
+      return updatedResults[0]; // Return the updated result from the transaction
+      }); // Cierre de withTransaction
     } catch (error) {
-      await db.rollback();
-      throw error;
+      console.error('Error en la transacción:', error);
+      throw error; // Relanzar el error para que lo maneje el catch externo
     }
+    
+    if (!updatedResult) {
+      return res.status(404).json({
+        success: false,
+        message: 'No se pudo actualizar el resultado'
+      });
+    }
+
+    // Obtener los datos actualizados completos
+    const [fullResult] = await db.query(`
+      SELECT 
+        er.*, 
+        s.user_id as student_user_id, 
+        us.name as student_name, 
+        us.email as student_email,
+        q.title as questionnaire_title, 
+        q.description as questionnaire_description, 
+        q.phase as questionnaire_phase,
+        t.id as created_by_teacher_id, 
+        u.name as teacher_name,
+        c.id as course_id, 
+        c.name as course_name,
+        s.grade as student_grade
+      FROM evaluation_results er
+      JOIN students s ON er.student_id = s.id
+      JOIN users us ON s.user_id = us.id
+      JOIN questionnaires q ON er.questionnaire_id = q.id
+      JOIN teachers t ON q.created_by = t.id
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+      WHERE er.id = ?
+    `, [id]);
+
+    // Obtener los intentos actualizados
+    const [attempts] = await db.query(
+      'SELECT * FROM quiz_attempts WHERE student_id = ? AND questionnaire_id = ? ORDER BY attempt_number',
+      [fullResult[0].student_id, fullResult[0].questionnaire_id]
+    );
+
+    const resultData = {
+      ...fullResult[0],
+      attempts: attempts,
+      student: {
+        id: fullResult[0].student_id,
+        user_id: fullResult[0].student_user_id,
+        name: fullResult[0].student_name,
+        email: fullResult[0].student_email,
+        grade: fullResult[0].student_grade
+      },
+      // Asegurarse de que best_score se incluya en la respuesta
+      best_score: fullResult[0].best_score,
+      attempt: {
+        id: fullResult[0].selected_attempt_id,
+        score: fullResult[0].score,
+        attempt_number: fullResult[0].attempt_number,
+        attempt_date: fullResult[0].attempt_date,
+        completed_at: fullResult[0].completed_at
+      },
+      questionnaire: {
+        id: fullResult[0].questionnaire_id,
+        title: fullResult[0].questionnaire_title,
+        description: fullResult[0].questionnaire_description,
+        phase: fullResult[0].questionnaire_phase,
+        created_by: {
+          id: fullResult[0].created_by_teacher_id,
+          name: fullResult[0].teacher_name
+        }
+      },
+      course: fullResult[0].course_id ? {
+        id: fullResult[0].course_id,
+        name: fullResult[0].course_name
+      } : null
+    };
+
+    // Devolver los datos actualizados completos
+    res.json({
+      success: true,
+      message: 'Resultado actualizado exitosamente',
+      data: resultData
+    });
   } catch (error) {
     console.error('Error al actualizar el resultado:', error);
     res.status(500).json({
@@ -217,7 +558,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Obtener un resultado de evaluación por ID
+// Obtener un resultado de evaluación por ID con todos los intentos
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -252,7 +593,8 @@ router.get('/:id', async (req, res) => {
         qa.attempt_date,
         st.id as student_id,
         st.user_id as student_user_id,
-        st.grade as student_grade
+        st.grade as student_grade,
+        (SELECT COUNT(*) FROM quiz_attempts WHERE student_id = st.id AND questionnaire_id = q.id) as total_attempts
       FROM evaluation_results er
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       JOIN students st ON qa.student_id = st.id

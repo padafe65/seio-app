@@ -6,6 +6,24 @@ import { ArrowLeft, X, Edit, Save, X as XIcon } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useAuth } from '../../context/AuthContext';
 
+// Función auxiliar para obtener la clase del badge según el estado
+const getStatusBadgeClass = (status) => {
+  switch (status) {
+    case 'Aprobado':
+      return 'bg-success';
+    case 'Reprobado':
+      return 'bg-danger';
+    case 'En progreso':
+      return 'bg-warning text-dark';
+    case 'Pendiente':
+      return 'bg-secondary';
+    case 'Completado':
+      return 'bg-primary';
+    default:
+      return 'bg-secondary';
+  }
+};
+
 const ResultDetail = () => {
   const { isAuthenticated, isAuthReady } = useAuth();
   const { id } = useParams();
@@ -49,6 +67,11 @@ const ResultDetail = () => {
     }
   };
 
+  // Habilitar modo de edición
+  const handleEdit = () => {
+    setIsEditing(true);
+  };
+
   // Manejar cambios en los campos del formulario
   const handleInputChange = (section, field, value) => {
     setFormData(prev => ({
@@ -62,55 +85,161 @@ const ResultDetail = () => {
   
   // Guardar los cambios
   const handleSave = async () => {
+    if (!result) return;
+    
     try {
       setSaving(true);
+      console.log('🔍 Iniciando guardado de cambios...');
       
       // Filtrar solo los campos que han cambiado
-      const changesToSave = {};
+      const changesToSave = {
+        questionnaire: {},
+        result: {},
+        attempt: {}
+      };
+      
+      console.log('📝 Datos actuales del formulario:', formData);
       
       // Verificar cambios en cada sección
       ['student', 'attempt', 'questionnaire', 'result'].forEach(section => {
         const sectionChanges = {};
         Object.entries(formData[section] || {}).forEach(([key, value]) => {
-          // Comparar con los valores originales
-          const originalValue = 
-            section === 'student' ? (result[`student_${key}`] || (result.student && result.student[key])) :
-            section === 'attempt' ? (result.attempt ? result.attempt[key] : result[key]) :
-            section === 'questionnaire' ? (result[`questionnaire_${key}`] || (result.questionnaire && result.questionnaire[key])) :
-            result[key];
-            
-          if (value !== originalValue) {
+          // Obtener el valor original del resultado o de los datos anidados
+          let originalValue;
+          
+          if (section === 'student') {
+            originalValue = result[`student_${key}`] || (result.student && result.student[key]);
+          } else if (section === 'attempt') {
+            originalValue = result.attempt ? result.attempt[key] : result[key];
+          } else if (section === 'questionnaire') {
+            originalValue = result[`questionnaire_${key}`] || (result.questionnaire && result.questionnaire[key]);
+          } else {
+            originalValue = result[key];
+          }
+          
+          // Manejar valores undefined o null
+          if (value === undefined || value === null) {
+            if (originalValue !== undefined && originalValue !== null) {
+              sectionChanges[key] = value;
+            }
+            return;
+          }
+          
+          // Manejar comparación de números flotantes
+          if (typeof value === 'number' && (typeof originalValue === 'number' || typeof originalValue === 'string')) {
+            const numOriginalValue = parseFloat(originalValue) || 0;
+            if (Math.abs(value - numOriginalValue) > 0.001) {
+              console.log(`🔢 Cambio detectado en ${section}.${key}: ${originalValue} -> ${value}`);
+              sectionChanges[key] = value;
+            }
+          } else if (value !== originalValue) {
+            console.log(`🔄 Cambio detectado en ${section}.${key}:`, { original: originalValue, nuevo: value });
             sectionChanges[key] = value;
           }
         });
         
         if (Object.keys(sectionChanges).length > 0) {
-          changesToSave[section] = sectionChanges;
+          // Si hay cambios en attempt, los movemos al nivel superior
+          if (section === 'attempt') {
+            changesToSave.attempt = { ...changesToSave.attempt, ...sectionChanges };
+          } else {
+            changesToSave[section] = sectionChanges;
+          }
         }
       });
       
-      // Si no hay cambios, no hacemos nada
-      if (Object.keys(changesToSave).length === 0) {
+      // Verificar si hay cambios reales
+      const hasChanges = Object.values(changesToSave).some(
+        section => section && Object.keys(section).length > 0
+      );
+      
+      if (!hasChanges) {
+        console.log('ℹ️ No se detectaron cambios para guardar');
         setIsEditing(false);
         toast.info('No se detectaron cambios para guardar');
         return;
       }
       
-      // Enviar los cambios al servidor
-      const response = await api.put(`/api/evaluation-results/${id}`, changesToSave);
+      console.log('📤 Cambios a guardar:', changesToSave);
       
-      if (response.data.success) {
-        setResult(response.data.data);
+      // Limpiar objetos vacíos y asegurar que los números sean números
+      Object.keys(changesToSave).forEach(section => {
+        if (changesToSave[section] && typeof changesToSave[section] === 'object') {
+          // Eliminar secciones vacías
+          if (Object.keys(changesToSave[section]).length === 0) {
+            delete changesToSave[section];
+            return;
+          }
+          
+          // Asegurar que los campos numéricos sean números
+          Object.keys(changesToSave[section]).forEach(key => {
+            const value = changesToSave[section][key];
+            if (value !== null && value !== undefined && !isNaN(value) && (key.includes('score') || key.includes('grade') || key.includes('phase'))) {
+              changesToSave[section][key] = parseFloat(value);
+            }
+          });
+        }
+      });
+      
+      console.log('📤 Enviando cambios al servidor:', JSON.stringify(changesToSave, null, 2));
+      
+      // Enviar los cambios al servidor
+      try {
+        const response = await api.put(`/api/evaluation-results/${id}`, changesToSave);
+      
+      console.log('✅ Respuesta del servidor:', response.data);
+      
+      if (response.data?.success && response.data.data) {
+        console.log('📊 Datos actualizados recibidos:', response.data.data);
+        
+        // Mostrar confirmación
         toast.success('Cambios guardados exitosamente');
+        
+        // Actualizar el estado con los nuevos datos
+        setResult(prev => ({
+          ...prev,
+          ...response.data.data,
+          // Asegurarse de que los datos anidados también se actualicen
+          attempt: {
+            ...(prev.attempt || {}),
+            ...(response.data.data.attempt || {})
+          },
+          student: {
+            ...(prev.student || {}),
+            ...(response.data.data.student || {})
+          },
+          questionnaire: {
+            ...(prev.questionnaire || {}),
+            ...(response.data.data.questionnaire || {})
+          }
+        }));
+        
+        // Actualizar también el formData para que los cambios se reflejen si se vuelve a editar
+        setFormData(prev => ({
+          ...prev,
+          attempt: { ...prev.attempt, ...(response.data.data.attempt || {}) },
+          student: { ...prev.student, ...(response.data.data.student || {}) },
+          questionnaire: { 
+            ...prev.questionnaire, 
+            ...(response.data.data.questionnaire || {}) 
+          },
+          result: { ...prev.result, ...(response.data.data || {}) }
+        }));
+        
         setIsEditing(false);
       } else {
-        throw new Error(response.data.message || 'Error al guardar los cambios');
+        console.error('La respuesta del servidor no contiene los datos esperados:', response.data);
+        throw new Error('La respuesta del servidor no contiene los datos esperados');
+        }
+      } catch (error) {
+        console.error('Error al guardar los cambios:', error);
+        toast.error('Error al guardar los cambios: ' + (error.response?.data?.message || error.message));
+      } finally {
+        setSaving(false);
       }
     } catch (error) {
-      console.error('Error al guardar los cambios:', error);
-      toast.error('Error al guardar los cambios: ' + (error.response?.data?.message || error.message));
-    } finally {
-      setSaving(false);
+      console.error('Error al procesar los cambios:', error);
+      toast.error('Error al procesar los cambios: ' + error.message);
     }
   };
   
@@ -134,7 +263,7 @@ const ResultDetail = () => {
         },
         result: {
           status: result.status || '',
-          comments: result.comments || ''
+
         }
       });
     }
@@ -161,15 +290,21 @@ const ResultDetail = () => {
         if (isMounted) {
           setResult(resultData);
           
+          // Obtener el intento actual basado en el selected_attempt_id
+          const currentAttempt = resultData.all_attempts?.find(
+            attempt => attempt.id === resultData.selected_attempt_id
+          ) || resultData.attempt || {};
+          
           // Inicializar el formulario con los datos actuales
           setFormData({
             student: {
               grade: resultData.student_grade || resultData.student?.grade || ''
             },
             attempt: {
-              score: resultData.score || resultData.attempt?.score || '',
-              attempt_number: resultData.attempt?.attempt_number || '',
-              attempt_date: resultData.attempt?.attempt_date || resultData.attempt_date || ''
+              id: currentAttempt.id,
+              score: currentAttempt.score || '',
+              attempt_number: currentAttempt.attempt_number || '',
+              attempt_date: currentAttempt.attempt_date || ''
             },
             questionnaire: {
               title: resultData.questionnaire_title || resultData.questionnaire?.title || '',
@@ -178,8 +313,10 @@ const ResultDetail = () => {
             },
             result: {
               status: resultData.status || '',
-              comments: resultData.comments || ''
-            }
+              best_score: resultData.best_score_actual || resultData.best_score || '',
+              worst_score: resultData.worst_score_actual || resultData.worst_score || ''
+            },
+            all_attempts: resultData.all_attempts || []
           });
           
           setLoading(false);
@@ -235,15 +372,130 @@ const ResultDetail = () => {
       isMounted = false; // Marcar como desmontado
     };
   }, [id, navigate, isAuthenticated, isAuthReady]); // Añadir dependencias para evitar advertencias de React
-  
-  // Activar modo edición
-  const handleEdit = () => {
-    setIsEditing(true);
-  };
+  // Renderizado condicional basado en el estado
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <button
+              onClick={() => navigate(-1)}
+              className="inline-flex items-center text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5 mr-2" />
+              Volver a resultados
+            </button>
+          </div>
 
+          <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+            <div className="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
+              <h3 className="text-lg leading-6 font-medium text-gray-900">
+                Detalles del Resultado de Evaluación
+              </h3>
+              <p className="mt-1 max-w-2xl text-sm text-gray-500">
+                Información detallada del resultado de la evaluación
+              </p>
+            </div>
+            <div className="border-t border-gray-200 px-4 py-5 sm:px-6">
+              <div className="animate-pulse space-y-4">
+                <div className="h-8 bg-gray-200 rounded w-3/4"></div>
+                <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                <div className="h-4 bg-gray-200 rounded w-2/3 mt-8"></div>
+                <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+                <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+                <div className="h-4 bg-gray-200 rounded w-2/3 mt-8"></div>
+                <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-// Renderizado condicional basado en el estado
-if (loading) {
+  // Si hay un error, mostramos el mensaje de error
+  if (error) {
+    // Determinar el tipo de error para mostrar un mensaje más específico
+    const isAuthError = error.includes('sesión ha expirado') || error.includes('autenticación');
+    const isNetworkError = error.includes('conexión') || error.includes('red');
+    
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4">
+        <div className="w-full max-w-4xl">
+          <div className="flex items-center mb-6">
+            <button
+              onClick={() => navigate('/results', { replace: true })}
+              className="flex items-center text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5 mr-2" />
+              Volver a resultados
+            </button>
+          </div>
+          
+          <div className={`${isAuthError ? 'bg-yellow-50 border-yellow-500' : 'bg-red-50 border-red-500'} border-l-4 p-4 mb-6`}>
+            <div className="flex">
+              <div className="flex-shrink-0">
+                {isAuthError ? (
+                  <svg className="h-5 w-5 text-yellow-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                ) : (
+                  <svg className="h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </div>
+              <div className="ml-3">
+                <h3 className={`text-sm font-medium ${isAuthError ? 'text-yellow-800' : 'text-red-800'}`}>
+                  {isAuthError ? 'Error de autenticación' : 'Error al cargar el resultado'}
+                </h3>
+                <div className="mt-2 text-sm text-gray-700">
+                  <p>{error}</p>
+                  {isNetworkError && (
+                    <p className="mt-2">Por favor, verifica tu conexión a internet e inténtalo de nuevo.</p>
+                  )}
+                  {isAuthError && (
+                    <p className="mt-2">Serás redirigido automáticamente para iniciar sesión.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div className="mt-4 space-x-3">
+            {!isAuthError && (
+              <button
+                onClick={() => window.location.reload()}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Reintentar
+              </button>
+            )}
+            <button
+              onClick={() => navigate('/results', { replace: true })}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              Volver a la lista de resultados
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Si no hay resultado, mostrar mensaje de error
+  if (!result) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-4">
+        <div className="w-full max-w-4xl">
+          <div className="text-center text-red-500">
+            <p>{error || 'No se encontró el resultado solicitado'}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
@@ -255,140 +507,20 @@ if (loading) {
             <ArrowLeft className="w-5 h-5 mr-2" />
             Volver a resultados
           </button>
-        </div>
-
-        <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-          <div className="px-4 py-5 sm:px-6 bg-gray-50 border-b border-gray-200">
-            <h3 className="text-lg leading-6 font-medium text-gray-900">
-              Detalles del Resultado de Evaluación
-            </h3>
-            <p className="mt-1 max-w-2xl text-sm text-gray-500">
-              Información detallada del resultado de la evaluación
-            </p>
-          </div>
-          <div className="border-t border-gray-200 px-4 py-5 sm:px-6">
-            <div className="animate-pulse space-y-4">
-              <div className="h-8 bg-gray-200 rounded w-3/4"></div>
-              <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-              <div className="h-4 bg-gray-200 rounded w-2/3 mt-8"></div>
-              <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-              <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-              <div className="h-4 bg-gray-200 rounded w-2/3 mt-8"></div>
-              <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-if (error) {
-  // Determinar el tipo de error para mostrar un mensaje más específico
-  const isAuthError = error.includes('sesión ha expirado') || error.includes('autenticación');
-  const isNetworkError = error.includes('conexión') || error.includes('red');
-  
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4">
-      <div className="w-full max-w-4xl">
-        <div className="flex items-center mb-6">
-          <button
-            onClick={() => navigate('/results', { replace: true })}
-            className="flex items-center text-blue-600 hover:text-blue-800 transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5 mr-2" />
-            Volver a resultados
-          </button>
-        </div>
-        
-        <div className={`${isAuthError ? 'bg-yellow-50 border-yellow-500' : 'bg-red-50 border-red-500'} border-l-4 p-4 mb-6`}>
-          <div className="flex">
-            <div className="flex-shrink-0">
-              {isAuthError ? (
-                <svg className="h-5 w-5 text-yellow-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-              ) : (
-                <svg className="h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-                </svg>
-              )}
-            </div>
-            <div className="ml-3">
-              <h3 className={`text-sm font-medium ${isAuthError ? 'text-yellow-800' : 'text-red-800'}`}>
-                {isAuthError ? 'Error de autenticación' : 'Error al cargar el resultado'}
-              </h3>
-              <div className="mt-2 text-sm text-gray-700">
-                <p>{error}</p>
-                {isNetworkError && (
-                  <p className="mt-2">Por favor, verifica tu conexión a internet e inténtalo de nuevo.</p>
-                )}
-                {isAuthError && (
-                  <p className="mt-2">Serás redirigido automáticamente para iniciar sesión.</p>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="mt-4 space-x-3">
-          {!isAuthError && (
+          
+          {!isEditing ? (
             <button
-              onClick={() => window.location.reload()}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              onClick={handleEdit}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
             >
-              Reintentar
+              <Edit className="w-4 h-4 mr-2" />
+              Editar
             </button>
-          )}
-          <button
-            onClick={() => navigate('/results', { replace: true })}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            Volver a la lista de resultados
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Si no hay resultado, mostrar mensaje de error
-if (!result) {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4">
-      <div className="w-full max-w-4xl">
-        <div className="text-center text-red-500">
-          <p>{error || 'No se encontró el resultado solicitado'}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-  return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
-        <button
-          onClick={() => navigate(-1)}
-          className="inline-flex items-center text-blue-600 hover:text-blue-800 transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5 mr-2" />
-          Volver a resultados
-        </button>
-        
-        {!isEditing ? (
-          <button
-            onClick={handleEdit}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-          >
-            Editar
-          </button>
-        ) : (
+          ) : (
           <div className="space-x-2">
             <button
               onClick={handleCancel}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               disabled={saving}
             >
               <X className="w-4 h-4 mr-2" />
@@ -409,13 +541,14 @@ if (!result) {
                 </>
               ) : (
                 <>
-                  Guardar cambios
+                  <Save className="w-4 h-4 mr-2" />
+                  Guardar
                 </>
               )}
             </button>
           </div>
         )}
-      </div>
+        </div>
 
       <div className="container py-4">
         <div className="card">
@@ -471,17 +604,17 @@ if (!result) {
                     <p><strong>Email:</strong> {result.student?.contact_email || result.student_email || 'N/A'}</p>
                   </div>
                   <div className="col-md-6">
-                    <p>
-                      <strong>Grado:</strong>
+                    <p className="d-flex align-items-center">
+                      <strong className="me-2">Grado:</strong>
                       {isEditing ? (
                         <input
                           type="text"
-                          className="form-control form-control-sm d-inline-block w-auto ms-2"
+                          className="form-control form-control-sm w-auto"
                           value={formData.student.grade || ''}
                           onChange={(e) => handleInputChange('student', 'grade', e.target.value)}
                         />
                       ) : (
-                        ` ${result.student_grade || result.student?.grade || 'N/A'}`
+                        <span>{result.student_grade || result.student?.grade || 'N/A'}</span>
                       )}
                     </p>
                     <p><strong>Curso:</strong> {result.course_name || 'N/A'}</p>
@@ -491,97 +624,168 @@ if (!result) {
                 <h4>Información del Cuestionario</h4>
                 <div className="row mb-4">
                   <div className="col-md-6">
-                    <p>
-                      <strong>Título:</strong>
+                    <p className="d-flex align-items-center">
+                      <strong className="me-2">Título:</strong>
                       {isEditing ? (
                         <input
                           type="text"
-                          className="form-control form-control-sm d-inline-block w-75 ms-2"
+                          className="form-control form-control-sm flex-grow-1"
                           value={formData.questionnaire.title || ''}
                           onChange={(e) => handleInputChange('questionnaire', 'title', e.target.value)}
                         />
                       ) : (
-                        ` ${result.questionnaire_title || result.questionnaire?.title || 'N/A'}`
+                        <span>{result.questionnaire_title || result.questionnaire?.title || 'N/A'}</span>
                       )}
                     </p>
-                    <p>
-                      <strong>Fase:</strong>
+                    <p className="d-flex align-items-center">
+                      <strong className="me-2">Fase:</strong>
                       {isEditing ? (
                         <select
-                          className="form-select form-select-sm d-inline-block w-auto ms-2"
+                          className="form-select form-select-sm w-auto"
                           value={formData.questionnaire.phase || ''}
                           onChange={(e) => handleInputChange('questionnaire', 'phase', e.target.value)}
                         >
                           <option value="">Seleccionar fase</option>
-                          <option value="Fase 1">Fase 1</option>
-                          <option value="Fase 2">Fase 2</option>
-                          <option value="Fase 3">Fase 3</option>
+                          {['Fase 1', 'Fase 2', 'Fase 3', 'Fase 4']
+                            .filter(phase => phase !== (result.phase || result.questionnaire?.phase))
+                            .map(phase => (
+                              <option key={phase} value={phase}>
+                                {phase}
+                              </option>
+                            ))}
+                          {/* Mostrar la fase actual como primera opción */}
+                          <option value={result.phase || result.questionnaire?.phase}>
+                            {result.phase || result.questionnaire?.phase || 'Fase actual'}
+                          </option>
                         </select>
                       ) : (
-                        ` ${result.phase || result.questionnaire?.phase || 'N/A'}`
+                        <span className="badge bg-primary">
+                          {result.phase || result.questionnaire?.phase || 'N/A'}
+                        </span>
                       )}
                     </p>
                     <p><strong>ID del Cuestionario:</strong> {result.questionnaire_id || 'N/A'}</p>
                   </div>
                   <div className="col-md-6">
-                    <p>
-                      <strong>Descripción:</strong>
+                    <div className="mb-3">
+                      <label className="form-label fw-bold">Descripción:</label>
                       {isEditing ? (
                         <textarea
-                          className="form-control form-control-sm mt-1"
+                          className="form-control form-control-sm"
                           rows="2"
                           value={formData.questionnaire.description || ''}
                           onChange={(e) => handleInputChange('questionnaire', 'description', e.target.value)}
                         />
                       ) : (
-                        ` ${result.questionnaire_description || result.questionnaire?.description || 'Sin descripción'}`
+                        <div className="p-2 bg-light rounded">
+                          {result.questionnaire_description || result.questionnaire?.description || 'Sin descripción'}
+                        </div>
                       )}
-                    </p>
-                    <p>
-                      <strong>Puntuación:</strong>
+                    </div>
+                    <div className="mb-3">
+                      <label className="form-label fw-bold d-block">Puntuación (Intento Actual):</label>
                       {isEditing ? (
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="5"
-                          className="form-control form-control-sm d-inline-block w-auto ms-2"
-                          value={formData.attempt.score || ''}
-                          onChange={(e) => handleInputChange('attempt', 'score', parseFloat(e.target.value) || 0)}
-                        />
+                        <div className="d-flex align-items-center">
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="5"
+                            className={`form-control form-control-sm ${parseFloat(formData.attempt?.score ?? result.score) >= 3.5 ? 'border-success' : 'border-danger'}`}
+                            style={{ width: '100px' }}
+                            value={formData.attempt?.score ?? result.score ?? ''}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value);
+                              handleInputChange('attempt', 'score', isNaN(value) ? '' : value);
+                            }}
+                          />
+                          <span className="ms-2">/ 5.0</span>
+                        </div>
                       ) : (
-                        ` ${result.score !== undefined ? formatScore(result.score) : 'N/A'}`
+                        <span className={`badge ${parseFloat(result.score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                          {formatScore(result.score)} / 5.0
+                        </span>
                       )}
-                    </p>
+                    </div>
                   </div>
                 </div>
                 
                 <h4>Resultados</h4>
                 <div className="row">
                   <div className="col-md-6">
-                    <p><strong>Mejor Puntaje:</strong> 
-                      <span className={`badge ms-2 ${parseFloat(result.best_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
-                        {formatScore(result.best_score)}
-                      </span>
-                    </p>
+                    <div className="mb-3">
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <label className="form-label fw-bold">Puntajes:</label>
+                        {!isEditing && (
+                          <div className="d-flex gap-3">
+                            <div className="text-center">
+                              <div className="text-muted small">Mejor Nota</div>
+                              <span className={`badge ${parseFloat(result.max_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                                {formatScore(result.max_score)} / 5.0
+                              </span>
+                            </div>
+                            {result.total_attempts > 1 && (
+                              <div className="text-center">
+                                <div className="text-muted small">Menor Nota</div>
+                                <span className={`badge ${parseFloat(result.min_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                                  {formatScore(result.min_score)} / 5.0
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {isEditing && (
+                        <div className="row g-3">
+                          <div className="col-md-6">
+                            <label className="form-label small text-muted">Mejor Nota:</label>
+                            <div className="d-flex align-items-center">
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="5"
+                                className={`form-control form-control-sm ${parseFloat(formData.result?.best_score ?? result.max_score) >= 3.5 ? 'border-success' : 'border-danger'}`}
+                                value={formData.result?.best_score ?? result.max_score ?? ''}
+                                onChange={(e) => {
+                                  const value = parseFloat(e.target.value);
+                                  handleInputChange('result', 'best_score', isNaN(value) ? '' : value);
+                                }}
+                              />
+                              <span className="ms-2">/ 5.0</span>
+                            </div>
+                          </div>
+                          {result.total_attempts > 1 && (
+                            <div className="col-md-6">
+                              <label className="form-label small text-muted">Menor Nota:</label>
+                              <div className="d-flex align-items-center">
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="5"
+                                  className={`form-control form-control-sm ${parseFloat(formData.result?.min_score ?? result.min_score) >= 3.5 ? 'border-success' : 'border-danger'}`}
+                                  value={formData.result?.min_score ?? result.min_score ?? ''}
+                                  onChange={(e) => {
+                                    const value = parseFloat(e.target.value);
+                                    handleInputChange('result', 'min_score', isNaN(value) ? '' : value);
+                                  }}
+                                />
+                                <span className="ms-2">/ 5.0</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <p><strong>Fecha de Registro:</strong> {formatDate(result.recorded_at) || 'N/A'}</p>
                     {isEditing && (
                       <div className="mb-3">
                         <label className="form-label"><strong>Comentarios:</strong></label>
                         <textarea
-                          className="form-control"
+                          className="form-control mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                           rows="3"
-                          value={formData.result.comments || ''}
-                          onChange={(e) => handleInputChange('result', 'comments', e.target.value)}
                         />
-                      </div>
-                    )}
-                    {!isEditing && result.comments && (
-                      <div className="mt-2">
-                        <strong>Comentarios:</strong>
-                        <div className="border rounded p-2 bg-light">
-                          {result.comments}
-                        </div>
                       </div>
                     )}
                   </div>
@@ -610,40 +814,114 @@ if (!result) {
                           onChange={(e) => handleInputChange('attempt', 'attempt_date', e.target.value)}
                         />
                       ) : (
-                        ` ${result.attempt?.attempt_date ? formatDate(result.attempt.attempt_date) : (result.attempt?.completed_at ? formatDate(result.attempt.completed_at) : 'No disponible')}`
+                        ` ${result.attempt?.attempt_date ? formatDate(result.attempt.attempt_date) : 'No disponible'}`
                       )}
                     </p>
-                    {isEditing && (
-                      <div className="mt-3">
-                        <label className="form-label"><strong>Estado:</strong></label>
+                    <p className="d-flex align-items-center">
+                      <strong className="me-2">Estado:</strong>
+                      {isEditing ? (
                         <select
-                          className="form-select form-select-sm"
+                          className="form-select form-select-sm w-auto"
                           value={formData.result.status || ''}
                           onChange={(e) => handleInputChange('result', 'status', e.target.value)}
                         >
                           <option value="">Seleccionar estado</option>
-                          <option value="completado">Completado</option>
-                          <option value="en_progreso">En progreso</option>
-                          <option value="pendiente">Pendiente</option>
-                          <option value="cancelado">Cancelado</option>
+                          <option value="Pendiente">Pendiente</option>
+                          <option value="En progreso">En progreso</option>
+                          <option value="Completado">Completado</option>
+                          <option value="Aprobado">Aprobado</option>
+                          <option value="Reprobado">Reprobado</option>
                         </select>
-                      </div>
-                    )}
+                      ) : (
+                        <span className={`badge ${getStatusBadgeClass(result.status)}`}>
+                          {result.status || 'N/A'}
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </div>
                 
-                {/* Sección de depuración temporal - Mostrar toda la estructura de result */}
-                <div className="mt-4 p-3 bg-light rounded">
-                  <h5>Datos de depuración (solo visible en desarrollo)</h5>
-                  <pre className="bg-white p-2 rounded" style={{ fontSize: '0.8rem' }}>
-                    {JSON.stringify(result, null, 2)}
-                  </pre>
+                {/* Sección de intentos del estudiante */}
+                <div className="mt-4">
+                  <h4>Historial de Intentos</h4>
+                  <div className="table-responsive">
+                    <table className="table table-sm table-hover">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Puntaje</th>
+                          <th>Estado</th>
+                          <th>Fecha</th>
+                          <th>Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(result.all_attempts || []).length > 0 ? (
+                          result.all_attempts.map((attempt, index) => (
+                            <tr 
+                              key={attempt.id} 
+                              className={`${attempt.id === result.selected_attempt_id ? 'table-primary' : ''}`}
+                            >
+                              <td>{attempt.attempt_number}</td>
+                              <td>
+                                <span className={`badge ${parseFloat(attempt.score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                                  {formatScore(attempt.score)} / 5.0
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`badge ${parseFloat(attempt.score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                                  {parseFloat(attempt.score) >= 3.5 ? 'Aprobado' : 'Reprobado'}
+                                </span>
+                              </td>
+                              <td>{formatDate(attempt.attempt_date)}</td>
+                              <td>
+                                {isEditing && (
+                                  <button 
+                                    className="btn btn-sm btn-outline-primary"
+                                    onClick={() => {
+                                      // Actualizar el formulario con el intento seleccionado
+                                      setFormData(prev => ({
+                                        ...prev,
+                                        attempt: {
+                                          ...prev.attempt,
+                                          id: attempt.id,
+                                          score: attempt.score,
+                                          attempt_number: attempt.attempt_number,
+                                          attempt_date: attempt.attempt_date
+                                        }
+                                      }));
+                                    }}
+                                  >
+                                    Seleccionar
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan="5" className="text-center">No hay intentos registrados</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
+
+                {/* Sección de depuración temporal - Mostrar toda la estructura de result */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="mt-4 p-3 bg-light rounded">
+                    <h5>Datos de depuración (solo visible en desarrollo)</h5>
+                    <pre className="bg-white p-2 rounded" style={{ fontSize: '0.8rem' }}>
+                      {JSON.stringify(result, null, 2)}
+                    </pre>
+                  </div>
+                )}
               </>
             )}
           </div>
         </div>
-       </div>
+      </div>
       </div>
     </div>
   );
