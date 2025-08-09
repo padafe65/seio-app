@@ -152,6 +152,9 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('is_teacher_registration');
   };
 
+  // Determinar si el usuario está autenticado
+  const isAuthenticated = !!authToken && !isTokenExpired(authToken);
+
   return (
     <AuthContext.Provider value={{ 
       authToken, 
@@ -161,6 +164,7 @@ export const AuthProvider = ({ children }) => {
       login, 
       logout, 
       isAuthReady,
+      isAuthenticated, // Agregar propiedad isAuthenticated
       verifyToken // Exportando la función verifyToken
     }}>
       {children}
