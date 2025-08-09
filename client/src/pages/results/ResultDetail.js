@@ -2,151 +2,26 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../config/axios';
-import { ArrowLeft, X } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { ArrowLeft, X, Edit, Save, X as XIcon } from 'lucide-react';
 import { toast } from 'react-toastify';
+import { useAuth } from '../../context/AuthContext';
 
 const ResultDetail = () => {
   const { isAuthenticated, isAuthReady } = useAuth();
   const { id } = useParams();
   const navigate = useNavigate();
   const [result, setResult] = useState(null);
-  const [editableResult, setEditableResult] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  
-  // Efecto para cargar los datos del resultado
-  useEffect(() => {
-    // Si la autenticación aún no está lista, esperar
-    if (isAuthReady === false) {
-      console.log('⏳ [ResultDetail] Esperando verificación de autenticación...');
-      return;
-    }
-    
-    // Si no está autenticado, redirigir al login
-    if (!isAuthenticated) {
-      console.log('🔐 [ResultDetail] Usuario no autenticado, redirigiendo a login...');
-      
-      // Verificar si ya estamos en la página de login para evitar bucles
-      if (window.location.pathname !== '/login') {
-        navigate('/login', { 
-          replace: true,
-          state: { 
-            from: window.location.pathname,
-            error: 'Por favor inicia sesión para continuar'
-          } 
-        });
-      }
-      return;
-    }
+  const [formData, setFormData] = useState({
+    student: {},
+    attempt: {},
+    questionnaire: {},
+    result: {}
+  });
 
-    // Si no hay ID, mostrar error
-    if (!id) {
-      setError('No se proporcionó un ID de resultado válido');
-      setLoading(false);
-      return;
-    }
-    
-    // Bandera para evitar actualizaciones después de desmontar
-    let isMounted = true;
-    
-    const fetchResultDetail = async () => {
-      try {
-        if (isMounted) {
-          setLoading(true);
-          setError(null);
-          console.log('🔍 [ResultDetail] Iniciando carga de resultado con ID:', id);
-        }
-        
-        // Obtener el resultado con manejo de errores mejorado
-        const resultResponse = await api.get(`/api/evaluation-results/${id}`)
-          .catch(err => {
-            console.error('❌ [ResultDetail] Error en la respuesta de la API:', {
-              status: err.response?.status,
-              statusText: err.response?.statusText,
-              data: err.response?.data
-            });
-            
-            // Si el error es 401, ya se manejará en el interceptor
-            if (err.response?.status === 401) {
-              throw new Error('No autorizado. Redirigiendo a inicio de sesión...');
-            }
-            
-            throw err;
-          });
-        
-        if (!isMounted) return;
-        
-        const responseData = resultResponse?.data;
-        if (!responseData || responseData.success === false) {
-          throw new Error(responseData?.message || 'No se pudo obtener el resultado de la evaluación');
-        }
-        
-        console.log('✅ [ResultDetail] Resultado cargado correctamente:', responseData);
-        
-        const resultData = responseData.data || responseData;
-        
-        if (isMounted) {
-          setResult(resultData);
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error('❌ [ResultDetail] Error al cargar el resultado:', err);
-        
-        // Verificar si el componente sigue montado
-        if (!isMounted) return;
-        
-        // Manejar diferentes tipos de errores
-        let errorMessage = 'Ocurrió un error al cargar el resultado de la evaluación';
-        let shouldRedirectToLogin = false;
-        
-        if (err.isNetworkError) {
-          errorMessage = 'No se pudo conectar al servidor. Verifica tu conexión a internet.';
-        } else if (err.isAuthError || err.response?.status === 401) {
-          errorMessage = 'Tu sesión ha expirado. Serás redirigido para iniciar sesión nuevamente.';
-          shouldRedirectToLogin = true;
-        } else if (err.response?.data) {
-          // Usar el mensaje de error del servidor si está disponible
-          errorMessage = err.response.data.message || err.message || errorMessage;
-        }
-        
-        console.log('⚠️ [ResultDetail] Mostrando mensaje de error al usuario:', errorMessage);
-        
-        // Si es un error de autenticación, redirigir al login
-        if (shouldRedirectToLogin) {
-          console.log('🔄 [ResultDetail] Redirigiendo a login desde manejo de error...');
-          if (window.location.pathname !== '/login') {
-            navigate('/login', { 
-              replace: true,
-              state: { 
-                from: window.location.pathname,
-                error: errorMessage
-              } 
-            });
-          }
-          return;
-        }
-        
-        // Establecer el mensaje de error
-        setError(errorMessage);
-        setLoading(false);
-      }
-    };
-    
-    console.log('🚀 [ResultDetail] Montando componente con ID:', id);
-    
-    // Ejecutar la carga de datos
-    fetchResultDetail();
-    
-    // Función de limpieza
-    return () => {
-      console.log('🧹 [ResultDetail] Desmontando componente');
-      isMounted = false; // Marcar como desmontado
-    };
-  }, [id, navigate, isAuthenticated, isAuthReady]); // Añadir dependencias para evitar advertencias de React
-  
   // Función para formatear la fecha
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -174,49 +49,196 @@ const ResultDetail = () => {
     }
   };
 
-  // Activar modo edición
-  const handleEdit = () => {
-    setEditableResult({ ...result });
-    setIsEditing(true);
+  // Manejar cambios en los campos del formulario
+  const handleInputChange = (section, field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [section]: {
+        ...prev[section],
+        [field]: value
+      }
+    }));
   };
-
-  // Cancelar edición
-  const handleCancel = () => {
-    setEditableResult(null);
-    setIsEditing(false);
-  };
-
-  // Guardar cambios
+  
+  // Guardar los cambios
   const handleSave = async () => {
-    if (!editableResult) return;
-    
     try {
-      setIsSaving(true);
+      setSaving(true);
       
-      // Preparar datos para enviar
-      const updateData = {
-        status: editableResult.status,
-        score: editableResult.score,
-        correct_answers: editableResult.correct_answers,
-        incorrect_answers: editableResult.incorrect_answers,
-        comments: editableResult.comments || ''
-      };
-
-      const response = await api.put(`/api/evaluation-results/${id}`, updateData);
+      // Filtrar solo los campos que han cambiado
+      const changesToSave = {};
+      
+      // Verificar cambios en cada sección
+      ['student', 'attempt', 'questionnaire', 'result'].forEach(section => {
+        const sectionChanges = {};
+        Object.entries(formData[section] || {}).forEach(([key, value]) => {
+          // Comparar con los valores originales
+          const originalValue = 
+            section === 'student' ? (result[`student_${key}`] || (result.student && result.student[key])) :
+            section === 'attempt' ? (result.attempt ? result.attempt[key] : result[key]) :
+            section === 'questionnaire' ? (result[`questionnaire_${key}`] || (result.questionnaire && result.questionnaire[key])) :
+            result[key];
+            
+          if (value !== originalValue) {
+            sectionChanges[key] = value;
+          }
+        });
+        
+        if (Object.keys(sectionChanges).length > 0) {
+          changesToSave[section] = sectionChanges;
+        }
+      });
+      
+      // Si no hay cambios, no hacemos nada
+      if (Object.keys(changesToSave).length === 0) {
+        setIsEditing(false);
+        toast.info('No se detectaron cambios para guardar');
+        return;
+      }
+      
+      // Enviar los cambios al servidor
+      const response = await api.put(`/api/evaluation-results/${id}`, changesToSave);
       
       if (response.data.success) {
         setResult(response.data.data);
+        toast.success('Cambios guardados exitosamente');
         setIsEditing(false);
-        toast.success('Resultado actualizado exitosamente');
       } else {
-        throw new Error(response.data.message || 'Error al actualizar el resultado');
+        throw new Error(response.data.message || 'Error al guardar los cambios');
       }
     } catch (error) {
-      console.error('Error al guardar cambios:', error);
-      toast.error(error.response?.data?.message || 'Error al guardar los cambios');
+      console.error('Error al guardar los cambios:', error);
+      toast.error('Error al guardar los cambios: ' + (error.response?.data?.message || error.message));
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
+  };
+  
+  // Cancelar edición
+  const handleCancel = () => {
+    // Restaurar los valores originales
+    if (result) {
+      setFormData({
+        student: {
+          grade: result.student_grade || result.student?.grade || ''
+        },
+        attempt: {
+          score: result.score || result.attempt?.score || '',
+          attempt_number: result.attempt?.attempt_number || '',
+          attempt_date: result.attempt?.attempt_date || result.attempt_date || ''
+        },
+        questionnaire: {
+          title: result.questionnaire_title || result.questionnaire?.title || '',
+          description: result.questionnaire_description || result.questionnaire?.description || '',
+          phase: result.phase || result.questionnaire?.phase || ''
+        },
+        result: {
+          status: result.status || '',
+          comments: result.comments || ''
+        }
+      });
+    }
+    setIsEditing(false);
+  };
+
+  // Efecto para cargar los datos del resultado
+  useEffect(() => {
+    let isMounted = true;
+    
+    const fetchResultDetail = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const resultResponse = await api.get(`/api/evaluation-results/${id}`);
+        const responseData = resultResponse?.data;
+
+        if (!responseData || responseData.success === false) {
+          throw new Error(responseData?.message || 'No se pudo obtener el resultado de la evaluación');
+        }
+
+        const resultData = responseData.data || responseData;
+        
+        if (isMounted) {
+          setResult(resultData);
+          
+          // Inicializar el formulario con los datos actuales
+          setFormData({
+            student: {
+              grade: resultData.student_grade || resultData.student?.grade || ''
+            },
+            attempt: {
+              score: resultData.score || resultData.attempt?.score || '',
+              attempt_number: resultData.attempt?.attempt_number || '',
+              attempt_date: resultData.attempt?.attempt_date || resultData.attempt_date || ''
+            },
+            questionnaire: {
+              title: resultData.questionnaire_title || resultData.questionnaire?.title || '',
+              description: resultData.questionnaire_description || resultData.questionnaire?.description || '',
+              phase: resultData.phase || resultData.questionnaire?.phase || ''
+            },
+            result: {
+              status: resultData.status || '',
+              comments: resultData.comments || ''
+            }
+          });
+          
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Error al cargar el resultado:', error);
+        
+        if (isMounted) {
+          let errorMessage = 'Ocurrió un error al cargar el resultado de la evaluación';
+          let shouldRedirectToLogin = false;
+          
+          if (error.isNetworkError) {
+            errorMessage = 'No se pudo conectar al servidor. Verifica tu conexión a internet.';
+          } else if (error.isAuthError || error.response?.status === 401) {
+            errorMessage = 'Tu sesión ha expirado. Serás redirigido para iniciar sesión nuevamente.';
+            shouldRedirectToLogin = true;
+          } else if (error.response?.data) {
+            // Usar el mensaje de error del servidor si está disponible
+            errorMessage = error.response.data.message || error.message || errorMessage;
+          }
+          
+          console.log('⚠️ [ResultDetail] Mostrando mensaje de error al usuario:', errorMessage);
+          setError(errorMessage);
+          
+          // Si es un error de autenticación, redirigir al login
+          if (shouldRedirectToLogin) {
+            console.log('🔄 [ResultDetail] Redirigiendo a login desde manejo de error...');
+            if (window.location.pathname !== '/login') {
+              navigate('/login', { 
+                replace: true,
+                state: { 
+                  from: window.location.pathname,
+                  error: errorMessage
+                } 
+              });
+            }
+            return;
+          }
+          
+          setLoading(false);
+        }
+      }
+    };
+    
+    console.log('🚀 [ResultDetail] Montando componente con ID:', id);
+    
+    // Ejecutar la carga de datos
+    fetchResultDetail();
+    
+    // Función de limpieza
+    return () => {
+      console.log('🧹 [ResultDetail] Desmontando componente');
+      isMounted = false; // Marcar como desmontado
+    };
+  }, [id, navigate, isAuthenticated, isAuthReady]); // Añadir dependencias para evitar advertencias de React
+  
+  // Activar modo edición
+  const handleEdit = () => {
+    setIsEditing(true);
   };
 
 
@@ -367,7 +389,7 @@ if (!result) {
             <button
               onClick={handleCancel}
               className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              disabled={isSaving}
+              disabled={saving}
             >
               <X className="w-4 h-4 mr-2" />
               Cancelar
@@ -375,9 +397,9 @@ if (!result) {
             <button
               onClick={handleSave}
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              disabled={isSaving}
+              disabled={saving}
             >
-              {isSaving ? (
+              {saving ? (
                 <>
                   <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -399,12 +421,45 @@ if (!result) {
         <div className="card">
           <div className="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <h5 className="mb-0">Detalles del Resultado</h5>
-            <button 
-              onClick={() => navigate('/results', { replace: true })}
-              className="btn btn-light btn-sm d-flex align-items-center"
-            >
-              <ArrowLeft size={16} className="me-1" /> Volver
-            </button>
+            <div>
+              {isEditing ? (
+                <>
+                  <button 
+                    onClick={handleSave}
+                    className="btn btn-success btn-sm me-2"
+                    disabled={saving}
+                  >
+                    <Save size={16} className="me-1" />
+                    {saving ? 'Guardando...' : 'Guardar'}
+                  </button>
+                  <button 
+                    onClick={handleCancel}
+                    className="btn btn-secondary btn-sm"
+                    disabled={saving}
+                  >
+                    <XIcon size={16} className="me-1" />
+                    Cancelar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button 
+                    onClick={() => setIsEditing(true)}
+                    className="btn btn-light btn-sm me-2"
+                  >
+                    <Edit size={16} className="me-1" />
+                    Editar
+                  </button>
+                  <button 
+                    onClick={() => navigate('/results', { replace: true })}
+                    className="btn btn-light btn-sm"
+                  >
+                    <ArrowLeft size={16} className="me-1" /> 
+                    Volver
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="card-body">
             {result && (
@@ -416,7 +471,19 @@ if (!result) {
                     <p><strong>Email:</strong> {result.student?.contact_email || result.student_email || 'N/A'}</p>
                   </div>
                   <div className="col-md-6">
-                    <p><strong>Grado:</strong> {result.student?.grade || 'N/A'}</p>
+                    <p>
+                      <strong>Grado:</strong>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          className="form-control form-control-sm d-inline-block w-auto ms-2"
+                          value={formData.student.grade || ''}
+                          onChange={(e) => handleInputChange('student', 'grade', e.target.value)}
+                        />
+                      ) : (
+                        ` ${result.student_grade || result.student?.grade || 'N/A'}`
+                      )}
+                    </p>
                     <p><strong>Curso:</strong> {result.course_name || 'N/A'}</p>
                   </div>
                 </div>
@@ -424,13 +491,68 @@ if (!result) {
                 <h4>Información del Cuestionario</h4>
                 <div className="row mb-4">
                   <div className="col-md-6">
-                    <p><strong>Título:</strong> {result.questionnaire_title || result.questionnaire?.title || 'N/A'}</p>
-                    <p><strong>Fase:</strong> {result.phase || result.questionnaire?.phase || 'N/A'}</p>
+                    <p>
+                      <strong>Título:</strong>
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          className="form-control form-control-sm d-inline-block w-75 ms-2"
+                          value={formData.questionnaire.title || ''}
+                          onChange={(e) => handleInputChange('questionnaire', 'title', e.target.value)}
+                        />
+                      ) : (
+                        ` ${result.questionnaire_title || result.questionnaire?.title || 'N/A'}`
+                      )}
+                    </p>
+                    <p>
+                      <strong>Fase:</strong>
+                      {isEditing ? (
+                        <select
+                          className="form-select form-select-sm d-inline-block w-auto ms-2"
+                          value={formData.questionnaire.phase || ''}
+                          onChange={(e) => handleInputChange('questionnaire', 'phase', e.target.value)}
+                        >
+                          <option value="">Seleccionar fase</option>
+                          <option value="Fase 1">Fase 1</option>
+                          <option value="Fase 2">Fase 2</option>
+                          <option value="Fase 3">Fase 3</option>
+                        </select>
+                      ) : (
+                        ` ${result.phase || result.questionnaire?.phase || 'N/A'}`
+                      )}
+                    </p>
                     <p><strong>ID del Cuestionario:</strong> {result.questionnaire_id || 'N/A'}</p>
                   </div>
                   <div className="col-md-6">
-                    <p><strong>Descripción:</strong> {result.questionnaire_description || result.questionnaire?.description || 'Sin descripción'}</p>
-                    <p><strong>Puntuación:</strong> {result.score !== undefined ? formatScore(result.score) : 'N/A'}</p>
+                    <p>
+                      <strong>Descripción:</strong>
+                      {isEditing ? (
+                        <textarea
+                          className="form-control form-control-sm mt-1"
+                          rows="2"
+                          value={formData.questionnaire.description || ''}
+                          onChange={(e) => handleInputChange('questionnaire', 'description', e.target.value)}
+                        />
+                      ) : (
+                        ` ${result.questionnaire_description || result.questionnaire?.description || 'Sin descripción'}`
+                      )}
+                    </p>
+                    <p>
+                      <strong>Puntuación:</strong>
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="5"
+                          className="form-control form-control-sm d-inline-block w-auto ms-2"
+                          value={formData.attempt.score || ''}
+                          onChange={(e) => handleInputChange('attempt', 'score', parseFloat(e.target.value) || 0)}
+                        />
+                      ) : (
+                        ` ${result.score !== undefined ? formatScore(result.score) : 'N/A'}`
+                      )}
+                    </p>
                   </div>
                 </div>
                 
@@ -443,10 +565,70 @@ if (!result) {
                       </span>
                     </p>
                     <p><strong>Fecha de Registro:</strong> {formatDate(result.recorded_at) || 'N/A'}</p>
+                    {isEditing && (
+                      <div className="mb-3">
+                        <label className="form-label"><strong>Comentarios:</strong></label>
+                        <textarea
+                          className="form-control"
+                          rows="3"
+                          value={formData.result.comments || ''}
+                          onChange={(e) => handleInputChange('result', 'comments', e.target.value)}
+                        />
+                      </div>
+                    )}
+                    {!isEditing && result.comments && (
+                      <div className="mt-2">
+                        <strong>Comentarios:</strong>
+                        <div className="border rounded p-2 bg-light">
+                          {result.comments}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="col-md-6">
-                    <p><strong>Número de Intento:</strong> {result.attempt?.attempt_number ?? 'No disponible'}</p>
-                    <p><strong>Fecha del Intento:</strong> {result.attempt?.attempt_date ? formatDate(result.attempt.attempt_date) : (result.attempt?.completed_at ? formatDate(result.attempt.completed_at) : 'No disponible')}</p>
+                    <p>
+                      <strong>Número de Intento:</strong>
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          min="1"
+                          className="form-control form-control-sm d-inline-block w-auto ms-2"
+                          value={formData.attempt.attempt_number || ''}
+                          onChange={(e) => handleInputChange('attempt', 'attempt_number', parseInt(e.target.value) || 1)}
+                        />
+                      ) : (
+                        ` ${result.attempt?.attempt_number ?? 'No disponible'}`
+                      )}
+                    </p>
+                    <p>
+                      <strong>Fecha del Intento:</strong>
+                      {isEditing ? (
+                        <input
+                          type="datetime-local"
+                          className="form-control form-control-sm d-inline-block w-auto ms-2"
+                          value={formData.attempt.attempt_date ? new Date(formData.attempt.attempt_date).toISOString().slice(0, 16) : ''}
+                          onChange={(e) => handleInputChange('attempt', 'attempt_date', e.target.value)}
+                        />
+                      ) : (
+                        ` ${result.attempt?.attempt_date ? formatDate(result.attempt.attempt_date) : (result.attempt?.completed_at ? formatDate(result.attempt.completed_at) : 'No disponible')}`
+                      )}
+                    </p>
+                    {isEditing && (
+                      <div className="mt-3">
+                        <label className="form-label"><strong>Estado:</strong></label>
+                        <select
+                          className="form-select form-select-sm"
+                          value={formData.result.status || ''}
+                          onChange={(e) => handleInputChange('result', 'status', e.target.value)}
+                        >
+                          <option value="">Seleccionar estado</option>
+                          <option value="completado">Completado</option>
+                          <option value="en_progreso">En progreso</option>
+                          <option value="pendiente">Pendiente</option>
+                          <option value="cancelado">Cancelado</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
                 </div>
                 

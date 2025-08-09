@@ -52,7 +52,7 @@ router.put('/:id', async (req, res) => {
 
     const result = existingResult[0];
     
-    // Verificar permisos
+    // Verificación de permisos (similar a la ruta GET)
     if (userRole === 'docente') {
       const teacherId = await getTeacherIdFromUserId(userId);
       if (!teacherId) {
@@ -61,65 +61,152 @@ router.put('/:id', async (req, res) => {
           message: 'No tienes permiso para actualizar este resultado'
         });
       }
-
-      // Verificar si el cuestionario pertenece al docente o si el estudiante está asignado
-      const [isQuestionnaireOwner, hasStudentAccess] = await Promise.all([
-        checkQuestionnaireOwnership(teacherId, result.questionnaire_id),
-        checkTeacherStudentAccess(teacherId, result.student_id)
-      ]);
-
-      if (!isQuestionnaireOwner && !hasStudentAccess) {
-        return res.status(403).json({
-          success: false,
-          message: 'No tienes permiso para actualizar este resultado'
-        });
-      }
-    } else if (userRole === 'estudiante') {
-      // Un estudiante solo puede actualizar sus propios resultados
-      const [student] = await db.query('SELECT id FROM students WHERE user_id = ?', [userId]);
-      if (student.length === 0 || student[0].id !== result.student_id) {
-        return res.status(403).json({
-          success: false,
-          message: 'Solo puedes actualizar tus propios resultados'
-        });
-      }
     }
 
     // Campos permitidos para actualizar
-    const allowedUpdates = ['status', 'comments', 'score', 'correct_answers', 'incorrect_answers'];
-    const updates = {};
+    const allowedUpdates = {
+      student: ['grade'],
+      attempt: ['score', 'attempt_number', 'attempt_date'],
+      result: ['status', 'comments'],
+      questionnaire: ['title', 'description', 'phase']
+    };
+
+    // Preparar las actualizaciones
+    const updates = {
+      student: {},
+      attempt: {},
+      result: {},
+      questionnaire: {}
+    };
 
     // Filtrar solo los campos permitidos
-    Object.keys(updateData).forEach(key => {
-      if (allowedUpdates.includes(key)) {
-        updates[key] = updateData[key];
+    Object.keys(updateData).forEach(section => {
+      if (allowedUpdates[section]) {
+        Object.keys(updateData[section]).forEach(field => {
+          if (allowedUpdates[section].includes(field)) {
+            updates[section][field] = updateData[section][field];
+          }
+        });
       }
     });
 
-    if (Object.keys(updates).length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No se proporcionaron campos válidos para actualizar'
+    // Iniciar transacción
+    await db.beginTransaction();
+
+    try {
+      // Obtener el ID del intento
+      const [attemptResult] = await db.query(
+        'SELECT id FROM quiz_attempts WHERE id = ?', 
+        [result.selected_attempt_id]
+      );
+      
+      if (attemptResult.length === 0) {
+        throw new Error('Intento no encontrado');
+      }
+      
+      const attemptId = attemptResult[0].id;
+
+      // Actualizar datos del estudiante si es necesario
+      if (Object.keys(updates.student).length > 0) {
+        await db.query('UPDATE students SET ? WHERE id = ?', 
+          [updates.student, result.student_id]);
+      }
+
+      // Actualizar datos del intento si es necesario
+      if (Object.keys(updates.attempt).length > 0) {
+        await db.query('UPDATE quiz_attempts SET ? WHERE id = ?', 
+          [updates.attempt, attemptId]);
+      }
+
+      // Actualizar datos del resultado si es necesario
+      if (Object.keys(updates.result).length > 0) {
+        await db.query('UPDATE evaluation_results SET ? WHERE id = ?', 
+          [updates.result, id]);
+      }
+
+      // Actualizar datos del cuestionario si es necesario
+      if (Object.keys(updates.questionnaire).length > 0) {
+        await db.query('UPDATE questionnaires SET ? WHERE id = ?', 
+          [updates.questionnaire, result.questionnaire_id]);
+      }
+
+      await db.commit();
+      
+      // Obtener los datos actualizados
+      const [updatedResults] = await db.query(`
+        SELECT 
+          er.*, 
+          s.name as student_name,
+          s.email as student_email,
+          s.grade as student_grade,
+          q.title as questionnaire_title,
+          q.description as questionnaire_description,
+          q.phase,
+          q.id as questionnaire_id,
+          c.name as course_name,
+          c.id as course_id,
+          qa.id as attempt_id,
+          qa.score,
+          qa.attempt_date as completed_at,
+          qa.attempt_number,
+          qa.attempt_date,
+          st.id as student_id,
+          st.user_id as student_user_id
+        FROM evaluation_results er
+        JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
+        JOIN students st ON qa.student_id = st.id
+        JOIN users s ON st.user_id = s.id
+        JOIN questionnaires q ON qa.questionnaire_id = q.id
+        LEFT JOIN courses c ON st.course_id = c.id
+        WHERE er.id = ?
+      `, [id]);
+
+      if (updatedResults.length === 0) {
+        throw new Error('No se pudo recuperar el resultado actualizado');
+      }
+
+      const updatedResult = updatedResults[0];
+      
+      // Formatear la respuesta
+      const responseData = {
+        ...updatedResult,
+        attempt: {
+          id: updatedResult.attempt_id,
+          attempt_number: updatedResult.attempt_number,
+          attempt_date: updatedResult.attempt_date,
+          score: updatedResult.score,
+          completed_at: updatedResult.completed_at
+        },
+        student: {
+          id: updatedResult.student_id,
+          user_id: updatedResult.student_user_id,
+          name: updatedResult.student_name,
+          email: updatedResult.student_email,
+          grade: updatedResult.student_grade
+        },
+        questionnaire: {
+          id: updatedResult.questionnaire_id,
+          title: updatedResult.questionnaire_title,
+          description: updatedResult.questionnaire_description,
+          phase: updatedResult.phase
+        }
+      };
+
+      // Eliminar campos duplicados
+      [
+        'attempt_id', 'attempt_number', 'attempt_date', 'score', 'completed_at',
+        'student_id', 'student_user_id', 'student_name', 'student_email', 'student_grade',
+        'questionnaire_id', 'questionnaire_title', 'questionnaire_description', 'phase'
+      ].forEach(field => delete responseData[field]);
+
+      res.json({
+        success: true,
+        data: responseData
       });
+    } catch (error) {
+      await db.rollback();
+      throw error;
     }
-
-    // Actualizar el resultado
-    const updateFields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
-    const updateValues = Object.values(updates);
-    updateValues.push(id); // Agregar el ID al final para el WHERE
-
-    const updateQuery = `UPDATE evaluation_results SET ${updateFields}, updated_at = NOW() WHERE id = ?`;
-    
-    await db.query(updateQuery, updateValues);
-
-    // Obtener el resultado actualizado
-    const [updatedResult] = await db.query('SELECT * FROM evaluation_results WHERE id = ?', [id]);
-
-    res.json({
-      success: true,
-      message: 'Resultado actualizado exitosamente',
-      data: updatedResult[0]
-    });
   } catch (error) {
     console.error('Error al actualizar el resultado:', error);
     res.status(500).json({
@@ -164,7 +251,8 @@ router.get('/:id', async (req, res) => {
         qa.attempt_number,
         qa.attempt_date,
         st.id as student_id,
-        st.user_id as student_user_id
+        st.user_id as student_user_id,
+        st.grade as student_grade
       FROM evaluation_results er
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       JOIN students st ON qa.student_id = st.id
