@@ -1,13 +1,148 @@
 // routes/evaluationResults.js
 import express from 'express';
 import db from '../config/db.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
+
+// Aplicar middleware de autenticación a todas las rutas
+router.use(verifyToken);
+
+// Función para obtener el ID del profesor a partir del user_id
+async function getTeacherIdFromUserId(userId) {
+  const [teachers] = await db.query('SELECT id FROM teachers WHERE user_id = ?', [userId]);
+  return teachers.length > 0 ? teachers[0].id : null;
+}
+
+// Función para verificar si un estudiante está asignado a un profesor
+async function checkTeacherStudentAccess(teacherId, studentId) {
+  const [results] = await db.query(
+    'SELECT 1 FROM teacher_students WHERE teacher_id = ? AND student_id = ?',
+    [teacherId, studentId]
+  );
+  return results.length > 0;
+}
+
+// Función para verificar si un cuestionario pertenece a un profesor
+async function checkQuestionnaireOwnership(teacherId, questionnaireId) {
+  const [results] = await db.query(
+    'SELECT 1 FROM questionnaires WHERE id = ? AND created_by = ?',
+    [questionnaireId, teacherId]
+  );
+  return results.length > 0;
+}
+
+// Obtener un resultado de evaluación por ID
+// Actualizar un resultado de evaluación
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user?.id;
+  const userRole = req.user?.role;
+  const updateData = req.body;
+
+  try {
+    // Verificar que el resultado existe
+    const [existingResult] = await db.query('SELECT * FROM evaluation_results WHERE id = ?', [id]);
+    if (existingResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Resultado de evaluación no encontrado'
+      });
+    }
+
+    const result = existingResult[0];
+    
+    // Verificar permisos
+    if (userRole === 'docente') {
+      const teacherId = await getTeacherIdFromUserId(userId);
+      if (!teacherId) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para actualizar este resultado'
+        });
+      }
+
+      // Verificar si el cuestionario pertenece al docente o si el estudiante está asignado
+      const [isQuestionnaireOwner, hasStudentAccess] = await Promise.all([
+        checkQuestionnaireOwnership(teacherId, result.questionnaire_id),
+        checkTeacherStudentAccess(teacherId, result.student_id)
+      ]);
+
+      if (!isQuestionnaireOwner && !hasStudentAccess) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para actualizar este resultado'
+        });
+      }
+    } else if (userRole === 'estudiante') {
+      // Un estudiante solo puede actualizar sus propios resultados
+      const [student] = await db.query('SELECT id FROM students WHERE user_id = ?', [userId]);
+      if (student.length === 0 || student[0].id !== result.student_id) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo puedes actualizar tus propios resultados'
+        });
+      }
+    }
+
+    // Campos permitidos para actualizar
+    const allowedUpdates = ['status', 'comments', 'score', 'correct_answers', 'incorrect_answers'];
+    const updates = {};
+
+    // Filtrar solo los campos permitidos
+    Object.keys(updateData).forEach(key => {
+      if (allowedUpdates.includes(key)) {
+        updates[key] = updateData[key];
+      }
+    });
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se proporcionaron campos válidos para actualizar'
+      });
+    }
+
+    // Actualizar el resultado
+    const updateFields = Object.keys(updates).map(key => `${key} = ?`).join(', ');
+    const updateValues = Object.values(updates);
+    updateValues.push(id); // Agregar el ID al final para el WHERE
+
+    const updateQuery = `UPDATE evaluation_results SET ${updateFields}, updated_at = NOW() WHERE id = ?`;
+    
+    await db.query(updateQuery, updateValues);
+
+    // Obtener el resultado actualizado
+    const [updatedResult] = await db.query('SELECT * FROM evaluation_results WHERE id = ?', [id]);
+
+    res.json({
+      success: true,
+      message: 'Resultado actualizado exitosamente',
+      data: updatedResult[0]
+    });
+  } catch (error) {
+    console.error('Error al actualizar el resultado:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar el resultado',
+      error: error.message
+    });
+  }
+});
 
 // Obtener un resultado de evaluación por ID
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'No autorizado: Usuario no autenticado'
+      });
+    }
     
     // Consulta para obtener el resultado de evaluación con información relacionada
     const query = `
@@ -16,16 +151,18 @@ router.get('/:id', async (req, res) => {
         s.name as student_name,
         s.email as student_email,
         q.title as questionnaire_title,
+        q.description as questionnaire_description,
         q.phase,
         q.id as questionnaire_id,
-        q.category as questionnaire_category,
-        q.description as questionnaire_description,
+        q.created_by as questionnaire_created_by,
         c.name as course_name,
         c.id as course_id,
         er.status as evaluation_status,
         qa.id as attempt_id,
         qa.score,
         qa.attempt_date as completed_at,
+        qa.attempt_number,
+        qa.attempt_date,
         st.id as student_id,
         st.user_id as student_user_id
       FROM evaluation_results er
@@ -47,6 +184,43 @@ router.get('/:id', async (req, res) => {
     }
     
     const result = results[0];
+    
+    // Verificación de permisos
+    if (userRole === 'docente') {
+      const teacherId = await getTeacherIdFromUserId(userId);
+      
+      // Verificar si el cuestionario pertenece al docente o si el estudiante está asignado al docente
+      const [isQuestionnaireOwner, hasStudentAccess] = await Promise.all([
+        checkQuestionnaireOwnership(teacherId, result.questionnaire_id),
+        checkTeacherStudentAccess(teacherId, result.student_id)
+      ]);
+      
+      console.log(`🔍 Verificación de permisos para resultado ${id}:`, {
+        teacherId,
+        questionnaireId: result.questionnaire_id,
+        studentId: result.student_id,
+        isQuestionnaireOwner,
+        hasStudentAccess
+      });
+      
+      // Permitir acceso si el docente es dueño del cuestionario o tiene acceso al estudiante
+      if (!isQuestionnaireOwner && !hasStudentAccess) {
+        console.warn(`⛔ Acceso denegado para el docente ${teacherId} al resultado ${id}`);
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para ver este resultado de evaluación'
+        });
+      }
+    } else if (userRole === 'estudiante') {
+      // Verificar si el estudiante está viendo sus propios resultados
+      if (result.student_user_id !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo puedes ver tus propios resultados'
+        });
+      }
+    }
+    // Los super_administradores y administradores pueden ver todo
     
     // Procesar datos JSON si existen
     const jsonFields = ['questionnaire_data', 'answers'];
@@ -78,6 +252,20 @@ router.get('/:id', async (req, res) => {
         console.error('Error al parsear answers:', e);
       }
     }
+    
+    // Crear un objeto con los datos del intento
+    result.attempt = {
+      id: result.attempt_id,
+      attempt_number: result.attempt_number,
+      attempt_date: result.attempt_date,
+      score: result.score,
+      completed_at: result.completed_at
+    };
+    
+    // Eliminar campos duplicados
+    delete result.attempt_id;
+    delete result.attempt_number;
+    delete result.attempt_date;
     
     res.json({
       success: true,
@@ -247,81 +435,152 @@ router.get('/course/:id', async (req, res) => {
     res.json(results);
   } catch (error) {
     console.error('Error al obtener resultados del curso:', error);
-    res.status(500).json({ message: 'Error al obtener resultados del curso' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener resultados del curso',
+      error: error.message 
+    });
   }
 });
 
-// Obtener resultados para un profesor (por sus cursos asignados)
+// Obtener resultados para un profesor (por sus estudiantes y cuestionarios)
 router.get('/teacher/:userId', async (req, res) => {
   try {
-    // Primero obtenemos el teacher_id asociado con este user_id
-    const [teachers] = await db.query(`
-      SELECT id FROM teachers WHERE user_id = ?
-    `, [req.params.userId]);
+    const { userId } = req.params;
+    const requestingUserId = req.user?.id;
+    const userRole = req.user?.role;
+    
+    // Verificar que el usuario esté autenticado
+    if (!requestingUserId) {
+      return res.status(401).json({
+        success: false,
+        message: 'No autorizado: Usuario no autenticado'
+      });
+    }
+    
+    // Verificar que el usuario esté viendo sus propios resultados o sea administrador
+    if (requestingUserId !== userId && userRole !== 'super_administrador') {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para ver estos resultados'
+      });
+    }
+    
+    // Obtener el ID del profesor
+    const [teachers] = await db.query('SELECT id FROM teachers WHERE user_id = ?', [userId]);
     
     if (teachers.length === 0) {
-      return res.status(404).json({ message: 'Profesor no encontrado' });
+      return res.status(404).json({
+        success: false,
+        message: 'Profesor no encontrado'
+      });
     }
     
     const teacherId = teachers[0].id;
     
-    // Obtenemos los cursos asignados a este profesor
-    const [teacherCourses] = await db.query(`
-      SELECT course_id FROM teacher_courses WHERE teacher_id = ?
-    `, [teacherId]);
-    
-    if (teacherCourses.length === 0) {
-      return res.json([]);
-    }
-    
-    // Extraemos los IDs de los cursos
-    const courseIds = teacherCourses.map(tc => tc.course_id);
-    
-    // Ahora obtenemos los resultados de los estudiantes en estos cursos
+    // Consulta para obtener los resultados de los cuestionarios creados por el profesor
     const [results] = await db.query(`
-      SELECT er.*, 
-             s.name as student_name,
-             q.title as questionnaire_title,
-             c.name as course_name
+      SELECT 
+        er.*,
+        s.id as student_id,
+        s.user_id as student_user_id,
+        u.name as student_name,
+        u.email as student_email,
+        q.title as questionnaire_title,
+        q.id as questionnaire_id,
+        q.created_by as questionnaire_created_by,
+        c.id as course_id,
+        c.name as course_name,
+        qa.score,
+        qa.attempt_date as completed_at
       FROM evaluation_results er
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
-      JOIN students st ON qa.student_id = st.id
-      JOIN users s ON st.user_id = s.id
+      JOIN students s ON qa.student_id = s.id
+      JOIN users u ON s.user_id = u.id
       JOIN questionnaires q ON qa.questionnaire_id = q.id
-      JOIN courses c ON st.course_id = c.id
-      WHERE st.course_id IN (?)
-      ORDER BY er.recorded_at DESC
-    `, [courseIds]);
+      LEFT JOIN courses c ON s.course_id = c.id
+      WHERE q.created_by = ?
+      ORDER BY c.name, u.name, qa.attempt_date DESC
+    `, [teacherId]);
     
-    res.json(results);
+    // Procesar los resultados para agrupar por curso y estudiante
+    const groupedResults = results.reduce((acc, result) => {
+      const courseId = result.course_id || 'sin_curso';
+      const studentId = result.student_id;
+      
+      if (!acc[courseId]) {
+        acc[courseId] = {
+          course_id: result.course_id,
+          course_name: result.course_name || 'Sin curso asignado',
+          students: {}
+        };
+      }
+      
+      if (!acc[courseId].students[studentId]) {
+        acc[courseId].students[studentId] = {
+          student_id: result.student_id,
+          student_user_id: result.student_user_id,
+          student_name: result.student_name,
+          student_email: result.student_email,
+          results: []
+        };
+      }
+      
+      // Asegurar que los campos numéricos sean números
+      const numericFields = ['score', 'correct_answers', 'incorrect_answers', 'total_questions'];
+      numericFields.forEach(field => {
+        if (result[field] !== undefined && result[field] !== null) {
+          result[field] = Number(result[field]);
+        }
+      });
+      
+      // Procesar campos JSON
+      const jsonFields = ['questionnaire_data', 'answers'];
+      jsonFields.forEach(field => {
+        if (result[field]) {
+          try {
+            result[field] = JSON.parse(result[field]);
+          } catch (e) {
+            console.error(`Error al parsear ${field}:`, e);
+            result[field] = null;
+          }
+        }
+      });
+      
+      acc[courseId].students[studentId].results.push({
+        id: result.id,
+        questionnaire_id: result.questionnaire_id,
+        questionnaire_title: result.questionnaire_title,
+        score: result.score,
+        status: result.status,
+        completed_at: result.completed_at,
+        correct_answers: result.correct_answers,
+        incorrect_answers: result.incorrect_answers,
+        total_questions: result.total_questions
+      });
+      
+      return acc;
+    }, {});
+    
+    // Convertir el objeto en un array para la respuesta
+    const response = Object.values(groupedResults).map(course => ({
+      ...course,
+      students: Object.values(course.students)
+    }));
+    
+    res.json({
+      success: true,
+      data: response
+    });
+    
   } catch (error) {
-    console.error('Error al obtener resultados para el profesor:', error);
-    res.status(500).json({ message: 'Error al obtener resultados para el profesor' });
-  }
-});
-
-// Obtener detalles de un intento específico
-router.get('/quiz-attempts/:id', async (req, res) => {
-  try {
-    const [attempts] = await db.query(`
-      SELECT qa.*,
-             s.name as student_name,
-             q.title as questionnaire_title
-      FROM quiz_attempts qa
-      JOIN students st ON qa.student_id = st.id
-      JOIN users s ON st.user_id = s.id
-      JOIN questionnaires q ON qa.questionnaire_id = q.id
-      WHERE qa.id = ?
-    `, [req.params.id]);
-    
-    if (attempts.length === 0) {
-      return res.status(404).json({ message: 'Intento no encontrado' });
-    }
-    
-    res.json(attempts[0]);
-  } catch (error) {
-    console.error('Error al obtener detalles del intento:', error);
-    res.status(500).json({ message: 'Error al obtener detalles del intento' });
+    console.error('Error al obtener resultados del docente:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener los resultados del docente',
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
