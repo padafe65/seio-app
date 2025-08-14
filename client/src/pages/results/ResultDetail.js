@@ -139,12 +139,7 @@ const ResultDetail = () => {
         });
         
         if (Object.keys(sectionChanges).length > 0) {
-          // Si hay cambios en attempt, los movemos al nivel superior
-          if (section === 'attempt') {
-            changesToSave.attempt = { ...changesToSave.attempt, ...sectionChanges };
-          } else {
-            changesToSave[section] = sectionChanges;
-          }
+          changesToSave[section] = sectionChanges;
         }
       });
       
@@ -174,12 +169,26 @@ const ResultDetail = () => {
           // Asegurar que los campos numéricos sean números
           Object.keys(changesToSave[section]).forEach(key => {
             const value = changesToSave[section][key];
-            if (value !== null && value !== undefined && !isNaN(value) && (key.includes('score') || key.includes('grade') || key.includes('phase'))) {
+            if (value !== null && value !== undefined && !isNaN(value) && 
+                (key.includes('score') || key.includes('grade') || key.includes('phase'))) {
               changesToSave[section][key] = parseFloat(value);
             }
           });
         }
       });
+      
+      // Agregar los intentos modificados a los cambios a guardar
+      if (result.all_attempts && result.all_attempts.length > 0) {
+        const modifiedAttempts = result.all_attempts.map(attempt => ({
+          id: attempt.id,
+          score: parseFloat(attempt.score) || 0,
+          attempt_number: attempt.attempt_number,
+          is_selected: attempt.is_selected || 0
+        }));
+        
+        changesToSave.attempts = modifiedAttempts;
+        console.log('📝 Intentos modificados a enviar:', modifiedAttempts);
+      }
       
       console.log('📤 Enviando cambios al servidor:', JSON.stringify(changesToSave, null, 2));
       
@@ -187,49 +196,74 @@ const ResultDetail = () => {
       try {
         const response = await api.put(`/api/evaluation-results/${id}`, changesToSave);
       
-      console.log('✅ Respuesta del servidor:', response.data);
+        console.log('✅ Respuesta del servidor:', response.data);
       
-      if (response.data?.success && response.data.data) {
-        console.log('📊 Datos actualizados recibidos:', response.data.data);
-        
-        // Mostrar confirmación
-        toast.success('Cambios guardados exitosamente');
-        
-        // Actualizar el estado con los nuevos datos
-        setResult(prev => ({
-          ...prev,
-          ...response.data.data,
-          // Asegurarse de que los datos anidados también se actualicen
-          attempt: {
-            ...(prev.attempt || {}),
-            ...(response.data.data.attempt || {})
-          },
-          student: {
-            ...(prev.student || {}),
-            ...(response.data.data.student || {})
-          },
-          questionnaire: {
-            ...(prev.questionnaire || {}),
-            ...(response.data.data.questionnaire || {})
-          }
-        }));
-        
-        // Actualizar también el formData para que los cambios se reflejen si se vuelve a editar
-        setFormData(prev => ({
-          ...prev,
-          attempt: { ...prev.attempt, ...(response.data.data.attempt || {}) },
-          student: { ...prev.student, ...(response.data.data.student || {}) },
-          questionnaire: { 
-            ...prev.questionnaire, 
-            ...(response.data.data.questionnaire || {}) 
-          },
-          result: { ...prev.result, ...(response.data.data || {}) }
-        }));
-        
-        setIsEditing(false);
-      } else {
-        console.error('La respuesta del servidor no contiene los datos esperados:', response.data);
-        throw new Error('La respuesta del servidor no contiene los datos esperados');
+        if (response.data?.success) {
+          // Mostrar confirmación
+          toast.success('Cambios guardados exitosamente');
+          
+          // Obtener los datos actualizados del servidor
+          const updatedData = response.data.data || {};
+          console.log('📊 Datos actualizados recibidos:', updatedData);
+          
+          // Actualizar el estado con los nuevos datos
+          setResult(prev => {
+            const updatedState = {
+              ...prev,
+              ...updatedData,
+              // Actualizar best_score y worst_score directamente en el nivel superior
+              best_score: updatedData.best_score !== undefined ? updatedData.best_score : prev.best_score,
+              worst_score: updatedData.worst_score !== undefined ? updatedData.worst_score : prev.worst_score,
+              // Asegurarse de que los datos anidados también se actualicen
+              attempt: {
+                ...(prev.attempt || {}),
+                ...(updatedData.attempt || {})
+              },
+              student: {
+                ...(prev.student || {}),
+                ...(updatedData.student || {})
+              },
+              questionnaire: {
+                ...(prev.questionnaire || {}),
+                ...(updatedData.questionnaire || {})
+              }
+            };
+            
+            console.log('🔄 Estado actualizado con best_score:', updatedState.best_score, 'y worst_score:', updatedState.worst_score);
+            return updatedState;
+          });
+          
+          // Actualizar el formData de manera consistente
+          setFormData(prev => {
+            const updated = {
+              ...prev,
+              attempt: { ...prev.attempt, ...(updatedData.attempt || {}) },
+              student: { ...prev.student, ...(updatedData.student || {}) },
+              questionnaire: { 
+                ...prev.questionnaire, 
+                ...(updatedData.questionnaire || {}) 
+              },
+              result: { 
+                ...prev.result,
+                ...updatedData,
+                // Asegurar que sean números
+                best_score: updatedData.best_score !== undefined ? 
+                  parseFloat(updatedData.best_score) : 
+                  (prev.result?.best_score || prev.best_score || 0),
+                worst_score: updatedData.worst_score !== undefined ? 
+                  parseFloat(updatedData.worst_score) : 
+                  (prev.result?.worst_score || prev.worst_score || 0)
+              }
+            };
+            
+            console.log('🔄 formData actualizado con worst_score:', updated.result.worst_score);
+            return updated;
+          });
+          
+          setIsEditing(false);
+        } else {
+          console.error('La respuesta del servidor no indica éxito:', response.data);
+          throw new Error(response.data?.message || 'Error al guardar los cambios');
         }
       } catch (error) {
         console.error('Error al guardar los cambios:', error);
@@ -268,6 +302,33 @@ const ResultDetail = () => {
       });
     }
     setIsEditing(false);
+  };
+
+  // Función para actualizar el mejor y peor intento
+  const updateBestAndWorstAttempts = (attempts) => {
+    if (!attempts || attempts.length === 0) return;
+    
+    // Ordenar intentos por puntuación
+    const sortedAttempts = [...attempts].sort((a, b) => b.score - a.score);
+    const best = sortedAttempts[0];
+    const worst = sortedAttempts[sortedAttempts.length - 1];
+    
+    setResult(prev => ({
+      ...prev,
+      best_attempt: best ? {
+        id: best.id,
+        attempt_number: best.attempt_number,
+        score: parseFloat(best.score) || 0
+      } : null,
+      worst_attempt: worst && (attempts.length > 1 || worst.id !== best?.id) ? {
+        id: worst.id,
+        attempt_number: worst.attempt_number,
+        score: parseFloat(worst.score) || 0
+      } : null,
+      best_score: best ? parseFloat(best.score) || 0 : 0,
+      worst_score: worst ? parseFloat(worst.score) || 0 : 0,
+      total_attempts: attempts.length
+    }));
   };
 
   // Efecto para cargar los datos del resultado
@@ -499,6 +560,7 @@ const ResultDetail = () => {
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
+        {/* Contenido principal */}
         <div className="flex justify-between items-center mb-8">
           <button
             onClick={() => navigate(-1)}
@@ -517,38 +579,38 @@ const ResultDetail = () => {
               Editar
             </button>
           ) : (
-          <div className="space-x-2">
-            <button
-              onClick={handleCancel}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              disabled={saving}
-            >
-              <X className="w-4 h-4 mr-2" />
-              Cancelar
-            </button>
-            <button
-              onClick={handleSave}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              disabled={saving}
-            >
-              {saving ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Guardando...
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4 mr-2" />
-                  Guardar
-                </>
-              )}
-            </button>
-          </div>
-        )}
-        </div>
+            <div className="space-x-2">
+              <button
+                onClick={handleCancel}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                disabled={saving}
+              >
+                <X className="w-4 h-4 mr-2" />
+                Cancelar
+              </button>
+              <button
+                onClick={handleSave}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                disabled={saving}
+              >
+                {saving ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    Guardar
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+       </div>
 
       <div className="container py-4">
         <div className="card">
@@ -596,7 +658,7 @@ const ResultDetail = () => {
           </div>
           <div className="card-body">
             {result && (
-              <>
+              <div>
                 <h4>Información del Estudiante</h4>
                 <div className="row mb-4">
                   <div className="col-md-6">
@@ -712,69 +774,101 @@ const ResultDetail = () => {
                 
                 <h4>Resultados</h4>
                 <div className="row">
-                  <div className="col-md-6">
+                  <div className="col-md-12">
                     <div className="mb-3">
-                      <div className="d-flex justify-content-between align-items-center mb-2">
-                        <label className="form-label fw-bold">Puntajes:</label>
-                        {!isEditing && (
-                          <div className="d-flex gap-3">
-                            <div className="text-center">
-                              <div className="text-muted small">Mejor Nota</div>
-                              <span className={`badge ${parseFloat(result.max_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
-                                {formatScore(result.max_score)} / 5.0
+                      <label className="form-label fw-bold d-block mb-3">Resumen de Notas:</label>
+                      
+                      {/* Mostrar mejor y peor nota cuando no está en modo edición */}
+                      {!isEditing && (
+                        <div className="d-flex flex-wrap gap-4 mb-3">
+                          {/* Mejor Nota */}
+                          <div className="text-center p-3 bg-light rounded">
+                            <div className="text-muted small mb-1">Mejor Nota</div>
+                            <div className="fw-bold">Intento {result.attempt?.attempt_number || 'N/A'}</div>
+                            <span className={`badge ${parseFloat(result.max_score || 0) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                              {formatScore(result.max_score)} / 5.0
+                            </span>
+                          </div>
+                          
+                          {/* Peor Nota - Mostrar siempre que haya al menos un intento */}
+                          {result.total_attempts > 1 && (
+                            <div className="text-center p-3 bg-light rounded">
+                              <div className="text-muted small mb-1">Menor Nota</div>
+                              <div className="fw-bold">Intento {result.attempt?.attempt_number === 1 ? 2 : 1}</div>
+                              <span className={`badge ${parseFloat(result.min_score || 0) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                                {formatScore(result.min_score)} / 5.0
                               </span>
                             </div>
-                            {result.total_attempts > 1 && (
-                              <div className="text-center">
-                                <div className="text-muted small">Menor Nota</div>
-                                <span className={`badge ${parseFloat(result.min_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
-                                  {formatScore(result.min_score)} / 5.0
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {isEditing && (
-                        <div className="row g-3">
-                          <div className="col-md-6">
-                            <label className="form-label small text-muted">Mejor Nota:</label>
-                            <div className="d-flex align-items-center">
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0"
-                                max="5"
-                                className={`form-control form-control-sm ${parseFloat(formData.result?.best_score ?? result.max_score) >= 3.5 ? 'border-success' : 'border-danger'}`}
-                                value={formData.result?.best_score ?? result.max_score ?? ''}
-                                onChange={(e) => {
-                                  const value = parseFloat(e.target.value);
-                                  handleInputChange('result', 'best_score', isNaN(value) ? '' : value);
-                                }}
-                              />
-                              <span className="ms-2">/ 5.0</span>
-                            </div>
-                          </div>
-                          {result.total_attempts > 1 && (
-                            <div className="col-md-6">
-                              <label className="form-label small text-muted">Menor Nota:</label>
-                              <div className="d-flex align-items-center">
-                                <input
-                                  type="number"
-                                  step="0.1"
-                                  min="0"
-                                  max="5"
-                                  className={`form-control form-control-sm ${parseFloat(formData.result?.min_score ?? result.min_score) >= 3.5 ? 'border-success' : 'border-danger'}`}
-                                  value={formData.result?.min_score ?? result.min_score ?? ''}
-                                  onChange={(e) => {
-                                    const value = parseFloat(e.target.value);
-                                    handleInputChange('result', 'min_score', isNaN(value) ? '' : value);
-                                  }}
-                                />
-                                <span className="ms-2">/ 5.0</span>
-                              </div>
-                            </div>
                           )}
+                          
+                          {/* Total de intentos */}
+                          <div className="text-center p-3 bg-light rounded">
+                            <div className="text-muted small mb-1">Total de Intentos</div>
+                            <div className="fw-bold">{result.total_attempts || 0}</div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Mostrar lista de intentos en modo edición */}
+                      {isEditing && result.all_attempts && result.all_attempts.length > 0 && (
+                        <div className="table-responsive mb-3">
+                          <table className="table table-sm table-bordered">
+                            <thead className="table-light">
+                              <tr>
+                                <th>Intento</th>
+                                <th>Nota</th>
+                                <th>Estado</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {result.all_attempts.map((attempt, index) => (
+                                <tr key={`attempt-${attempt.id}`}>
+                                  <td className="align-middle">
+                                    <span className="fw-bold">Intento {attempt.attempt_number}</span>
+                                  </td>
+                                  <td className="align-middle">
+                                    <div className="d-flex align-items-center">
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0"
+                                        max="5"
+                                        className={`form-control form-control-sm ${parseFloat(attempt.score) >= 3.5 ? 'border-success' : 'border-danger'}`}
+                                        value={attempt.score || ''}
+                                        onChange={(e) => {
+                                          const value = parseFloat(e.target.value);
+                                          const updatedAttempts = [...result.all_attempts];
+                                          updatedAttempts[index] = {
+                                            ...updatedAttempts[index],
+                                            score: isNaN(value) ? '' : value
+                                          };
+                                          
+                                          // Actualizar el estado con los nuevos intentos
+                                          setResult(prev => ({
+                                            ...prev,
+                                            all_attempts: updatedAttempts
+                                          }));
+                                          
+                                          // Actualizar también el mejor y peor intento
+                                          updateBestAndWorstAttempts(updatedAttempts);
+                                        }}
+                                      />
+                                      <span className="ms-2">/ 5.0</span>
+                                    </div>
+                                  </td>
+                                  <td className="align-middle">
+                                    {attempt.is_selected === 1 ? (
+                                      <span className="badge bg-success">Mejor nota</span>
+                                    ) : attempt.is_selected === 0 ? (
+                                      <span className="badge bg-warning text-dark">Menor nota</span>
+                                    ) : (
+                                      <span className="badge bg-secondary">Intento normal</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </div>
@@ -856,30 +950,22 @@ const ResultDetail = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {(result.all_attempts || []).length > 0 ? (
-                          result.all_attempts.map((attempt, index) => (
-                            <tr 
-                              key={attempt.id} 
-                              className={`${attempt.id === result.selected_attempt_id ? 'table-primary' : ''}`}
-                            >
+                        {result.all_attempts && result.all_attempts.length > 0 ? (
+                          result.all_attempts.map((attempt) => (
+                            <tr key={attempt.id} className={attempt.id === result.attempt?.id ? 'table-active' : ''}>
                               <td>{attempt.attempt_number}</td>
+                              <td>{formatScore(attempt.score)}</td>
                               <td>
-                                <span className={`badge ${parseFloat(attempt.score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
-                                  {formatScore(attempt.score)} / 5.0
-                                </span>
-                              </td>
-                              <td>
-                                <span className={`badge ${parseFloat(attempt.score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
-                                  {parseFloat(attempt.score) >= 3.5 ? 'Aprobado' : 'Reprobado'}
+                                <span className={`badge ${getStatusBadgeClass(attempt.status || 'Pendiente')}`}>
+                                  {attempt.status || 'Pendiente'}
                                 </span>
                               </td>
                               <td>{formatDate(attempt.attempt_date)}</td>
                               <td>
-                                {isEditing && (
-                                  <button 
+                                {attempt.id !== result.attempt?.id && (
+                                  <button
                                     className="btn btn-sm btn-outline-primary"
                                     onClick={() => {
-                                      // Actualizar el formulario con el intento seleccionado
                                       setFormData(prev => ({
                                         ...prev,
                                         attempt: {
@@ -917,13 +1003,14 @@ const ResultDetail = () => {
                     </pre>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>
-      </div>
+        {/* Fin del contenido principal */}
       </div>
     </div>
+  </div>
   );
 };
 
