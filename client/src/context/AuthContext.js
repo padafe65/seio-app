@@ -115,13 +115,110 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       const response = await axios.post(`${API_URL}/api/auth/login`, credentials);
-      setAuthToken(response.data.token);
-      setUserRole(response.data.usuario.role);
-      setUser(response.data.usuario);
-      console.log("✅ Usuario almacenado en AuthContext:", response.data.usuario);
-      return response.data.usuario;
+      console.log('📄 Respuesta del servidor:', response.data);
+      
+      // Extraer token y datos del usuario de la respuesta
+      // Manejar tanto 'user' como 'usuario' para compatibilidad
+      const { token, user: userData, usuario: userDataAlt } = response.data;
+      
+      // Usar userData si está disponible, de lo contrario usar userDataAlt (usuario)
+      const userDataFinal = userData || userDataAlt;
+      
+      // Si no hay token o datos de usuario, mostrar error
+      if (!token || !userDataFinal) {
+        console.error('❌ Formato de respuesta inesperado:', response.data);
+        return false;
+      }
+      
+      // Para depuración
+      console.log('Datos del usuario recibidos:', userDataFinal);
+      
+      // Crear objeto de usuario con los datos necesarios
+      const userToStore = {
+        id: userDataFinal.id,
+        name: userDataFinal.name,
+        email: userDataFinal.email,
+        role: userDataFinal.role,
+        phone: userDataFinal.phone || null,
+        estado: userDataFinal.estado || 1
+      };
+      
+      // Si es docente, asegurarnos de que tenga un teacher_id
+      if (userDataFinal.role === 'docente') {
+        // Buscar el teacher_id en varios lugares posibles de la respuesta
+        const teacherId = userDataFinal.teacher_id || 
+                         response.data.teacher_id || 
+                         (response.data.user && response.data.user.teacher_id) ||
+                         (response.data.usuario && response.data.usuario.teacher_id);
+        
+        if (teacherId) {
+          userToStore.teacher_id = teacherId;
+          console.log('✅ ID del docente obtenido:', userToStore.teacher_id);
+        } else {
+          console.warn('⚠️ No se encontró el ID del docente, intentando obtenerlo del backend...');
+          try {
+            // Intentar obtener el ID del docente desde el endpoint específico
+            const teacherResponse = await axios.get(
+              `${API_URL}/api/teachers/by-user/${userDataFinal.id}`, 
+              { 
+                headers: { 
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                } 
+              }
+            );
+            
+            if (teacherResponse.data && teacherResponse.data.id) {
+              userToStore.teacher_id = teacherResponse.data.id;
+              console.log('✅ ID del docente obtenido del endpoint específico:', userToStore.teacher_id);
+            } else {
+              // Si no existe, intentar crearlo
+              console.warn('⚠️ No se encontró el registro del docente, intentando crearlo...');
+              const createResponse = await axios.post(
+                `${API_URL}/api/teachers/create-for-user/${userDataFinal.id}`,
+                {},
+                { 
+                  headers: { 
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                  } 
+                }
+              );
+              
+              if (createResponse.data && createResponse.data.teacher_id) {
+                userToStore.teacher_id = createResponse.data.teacher_id;
+                console.log('✅ Nuevo registro de docente creado con ID:', userToStore.teacher_id);
+              } else {
+                throw new Error('No se pudo crear el registro del docente');
+              }
+            }
+          } catch (error) {
+            console.error('❌ Error al obtener/crear el ID del docente:', error);
+            // Aún así permitir el inicio de sesión, pero marcar que no hay teacher_id
+            userToStore.teacher_id = null;
+          }
+        }
+      }
+      
+      // Guardar el token y los datos del usuario
+      setAuthToken(token);
+      setUserRole(userToStore.role);
+      setUser(userToStore);
+      
+      // Guardar en localStorage para persistencia
+      localStorage.setItem('user', JSON.stringify(userToStore));
+      
+      console.log('✅ Usuario autenticado:', userToStore);
+      return userToStore;
     } catch (error) {
-      console.error('Error en login:', error);
+      console.error('❌ Error en login:', error);
+      if (error.response) {
+        console.error('📌 Detalles del error:', {
+          status: error.response.status,
+          data: error.response.data,
+          headers: error.response.headers
+        });
+      }
       return false;
     }
   };

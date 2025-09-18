@@ -197,7 +197,7 @@ useEffect(() => {
           <button
             type="button"
             className="btn btn-light btn-sm"
-            onClick={() => navigate('/mis-preguntas')}
+            onClick={() => navigate('/dashboard')}
           >
             <ArrowLeft size={16} className="me-1" /> Volver
           </button>

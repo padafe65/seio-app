@@ -5,16 +5,17 @@ import pool from '../config/db.js';
 const router = express.Router();
 
 // Obtener todos los cursos asignados a un profesor
-// routes/teacherCoursesRoutes.js
 router.get('/teacher/:teacherId', async (req, res) => {
   try {
     const { teacherId } = req.params;
     
+    // Ahora SÍ incluimos c.grade ya que existe en la tabla
     const [rows] = await pool.query(`
-      SELECT tc.id, c.id as course_id, c.name as course_name
+      SELECT tc.id, tc.assigned_date, c.id as course_id, c.name as course_name, c.grade
       FROM teacher_courses tc
       JOIN courses c ON tc.course_id = c.id
       WHERE tc.teacher_id = ?
+      ORDER BY tc.assigned_date DESC
     `, [teacherId]);
     
     res.json(rows);
@@ -23,7 +24,6 @@ router.get('/teacher/:teacherId', async (req, res) => {
     res.status(500).json({ message: 'Error al obtener cursos del profesor' });
   }
 });
-
 
 // Obtener el ID del profesor a partir del ID de usuario
 router.get('/teacher-id/:userId', async (req, res) => {
@@ -61,9 +61,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'Este curso ya está asignado al profesor' });
     }
     
-    // Crear la asignación
+    // Crear la asignación con fecha actual
     const [result] = await pool.query(
-      'INSERT INTO teacher_courses (teacher_id, course_id) VALUES (?, ?)',
+      'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date) VALUES (?, ?, NOW())',
       [teacher_id, course_id]
     );
     
@@ -76,6 +76,49 @@ router.post('/', async (req, res) => {
   } catch (error) {
     console.error('Error al asignar curso:', error);
     res.status(500).json({ message: 'Error al asignar curso' });
+  }
+});
+
+// Actualizar la asignación de un curso
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { course_id } = req.body;
+    
+    // Verificar si la asignación existe
+    const [existing] = await pool.query(
+      'SELECT teacher_id FROM teacher_courses WHERE id = ?',
+      [id]
+    );
+    
+    if (existing.length === 0) {
+      return res.status(404).json({ message: 'Asignación no encontrada' });
+    }
+    
+    // Verificar si ya existe otra asignación con el mismo curso para este profesor
+    const [duplicate] = await pool.query(
+      'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ? AND id != ?',
+      [existing[0].teacher_id, course_id, id]
+    );
+    
+    if (duplicate.length > 0) {
+      return res.status(400).json({ message: 'Este curso ya está asignado al profesor' });
+    }
+    
+    // Actualizar la asignación
+    const [result] = await pool.query(
+      'UPDATE teacher_courses SET course_id = ? WHERE id = ?',
+      [course_id, id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Asignación no encontrada' });
+    }
+    
+    res.json({ message: 'Asignación actualizada correctamente' });
+  } catch (error) {
+    console.error('Error al actualizar asignación:', error);
+    res.status(500).json({ message: 'Error al actualizar asignación' });
   }
 });
 
@@ -97,6 +140,23 @@ router.delete('/:id', async (req, res) => {
   } catch (error) {
     console.error('Error al eliminar asignación:', error);
     res.status(500).json({ message: 'Error al eliminar asignación' });
+  }
+});
+
+// Actualizar el assigned_date de registros existentes con NULL
+router.patch('/fix-dates', async (req, res) => {
+  try {
+    const [result] = await pool.query(
+      'UPDATE teacher_courses SET assigned_date = NOW() WHERE assigned_date IS NULL'
+    );
+    
+    res.json({ 
+      message: 'Fechas actualizadas correctamente',
+      updatedRows: result.affectedRows
+    });
+  } catch (error) {
+    console.error('Error al actualizar fechas:', error);
+    res.status(500).json({ message: 'Error al actualizar fechas' });
   }
 });
 

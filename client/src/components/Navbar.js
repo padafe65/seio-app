@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Pencil, Users } from "lucide-react";
-import { Link, useNavigate } from 'react-router-dom';
 
 const Navbar = () => {
   const { authToken, logout, user, isAuthReady } = useAuth();
@@ -62,6 +62,14 @@ const Navbar = () => {
                 <li className="nav-item">
                   <Link className="nav-link" to="/admin">Administración</Link>
                 </li>
+                
+                {/* ✅ Enlace a Indicadores solo para docente, administrador y super_administrador */}
+                {['docente', 'administrador', 'super_administrador'].includes(user?.role) && (
+                  <li className="nav-item">
+                    <NavLink className="nav-link" to="/indicators">Indicadores</NavLink>
+                  </li>
+                )}
+
                 {user?.role === 'docente' && (
                   <>
                     <li className="nav-item">

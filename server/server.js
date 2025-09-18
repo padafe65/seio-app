@@ -1,3 +1,4 @@
+// Core modules
 import express from 'express';
 import cors from 'cors';
 import mysql from 'mysql2/promise';
@@ -8,19 +9,19 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
+
+// Route imports
 import questionRoutes from './routes/questionRoutes.js';
 import questionnaireRoutes from './routes/questionnaireRoutes.js';
 import quizRoutes from './routes/quiz.js';
-import pool from './config/db.js';
-// Importar las rutas de indicadores
-import indicatorRoutes from './routes/indicatorRoutes.js';
+import studentRoutes from './routes/studentRoutes.js';
 import evaluationResultsRoutes from './routes/evaluationResults.js';
-// En server.js, añadir:
 import improvementPlansRoutes from './routes/improvementPlans.js';
-// En server.js, añadir:
 import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
-// Importar las rutas de teacher_courses
 import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
+import teachers from './routes/teachers.js';
+import indicatorsRoutes from './routes/indicatorRoutes.js';
+import pool from './config/db.js';
 
 
 dotenv.config();
@@ -56,18 +57,28 @@ db.getConnection()
 });
 
 const app = express();
-app.use(cors());
+
+// Configuración de CORS
+const corsOptions = {
+  origin: 'http://localhost:3000', // Reemplaza con tu URL de frontend
+  credentials: true, // Habilita el envío de cookies
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+app.use(cors(corsOptions));
 app.use(express.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/api/', questionRoutes);
+// Configuración de rutas
+app.use('/api/students', studentRoutes);
+app.use('/api/questions', questionRoutes);
 app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
-app.use('/api/intentos-por-fase', quizRoutes);
-app.use('/api/indicators', indicatorRoutes);
-app.use('/api', evaluationResultsRoutes);
-app.use('/api', improvementPlansRoutes);
-app.use('/api', phaseEvaluationRoutes);
+app.use('/api/evaluation-results', evaluationResultsRoutes);
+app.use('/api/improvement-plans', improvementPlansRoutes);
+app.use('/api/phase-evaluation', phaseEvaluationRoutes);
+app.use('/api/teachers', teachers);
 app.use('/api/teacher-courses', teacherCoursesRoutes);
+app.use('/api/indicators', indicatorsRoutes);
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -1084,23 +1095,23 @@ app.post('/api/teacher/update-student-teacher', async (req, res) => {
 });
 
 // Añadir esta ruta a server.js
+// Ruta para obtener preguntas del docente por user_id
 app.get('/api/teacher/questions/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    
-    // Primero obtener la materia del docente
+
+    // Obtener el teacher_id correspondiente al user_id
     const [teacherRows] = await pool.query(
-      'SELECT subject FROM teachers WHERE user_id = ?',
+      'SELECT id, subject FROM teachers WHERE user_id = ?',
       [userId]
     );
-    
     if (teacherRows.length === 0) {
       return res.status(404).json({ message: 'Profesor no encontrado' });
     }
-    
+    const teacherId = teacherRows[0].id;
     const subject = teacherRows[0].subject;
-    
-    // Obtener las preguntas creadas por este docente o relacionadas con su materia
+
+    // Obtener las preguntas creadas por este docente (teacher_id) o relacionadas con su materia
     const [rows] = await pool.query(`
       SELECT 
         q.id, q.question_text, q.option1, q.option2, q.option3, q.option4,
@@ -1109,17 +1120,18 @@ app.get('/api/teacher/questions/:userId', async (req, res) => {
         qn.grade,
         qn.phase
       FROM questions q
-      JOIN questionnaires qn ON q.questionnaire_id = qn.id
+      LEFT JOIN questionnaires qn ON q.questionnaire_id = qn.id
       WHERE qn.created_by = ? OR q.category LIKE ?
       ORDER BY qn.created_at DESC
-    `, [userId, `${subject}_%`]);
-    
+    `, [teacherId, `${subject}_%`]);
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener preguntas del docente:', error);
     res.status(500).json({ message: 'Error al obtener preguntas del docente' });
   }
 });
+
 
 // Añadir a server.js o en authRoutes.js
 app.get('/api/auth/verify', verificarToken, (req, res) => {

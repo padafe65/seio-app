@@ -1,6 +1,6 @@
 // backend-rifa/routes/authRoutes.js
 import express from 'express';
-import { register, login } from '../controllers/authController';
+import { register, login, checkTeacher } from '../controllers/authController.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();

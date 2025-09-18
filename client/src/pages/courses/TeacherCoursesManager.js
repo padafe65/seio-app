@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
-import { Trash2, PlusCircle, BookOpen } from 'lucide-react';
+import { Trash2, PlusCircle, Edit3, Calendar, RefreshCw } from 'lucide-react';
 import Swal from 'sweetalert2';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -14,12 +14,13 @@ const TeacherCoursesManager = () => {
   const [assignedCourses, setAssignedCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState('');
   const [teacherId, setTeacherId] = useState(null);
+  const [editingCourse, setEditingCourse] = useState(null);
+  const [editSelectedCourse, setEditSelectedCourse] = useState('');
   
   useEffect(() => {
     const fetchTeacherId = async () => {
       try {
         if (user) {
-          // Obtener el ID del profesor a partir del ID de usuario
           const response = await axios.get(`${API_URL}/api/teacher-courses/teacher-id/${user.id}`);
           setTeacherId(response.data.teacherId);
           fetchAssignedCourses(response.data.teacherId);
@@ -54,9 +55,22 @@ const TeacherCoursesManager = () => {
       setAssignedCourses(response.data);
     } catch (error) {
       console.error('Error al obtener cursos asignados:', error);
+      setAssignedCourses([]);
     } finally {
       setLoading(false);
     }
+  };
+  
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Sin fecha';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('es-ES', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
   
   const handleAssignCourse = async () => {
@@ -92,6 +106,49 @@ const TeacherCoursesManager = () => {
     }
   };
   
+  const handleEditCourse = (course) => {
+    setEditingCourse(course);
+    setEditSelectedCourse(course.course_id);
+  };
+  
+  const handleUpdateCourse = async () => {
+    if (!editSelectedCourse) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Selecciona un curso',
+        text: 'Debes seleccionar un curso'
+      });
+      return;
+    }
+    
+    try {
+      await axios.put(`${API_URL}/api/teacher-courses/${editingCourse.id}`, {
+        course_id: parseInt(editSelectedCourse)
+      });
+      
+      Swal.fire({
+        icon: 'success',
+        title: 'Curso actualizado',
+        text: 'El curso ha sido actualizado correctamente'
+      });
+      
+      fetchAssignedCourses(teacherId);
+      setEditingCourse(null);
+      setEditSelectedCourse('');
+    } catch (error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: error.response?.data?.message || 'Error al actualizar curso'
+      });
+    }
+  };
+  
+  const handleCancelEdit = () => {
+    setEditingCourse(null);
+    setEditSelectedCourse('');
+  };
+  
   const handleRemoveCourse = async (id) => {
     const result = await Swal.fire({
       icon: 'warning',
@@ -123,9 +180,39 @@ const TeacherCoursesManager = () => {
     }
   };
   
+  const handleFixDates = async () => {
+    try {
+      await axios.patch(`${API_URL}/api/teacher-courses/fix-dates`);
+      
+      Swal.fire({
+        icon: 'success',
+        title: 'Fechas actualizadas',
+        text: 'Las fechas NULL han sido actualizadas'
+      });
+      
+      fetchAssignedCourses(teacherId);
+    } catch (error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: 'Error al actualizar fechas'
+      });
+    }
+  };
+  
   return (
     <div className="container py-4">
-      <h2 className="mb-4">Gestión de Cursos Asignados</h2>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h2 className="mb-0">Gestión de Cursos Asignados</h2>
+        <button 
+          className="btn btn-outline-secondary btn-sm"
+          onClick={handleFixDates}
+          title="Actualizar fechas NULL"
+        >
+          <RefreshCw size={16} className="me-1" />
+          Actualizar Fechas
+        </button>
+      </div>
       
       <div className="card mb-4">
         <div className="card-header bg-primary text-white">
@@ -184,25 +271,79 @@ const TeacherCoursesManager = () => {
                   <tr>
                     <th>Curso</th>
                     <th>Grado</th>
+                    <th>Fecha Asignación</th>
                     <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                {assignedCourses.map(course => (
+                  {assignedCourses.map(course => (
                     <tr key={course.id}>
-                    <td>{course.course_name}</td>
-                    {/* Mostrar grade solo si existe */}
-                    {course.grade && <td>{course.grade}</td>}
-                    <td className="text-end">
-                        <button 
-                        className="btn btn-sm btn-danger"
-                        onClick={() => handleRemoveCourse(course.id)}
-                        >
-                        <Trash2 size={16} />
-                        </button>
-                    </td>
+                      <td>
+                        {editingCourse?.id === course.id ? (
+                          <select 
+                            className="form-select form-select-sm"
+                            value={editSelectedCourse}
+                            onChange={(e) => setEditSelectedCourse(e.target.value)}
+                          >
+                            <option value="">Seleccionar curso...</option>
+                            {courses.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} - Grado {c.grade}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          course.course_name
+                        )}
+                      </td>
+                      <td>
+                        <span className="badge bg-primary">
+                          Grado {course.grade}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="d-flex align-items-center">
+                          <Calendar size={16} className="me-1 text-muted" />
+                          {formatDate(course.assigned_date)}
+                        </div>
+                      </td>
+                      <td className="text-end">
+                        {editingCourse?.id === course.id ? (
+                          <div className="btn-group" role="group">
+                            <button 
+                              className="btn btn-sm btn-success"
+                              onClick={handleUpdateCourse}
+                            >
+                              Guardar
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-secondary"
+                              onClick={handleCancelEdit}
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="btn-group" role="group">
+                            <button 
+                              className="btn btn-sm btn-outline-primary"
+                              onClick={() => handleEditCourse(course)}
+                              title="Editar"
+                            >
+                              <Edit3 size={16} />
+                            </button>
+                            <button 
+                              className="btn btn-sm btn-danger"
+                              onClick={() => handleRemoveCourse(course.id)}
+                              title="Eliminar"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
-                ))}
+                  ))}
                 </tbody>
               </table>
             </div>

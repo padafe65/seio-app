@@ -48,11 +48,13 @@ const Dashboard = () => {
           
           // Obtener preguntas relacionadas con la materia del docente o creadas por él
           try {
-            const questionsResponse = await axios.get(`${API_URL}/api/questions?created_by=${user.id}&subject=${subject}`);
-            setTeacherQuestions(questionsResponse.data.slice(0, 5)); // Mostrar solo las primeras 5
+            // Usa la nueva ruta específica para preguntas del docente
+            const questionsResponse = await axios.get(`${API_URL}/api/teacher/questions/${user.id}`);
+            setTeacherQuestions(questionsResponse.data.slice(0, 5));
           } catch (error) {
             console.error('Error al cargar preguntas del docente:', error);
           }
+
         } catch (error) {
           console.error('Error al cargar datos del docente:', error);
         }
@@ -229,52 +231,57 @@ const Dashboard = () => {
       )}
 
       {/* Mis Preguntas - Nueva sección */}
-      {user.role === 'docente' && teacherQuestions.length > 0 && (
-        <div className="card mb-4">
-          <div className="card-header bg-white d-flex justify-content-between align-items-center">
-            <h5 className="mb-0">Mis Preguntas {teacherSubject ? `(${teacherSubject})` : ''}</h5>
-            <Link to="/crear-pregunta" className="btn btn-sm btn-primary">
-              <PlusCircle size={16} className="me-1" /> Nueva Pregunta
+{user.role === 'docente' && teacherQuestions.length > 0 && (
+  <div className="card mb-4">
+    <div className="card-header bg-white d-flex justify-content-between align-items-center">
+      <h5 className="mb-0">Mis Preguntas {teacherSubject ? `(${teacherSubject})` : ''}</h5>
+      <Link to="/crear-pregunta" className="btn btn-sm btn-primary">
+        <PlusCircle size={16} className="me-1" /> Nueva Pregunta
+      </Link>
+    </div>
+    <div className="card-body">
+      <div className="table-responsive">
+        <table className="table table-hover">
+          <thead>
+            <tr>
+              <th>Pregunta</th>
+              <th>Categoría</th>
+              <th>Cuestionario</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {teacherQuestions.map(question => (
+              <tr key={question.id}>
+                <td>{question.question_text?.substring(0, 50)}...</td>
+                <td>{question.category?.split('_')[1] || question.category}</td>
+                <td>
+                  {/* AQUÍ ESTÁ EL CAMBIO PRINCIPAL */}
+                  <span className="badge bg-info text-white">
+                    {question.questionnaire_title || 'Sin cuestionario'}
+                  </span>
+                </td>
+                <td>
+                  <Link to={`/preguntas/${question.id}/editar`} className="btn btn-sm btn-outline-primary me-2">
+                    Editar
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {teacherQuestions.length > 5 && (
+          <div className="text-center mt-3">
+            <Link to="/mis-preguntas" className="btn btn-outline-primary">
+              Ver todas mis preguntas
             </Link>
           </div>
-          <div className="card-body">
-            <div className="table-responsive">
-              <table className="table table-hover">
-                <thead>
-                  <tr>
-                    <th>Pregunta</th>
-                    <th>Categoría</th>
-                    <th>Cuestionario</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {teacherQuestions.map(question => (
-                    <tr key={question.id}>
-                      <td>{question.question_text?.substring(0, 50)}...</td>
-                      <td>{question.category?.split('_')[1] || question.category}</td>
-                      <td>{question.questionnaire_title || 'N/A'}</td>
-                      <td>
-                        <Link to={`/preguntas/${question.id}/editar`} className="btn btn-sm btn-outline-primary me-2">
-                          Editar
-                        </Link>
+        )}
+      </div>
+    </div>
+  </div>
+)}
 
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {teacherQuestions.length > 5 && (
-                <div className="text-center mt-3">
-                  <Link to="/mis-preguntas" className="btn btn-outline-primary">
-                    Ver todas mis preguntas
-                  </Link>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Tabla de calificaciones por fase */}
       {user.role === 'docente' && studentGrades.length > 0 && (
