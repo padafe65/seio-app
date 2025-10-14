@@ -34,16 +34,59 @@ const StudentGrades = () => {
         };
 
         // Obtener información del estudiante
+        // El 'id' de la URL es students.id
         const studentResponse = await axios.get(`${API_URL}/api/students/${id}`, config);
-        setStudent(studentResponse.data);
         
-        // Obtener calificaciones por fase
-        const gradesResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${studentResponse.data.user_id}`, config);
-        setPhaseAverages(gradesResponse.data);
+        // El backend retorna { success: true, data: {...} }
+        const studentData = studentResponse.data.data || studentResponse.data;
+        setStudent(studentData);
         
-        // Obtener calificaciones generales
-        const [studentGrades] = gradesResponse.data.filter(g => g.overall_average !== null);
-        setGrades(studentGrades || null);
+        console.log('📊 Datos del estudiante:', studentData);
+        
+        // IMPORTANTE: Para las calificaciones, el backend espera user_id (users.id)
+        // La relación es: 
+        //   URL tiene students.id (30) → GET /api/students/30 retorna student con user_id (28)
+        //   Luego usar user_id (28) para buscar calificaciones
+        //   Backend convierte user_id → students.id internamente
+        const userId = studentData.user_id;
+        console.log('🔍 Buscando calificaciones para user_id:', userId, '(del student.id:', id, ')');
+        
+        if (!userId) {
+          console.error('❌ No se pudo obtener user_id del estudiante');
+          setError('No se pudo obtener la información del estudiante');
+          setLoading(false);
+          return;
+        }
+        
+        const gradesResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${userId}`, config);
+        console.log('📈 Respuesta de evaluaciones por fase:', gradesResponse.data);
+        
+        const phaseData = gradesResponse.data || [];
+        setPhaseAverages(phaseData);
+        
+        // Calcular promedio general desde los datos de fase
+        // Si hay overall_average en algún registro, usarlo; sino calcularlo desde phase_average
+        let overallGrade = null;
+        if (phaseData.length > 0) {
+          // Buscar si hay overall_average en los datos
+          const recordWithOverall = phaseData.find(g => g.overall_average !== null && g.overall_average !== undefined);
+          if (recordWithOverall) {
+            overallGrade = { overall_average: recordWithOverall.overall_average };
+          } else {
+            // Calcular promedio de los promedios de fase que existan
+            const validPhaseAverages = phaseData
+              .map(p => p.phase_average)
+              .filter(avg => avg !== null && avg !== undefined);
+            
+            if (validPhaseAverages.length > 0) {
+              const calculatedAverage = validPhaseAverages.reduce((sum, avg) => sum + parseFloat(avg), 0) / validPhaseAverages.length;
+              overallGrade = { overall_average: calculatedAverage.toFixed(2) };
+            }
+          }
+        }
+        
+        console.log('🎯 Promedio general calculado:', overallGrade);
+        setGrades(overallGrade);
         
         setLoading(false);
       } catch (error) {
@@ -86,7 +129,7 @@ const StudentGrades = () => {
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h4 className="mb-0">Calificaciones de {student.name}</h4>
+        <h4 className="mb-0">Calificaciones de {student.user_name || student.name}</h4>
         <div>
           <Link to={`/estudiantes/${id}`} className="btn btn-outline-secondary me-2">
             Ver Perfil
@@ -104,8 +147,8 @@ const StudentGrades = () => {
         <div className="card-body">
           <div className="row">
             <div className="col-md-6">
-              <p><strong>Nombre:</strong> {student.name}</p>
-              <p><strong>Email:</strong> {student.email}</p>
+              <p><strong>Nombre:</strong> {student.user_name || student.name}</p>
+              <p><strong>Email:</strong> {student.user_email || student.email}</p>
             </div>
             <div className="col-md-6">
               <p><strong>Grado:</strong> {student.grade}°</p>
