@@ -18,12 +18,27 @@ const StudentGrades = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // Obtener token de autenticación
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          setError('No se encontró token de autenticación');
+          setLoading(false);
+          return;
+        }
+
+        const config = {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        };
+
         // Obtener información del estudiante
-        const studentResponse = await axios.get(`${API_URL}/api/students/${id}`);
+        const studentResponse = await axios.get(`${API_URL}/api/students/${id}`, config);
         setStudent(studentResponse.data);
         
         // Obtener calificaciones por fase
-        const gradesResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${studentResponse.data.user_id}`);
+        const gradesResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${studentResponse.data.user_id}`, config);
         setPhaseAverages(gradesResponse.data);
         
         // Obtener calificaciones generales
