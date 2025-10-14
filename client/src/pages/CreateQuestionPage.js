@@ -108,7 +108,18 @@ const CreateQuestionPage = () => {
 
   const fetchQuestions = async () => {
     try {
-      const res = await axios.get('/questions');
+      // Obtener el user_id del usuario autenticado
+      const userStr = localStorage.getItem('user');
+      if (!userStr) {
+        console.error('No hay usuario autenticado');
+        return;
+      }
+      
+      const user = JSON.parse(userStr);
+      const userId = user.id;
+      
+      // Obtener solo las preguntas del docente actual
+      const res = await axios.get(`/teacher/questions/${userId}`);
       setQuestions(res.data);
     } catch (err) {
       console.error('Error cargando preguntas:', err.message);
@@ -545,8 +556,17 @@ await axios.post(`/questions/question`, data, {
                       <td>{q.id}</td>
                       <td>
                         {q.question_text ? (
-                          <div className="math-preview">
-                            <BlockMath math={q.question_text || ''} />
+                          <div 
+                            className="math-preview"
+                            style={{
+                              maxWidth: '400px',
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word'
+                            }}
+                          >
+                            <MathJax hideUntilTypeset="first">
+                              {q.question_text.replace(/\$(.*?)\$/g, '\\($1\\)')}
+                            </MathJax>
                           </div>
                         ) : (
                           <span className="text-muted">Sin texto</span>
@@ -558,7 +578,9 @@ await axios.post(`/questions/question`, data, {
                             <li key={n}>
                               {q[`option${n}`] ? (
                                 <div className="math-preview">
-                                  <InlineMath math={q[`option${n}`] || ''} />
+                                  <MathJax hideUntilTypeset="first">
+                                    {q[`option${n}`].replace(/\$(.*?)\$/g, '\\($1\\)')}
+                                  </MathJax>
                                 </div>
                               ) : (
                                 <span className="text-muted">Sin opción {n}</span>

@@ -245,6 +245,7 @@ const Dashboard = () => {
           <thead>
             <tr>
               <th>Pregunta</th>
+              <th>Materia</th>
               <th>Categoría</th>
               <th>Cuestionario</th>
               <th>Acciones</th>
@@ -254,9 +255,13 @@ const Dashboard = () => {
             {teacherQuestions.map(question => (
               <tr key={question.id}>
                 <td>{question.question_text?.substring(0, 50)}...</td>
-                <td>{question.category?.split('_')[1] || question.category}</td>
                 <td>
-                  {/* AQUÍ ESTÁ EL CAMBIO PRINCIPAL */}
+                  <span className="badge bg-secondary">
+                    {question.subject || question.category?.split('_')[0] || 'N/A'}
+                  </span>
+                </td>
+                <td>{question.category || 'N/A'}</td>
+                <td>
                   <span className="badge bg-info text-white">
                     {question.questionnaire_title || 'Sin cuestionario'}
                   </span>

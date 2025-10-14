@@ -44,7 +44,14 @@ const EditarPreguntas = () => {
   useEffect(() => {
     const fetchQuestionnaires = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/questionnaires`);
+        const token = localStorage.getItem('authToken');
+        const config = {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        };
+        const res = await axios.get(`${API_URL}/api/questionnaires`, config);
         setQuestionnaires(res.data);
       } catch (err) {
         console.error('Error cargando cuestionarios:', err.message);
@@ -63,8 +70,15 @@ useEffect(() => {
       setLoading(true);
       try {
         console.log(`Cargando pregunta con ID: ${id}`);
-        const response = await axios.get(`${API_URL}/api/questions/${id}`);
-        const questionData = response.data;
+        const token = localStorage.getItem('authToken');
+        const config = {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        };
+        const response = await axios.get(`${API_URL}/api/questions/question/${id}`, config);
+        const questionData = response.data.data || response.data;
         
         setFormData({
           question_text: questionData.question_text || '',
@@ -151,10 +165,14 @@ useEffect(() => {
     }
 
     try {
+      // Obtener token de autenticación
+      const token = localStorage.getItem('authToken');
+      
       // Actualizar pregunta
       await axios.put(`${API_URL}/api/questions/${id}`, data, {
         headers: {
-          'Content-Type': 'multipart/form-data'
+          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`
         }
       });
       

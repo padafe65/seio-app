@@ -1133,6 +1133,8 @@ app.get('/api/teacher/questions/:userId', async (req, res) => {
         q.id, q.question_text, q.option1, q.option2, q.option3, q.option4,
         q.correct_answer, q.category, q.image_url, q.questionnaire_id,
         qn.title as questionnaire_title,
+        qn.subject,
+        qn.category as questionnaire_category,
         qn.grade,
         qn.phase
       FROM questions q
