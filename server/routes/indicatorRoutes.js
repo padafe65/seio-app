@@ -49,10 +49,11 @@ router.get('/', verifyToken, async (req, res) => {
         i.id,
         i.description,
         i.subject,
+        i.category,
         i.phase,
         i.created_at,
         i.teacher_id,
-        si.questionnaire_id,
+        i.questionnaire_id,
         q.title as questionnaire_title,
         t.subject as teacher_subject, 
         u.name as teacher_name,
@@ -65,7 +66,7 @@ router.get('/', verifyToken, async (req, res) => {
       LEFT JOIN users u ON t.user_id = u.id
       LEFT JOIN student_indicators si ON i.id = si.indicator_id
       LEFT JOIN students s ON si.student_id = s.id
-      LEFT JOIN questionnaires q ON si.questionnaire_id = q.id
+      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       WHERE 1=1
     `;
     
@@ -262,20 +263,31 @@ router.post('/', verifyToken, async (req, res) => {
     
     const { 
       teacher_id, 
-      student_id = null, // Cambiado a student_id singular
+      student_id = null, // Retrocompatibilidad: student_id singular
+      student_ids = [], // Nuevo: array de estudiantes
       description, 
       subject, 
+      category = null,
       phase, 
       achieved = false,
       questionnaire_id = null,
       grade
     } = req.body;
     
+    // Normalizar student_ids: si viene student_id singular, convertir a array
+    let studentsToAssign = [];
+    if (student_ids && Array.isArray(student_ids) && student_ids.length > 0) {
+      studentsToAssign = student_ids.map(id => parseInt(id)).filter(id => !isNaN(id));
+    } else if (student_id) {
+      studentsToAssign = [parseInt(student_id)];
+    }
+    
     console.log('📝 Datos recibidos para crear indicador:', {
       teacher_id,
-      student_id,
+      student_ids: studentsToAssign,
       description_length: description?.length,
       subject,
+      category,
       phase,
       grade,
       achieved,
@@ -309,27 +321,29 @@ router.post('/', verifyToken, async (req, res) => {
       }
     }
     
-    // Validar student_id si se proporciona
-    if (student_id) {
-      const [student] = await connection.query(
-        'SELECT id FROM students WHERE id = ?',
-        [student_id]
+    // Validar estudiantes si se proporcionan
+    if (studentsToAssign.length > 0) {
+      const placeholders = studentsToAssign.map(() => '?').join(',');
+      const [students] = await connection.query(
+        `SELECT id FROM students WHERE id IN (${placeholders})`,
+        studentsToAssign
       );
       
-      if (student.length === 0) {
-        throw new Error('El estudiante especificado no existe');
+      if (students.length !== studentsToAssign.length) {
+        throw new Error('Uno o más estudiantes especificados no existen');
       }
     }
     
     // Crear el indicador
     const [result] = await connection.query(`
       INSERT INTO indicators 
-      (teacher_id, description, subject, phase, questionnaire_id, grade) 
-      VALUES (?, ?, ?, ?, ?, ?)
+      (teacher_id, description, subject, category, phase, questionnaire_id, grade) 
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
       teacher_id, 
       description, 
-      subject, 
+      subject,
+      category,
       phase, 
       questionnaire_id,
       grade
@@ -338,22 +352,27 @@ router.post('/', verifyToken, async (req, res) => {
     const indicatorId = result.insertId;
     console.log(`✅ Indicador creado con ID: ${indicatorId}`);
     
-    // Si se proporcionó un estudiante, asociarlo al indicador
-    if (student_id) {
-      console.log(`🔗 Asociando estudiante ${student_id} al indicador...`);
+    // Asociar estudiantes al indicador si se proporcionaron
+    if (studentsToAssign.length > 0) {
+      console.log(`🔗 Asociando ${studentsToAssign.length} estudiante(s) al indicador...`);
       
-      await connection.query(`
-        INSERT INTO student_indicators 
-        (student_id, indicator_id, achieved, assigned_at) 
-        VALUES (?, ?, ?, ?)
-      `, [
-        student_id,
-        indicatorId,
-        achieved ? 1 : 0,
-        new Date()
-      ]);
+      const insertPromises = studentsToAssign.map(studentId => 
+        connection.query(`
+          INSERT INTO student_indicators 
+          (student_id, indicator_id, achieved, questionnaire_id, assigned_at) 
+          VALUES (?, ?, ?, ?, ?)
+        `, [
+          studentId,
+          indicatorId,
+          achieved ? 1 : 0,
+          questionnaire_id,
+          new Date()
+        ])
+      );
       
-      console.log('✅ Estudiante asociado al indicador');
+      await Promise.all(insertPromises);
+      
+      console.log(`✅ ${studentsToAssign.length} estudiante(s) asociado(s) al indicador`);
     }
     
     await connection.commit();
@@ -402,6 +421,7 @@ router.put('/:id', verifyToken, async (req, res) => {
     const { 
       description, 
       subject, 
+      category = null,
       phase, 
       achieved = false,
       questionnaire_id = null,
@@ -429,163 +449,92 @@ router.put('/:id', verifyToken, async (req, res) => {
       LIMIT 1
     `, [teacher_id, phase, grade]);
 
-    const foundQuestionnaireId = questionnaires[0]?.id || null;
-    
-    if (!foundQuestionnaireId) {
-      await connection.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'No se encontró un cuestionario para el grado y fase especificados',
-        details: `Buscando cuestionario para teacher_id: ${teacher_id}, phase: ${phase}, grade: ${grade}`
-      });
+    const foundQuestionnaireId = questionnaires.length > 0 ? questionnaires[0].id : null;
+    console.log(`🔍 Cuestionario encontrado para la actualización: ${foundQuestionnaireId}`);
+
+    // 2. Verificar propiedad o rol de administrador
+    const [indicator] = await connection.query('SELECT teacher_id FROM indicators WHERE id = ?', [id]);
+    if (indicator.length === 0) {
+      return res.status(404).json({ success: false, message: 'Indicador no encontrado' });
     }
 
-    // 2. Actualizar información básica del indicador
-    const [updateResult] = await connection.query(`
+    const isOwner = indicator[0].teacher_id === teacher_id;
+    const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'No tienes permiso para editar este indicador' });
+    }
+
+    // 3. Actualizar información básica del indicador, incluyendo el questionnaire_id
+    await connection.query(`
       UPDATE indicators 
-      SET description = COALESCE(?, description),
-          subject = COALESCE(?, subject),
-          phase = ?,
-          grade = ?
-      WHERE id = ? AND teacher_id = ?
+      SET 
+        description = COALESCE(?, description),
+        subject = COALESCE(?, subject),
+        category = COALESCE(?, category),
+        phase = ?,
+        grade = ?,
+        questionnaire_id = ?
+      WHERE id = ?
     `, [
       description, 
-      subject, 
+      subject,
+      category,
       phase, 
       grade, 
-      id,
-      teacher_id
+      foundQuestionnaireId, // Usar el ID del cuestionario encontrado
+      id
     ]);
     
-    if (updateResult.affectedRows === 0) {
-      await connection.rollback();
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Indicador no encontrado o no tienes permiso para editarlo' 
-      });
-    }
-    
     console.log(`✅ Información básica del indicador ${id} actualizada`);
-    
-    console.log('🔄 Gestionando relaciones con estudiantes para el indicador', id, '...');
-    
-    // 1. Obtener relaciones existentes para este indicador
-    const [currentRelations] = await connection.query(
-      'SELECT * FROM student_indicators WHERE indicator_id = ?',
+
+    // --- Lógica de Sincronización de Estudiantes ---
+    console.log('🔄 Sincronizando estudiantes para el indicador', id);
+
+    // 4. Obtener las asignaciones actuales de la base de datos
+    const [currentAssignments] = await connection.query(
+      'SELECT student_id FROM student_indicators WHERE indicator_id = ?',
       [id]
     );
-    
-    console.log('🔍 Relaciones actuales para el indicador', id, ':', currentRelations);
-    
-    // 2. Si no hay estudiantes seleccionados, no hacemos nada con las relaciones existentes
-    if (!Array.isArray(student_ids) || student_ids.length === 0) {
-      console.log('ℹ️ No hay estudiantes seleccionados. Se mantienen las relaciones existentes.');
-      // No hacemos nada con las relaciones existentes
-    }
-    
-    // 3. Inicializar variables para el seguimiento de cambios
-    let studentIds = [];
-    const currentRelationsMap = new Map();
-    let updatedCount = 0;
-    let createdCount = 0;
-    
-    // Procesar student_ids, manejando el caso especial 'all'
-    if (Array.isArray(student_ids)) {
-      // Si se seleccionó 'all', obtener todos los estudiantes del docente
-      if (student_ids.includes('all')) {
-        const [allStudents] = await connection.query(
-          'SELECT s.id FROM students s JOIN teacher_students ts ON s.id = ts.student_id WHERE ts.teacher_id = ?',
-          [teacher_id]
-        );
-        studentIds = allStudents.map(s => parseInt(s.id));
-      } else {
-        // Convertir student_ids a números
-        studentIds = student_ids.map(id => parseInt(id));
-      }
-      
-      // Crear mapa de relaciones existentes
-      currentRelations.forEach(rel => {
-        currentRelationsMap.set(parseInt(rel.student_id), rel);
-      });
-      
-      console.log('📌 Estudiantes a procesar:', studentIds);
-      console.log('📌 Relaciones existentes:', Array.from(currentRelationsMap.keys()));
-    }
-    
-    // 4. Procesar cada estudiante seleccionado (si hay alguno)
-    if (studentIds.length > 0) {
-      for (const studentId of studentIds) {
-        try {
-          // Verificar si ya existe una relación activa para este estudiante e indicador
-          const [existingRelation] = await connection.query(
-            `SELECT id FROM student_indicators 
-             WHERE indicator_id = ? AND student_id = ? 
-             ORDER BY assigned_at DESC LIMIT 1`,
-            [id, studentId]
-          );
+    const currentStudentIds = new Set(currentAssignments.map(a => a.student_id));
+    console.log('🔍 IDs en BD:', Array.from(currentStudentIds));
 
-          if (existingRelation.length > 0) {
-            // Si ya existe una relación, la actualizamos en lugar de crear una nueva
-            const [updateResult] = await connection.query(
-              `UPDATE student_indicators 
-               SET achieved = ?, questionnaire_id = ?, assigned_at = ? 
-               WHERE id = ?`,
-              [
-                achieved ? 1 : 0,
-                foundQuestionnaireId,
-                new Date(),
-                existingRelation[0].id
-              ]
-            );
-            
-            if (updateResult.affectedRows > 0) {
-              updatedCount++;
-              console.log(`🔄 Relación actualizada para estudiante ${studentId} (ID: ${existingRelation[0].id})`);
-            }
-          } else {
-            // Si no existe una relación, creamos una nueva
-            const [result] = await connection.query(
-              `INSERT INTO student_indicators 
-               (indicator_id, student_id, achieved, questionnaire_id, assigned_at) 
-               VALUES (?, ?, ?, ?, ?)`,
-              [
-                id,
-                studentId,
-                achieved ? 1 : 0,
-                foundQuestionnaireId,
-                new Date()
-              ]
-            );
-            createdCount++;
-            console.log(`✅ Nueva relación creada para estudiante ${studentId} (ID: ${result.insertId})`);
-          }
-        } catch (error) {
-          console.error(`❌ Error al procesar relación para estudiante ${studentId}:`, error);
-          // Continuar con los siguientes estudiantes en caso de error
-          continue;
-        }
-      }
-      
-      // 5. No eliminamos relaciones existentes, solo actualizamos o creamos nuevas
-      // Esto evita la pérdida de datos históricos
-      console.log('ℹ️ Se mantienen todas las relaciones existentes. Solo se actualizan o crean nuevas.');
-    
-      console.log('📊 Resumen de cambios:', {
-        indicador_id: id,
-        relaciones_actualizadas: updatedCount,
-        nuevas_relaciones_creadas: createdCount,
-        cuestionario_asociado: foundQuestionnaireId || 'Ninguno',
-        total_estudiantes_asignados: updatedCount + createdCount
-      });
+    // 5. Obtener los IDs que vienen del frontend
+    const incomingStudentIds = new Set(student_ids.map(sid => parseInt(sid, 10)));
+    console.log('📥 IDs del Frontend:', Array.from(incomingStudentIds));
+
+    // 6. Calcular diferencias
+    const toAdd = [...incomingStudentIds].filter(sid => !currentStudentIds.has(sid));
+    const toRemove = [...currentStudentIds].filter(sid => !incomingStudentIds.has(sid));
+
+    console.log('➕ Estudiantes para añadir:', toAdd);
+    console.log('➖ Estudiantes para eliminar:', toRemove);
+
+    // 7. Eliminar asignaciones que ya no están
+    if (toRemove.length > 0) {
+      await connection.query(
+        'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id IN (?)',
+        [id, toRemove]
+      );
+      console.log(`✅ ${toRemove.length} asignaciones eliminadas.`);
     }
-    // 5. Obtener el cuestionario más reciente para este docente, fase y grado
-    const [questionnaireResult] = await connection.query(
-      'SELECT id, title FROM questionnaires WHERE created_by = ? AND phase = ? AND grade = ? ORDER BY created_at DESC LIMIT 1',
-      [teacher_id, phase, grade]
-    );
-    
-    const currentQuestionnaire = questionnaireResult.length > 0 ? questionnaireResult[0] : null;
-    const questionnaireId = currentQuestionnaire ? currentQuestionnaire.id : null;
+
+    // 8. Añadir nuevas asignaciones
+    if (toAdd.length > 0) {
+      const insertValues = toAdd.map(studentId => [id, studentId, achieved, new Date()]);
+      await connection.query(
+        'INSERT INTO student_indicators (indicator_id, student_id, achieved, assigned_at) VALUES ?',
+        [insertValues]
+      );
+      console.log(`✅ ${toAdd.length} nuevas asignaciones creadas.`);
+    }
+
+    // El questionnaireId ya fue obtenido como foundQuestionnaireId
+    const questionnaireId = foundQuestionnaireId;
+    const [questionnaireResult] = questionnaireId 
+      ? await connection.query('SELECT title FROM questionnaires WHERE id = ?', [questionnaireId]) 
+      : [[]];
+    const currentQuestionnaire = questionnaireResult.length > 0 ? { id: questionnaireId, ...questionnaireResult[0] } : null;
 
     // 6. Obtener el indicador con sus relaciones
     // Primero obtenemos los datos básicos del indicador
@@ -637,13 +586,13 @@ router.put('/:id', verifyToken, async (req, res) => {
     
     // Obtener información de los estudiantes asignados para la respuesta
     let studentInfo = [];
-    if (studentIds && studentIds.length > 0) {
+    if (student_ids && student_ids.length > 0) { // Corregido: studentIds -> student_ids
       const [studentInfoResult] = await connection.query(
         `SELECT s.id, u.name 
          FROM students s 
          JOIN users u ON s.user_id = u.id 
          WHERE s.id IN (?)`,
-        [studentIds]
+        [student_ids] // Corregido: studentIds -> student_ids
       );
       studentInfo = studentInfoResult;
     }
@@ -735,18 +684,26 @@ router.delete('/:id', verifyToken, async (req, res) => {
     const { id } = req.params;
     console.log(`🗑️  Solicitada eliminación del indicador ID: ${id}`);
     
-    // 1. Verificar que el indicador existe
+    // 1. Obtener el ID del profesor para la validación
+    const [teacher] = await connection.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+    const teacherId = teacher.length > 0 ? teacher[0].id : null;
+
+    // 2. Verificar que el indicador existe y obtener su propietario
     const [indicator] = await connection.query(
-      'SELECT id FROM indicators WHERE id = ?',
+      'SELECT id, teacher_id FROM indicators WHERE id = ?',
       [id]
     );
     
     if (indicator.length === 0) {
-      console.log(`❌ No se encontró el indicador con ID: ${id}`);
-      return res.status(404).json({
-        success: false,
-        message: 'El indicador especificado no existe'
-      });
+      return res.status(404).json({ success: false, message: 'Indicador no encontrado' });
+    }
+
+    // 3. Validar permisos: debe ser el propietario o un administrador
+    const isOwner = indicator[0].teacher_id === teacherId;
+    const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ success: false, message: 'No tienes permiso para eliminar este indicador' });
     }
     
     // 2. Eliminar las relaciones con estudiantes primero (por restricciones de clave foránea)
@@ -1289,16 +1246,16 @@ router.delete('/:indicatorId/students/:studentId',
 
       const teacherId = teacher[0].id; // Este es el ID del profesor en la tabla teachers
 
-      // 2. Verificar que el indicador pertenece al docente
+      // 2. Verificar que el indicador existe (sin comprobar el propietario)
       const [indicator] = await connection.query(
-        'SELECT i.id, i.teacher_id, i.description FROM indicators i WHERE i.id = ? AND i.teacher_id = ?',
-        [indicatorId, teacherId]
+        'SELECT id, description FROM indicators WHERE id = ?',
+        [indicatorId]
       );
 
       if (indicator.length === 0) {
         return res.status(404).json({
           success: false,
-          message: 'Indicador no encontrado o no autorizado'
+          message: 'Indicador no encontrado'
         });
       }
 
@@ -1333,10 +1290,16 @@ router.delete('/:indicatorId/students/:studentId',
       }
 
       // 4. Eliminar la relación
-      await connection.query(
+      const [deleteResult] = await connection.query(
         'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
         [indicatorId, studentId]
       );
+
+      if (deleteResult.affectedRows === 0) {
+        // Esto puede ocurrir si la relación ya fue eliminada en otra petición
+        console.warn(`⚠️ No se eliminó ninguna fila para el indicador ${indicatorId} y el estudiante ${studentId}. Puede que ya no existiera.`);
+        // No lo tratamos como un error fatal, simplemente lo advertimos y continuamos
+      }
       
       // 5. Registrar la acción en el log de auditoría (si la tabla existe)
       try {
@@ -1392,7 +1355,151 @@ router.delete('/:indicatorId/students/:studentId',
         connection.release();
       }
     }
+});
+
+// Asignar indicador a múltiples estudiantes
+router.post('/:id/assign-bulk', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const { id: indicatorId } = req.params;
+    let { student_ids, achieved = false } = req.body;
+    const userId = req.user.id;
+
+    console.log(`📦 Asignación masiva del indicador ${indicatorId} a estudiantes:`, student_ids);
+
+    // 1. Obtener el ID del profesor
+    const [teacher] = await connection.query(
+      'SELECT id, user_id FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+
+    if (teacher.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'Acceso denegado: no tienes permisos de profesor'
+      });
+    }
+
+    const teacherId = teacher[0].id;
+
+    // 2. Verificar que el indicador pertenece al docente
+    const [indicator] = await connection.query(
+      'SELECT id, teacher_id, description FROM indicators WHERE id = ?',
+      [indicatorId]
+    );
+
+    if (indicator.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Indicador no encontrado'
+      });
+    }
+
+    if (indicator[0].teacher_id !== teacherId) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permiso para modificar este indicador'
+      });
+    }
+
+    // 3. Validar y procesar student_ids
+    if (!Array.isArray(student_ids) || student_ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe proporcionar una lista de IDs de estudiantes.'
+      });
+    }
+
+    let targetStudentIds = [];
+    let alreadyAssignedCount = 0;
+
+    if (student_ids.length === 1 && student_ids[0] === 'all') {
+      console.log('🔄 Modo "todos": asignando a todos los estudiantes que faltan.');
+
+      // Obtener todos los estudiantes activos del profesor
+      const [allTeacherStudents] = await connection.query(
+        `SELECT s.id FROM students s
+         JOIN teacher_students ts ON s.id = ts.student_id
+         WHERE ts.teacher_id = ? AND s.estado = 'activo'`, 
+        [teacherId]
+      );
+      const allStudentIds = allTeacherStudents.map(s => s.id);
+
+      // Obtener los que ya tienen el indicador
+      const [alreadyAssigned] = await connection.query(
+        'SELECT student_id FROM student_indicators WHERE indicator_id = ? AND student_id IN (?)',
+        [indicatorId, allStudentIds]
+      );
+      const alreadyAssignedIds = new Set(alreadyAssigned.map(r => r.student_id));
+
+      // Filtrar para obtener solo los que faltan
+      targetStudentIds = allStudentIds.filter(id => !alreadyAssignedIds.has(id));
+      alreadyAssignedCount = alreadyAssignedIds.size;
+
+    } else {
+      // Lógica original: validar que los estudiantes pertenecen al profesor
+      const [validStudents] = await connection.query(
+        `SELECT s.id FROM students s
+         JOIN teacher_students ts ON s.id = ts.student_id
+         WHERE ts.teacher_id = ? AND s.id IN (?) AND s.estado = 'activo'`,
+        [teacherId, student_ids]
+      );
+      targetStudentIds = validStudents.map(s => s.id);
+    }
+
+    if (targetStudentIds.length === 0) {
+      await connection.commit(); // Confirmar transacción aunque no se haga nada
+      return res.status(200).json({
+        success: true,
+        message: 'No hay estudiantes nuevos a los que asignar el indicador. Todos los seleccionados ya lo tenían asignado.',
+        data: {
+          assigned_students: 0,
+          already_assigned: alreadyAssignedCount,
+          total_requested: student_ids.length
+        }
+      });
+    }
+
+    // 5. Insertar las nuevas asignaciones
+    const insertValues = targetStudentIds.map(studentId => [indicatorId, studentId, achieved, new Date()]);
+    const insertQuery = `
+      INSERT INTO student_indicators
+      (indicator_id, student_id, achieved, assigned_at)
+      VALUES ${insertValues.map(() => '(?, ?, ?, ?)').join(', ')}
+    `;
+
+    const flattenedValues = insertValues.flat();
+    const [result] = await connection.query(insertQuery, flattenedValues);
+
+    console.log(`✅ Asignación masiva completada: ${result.affectedRows} estudiantes asignados`);
+
+    await connection.commit();
+
+    res.json({
+      success: true,
+      message: `Indicador asignado a ${result.affectedRows} nuevo(s) estudiante(s)`,
+      data: {
+        indicator_id: indicatorId,
+        assigned_students: result.affectedRows,
+        already_assigned: alreadyAssignedCount,
+        total_students_in_class: student_ids[0] === 'all' ? targetStudentIds.length + alreadyAssignedCount : student_ids.length
+      }
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('❌ Error en asignación masiva:', error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Error al asignar indicador a estudiantes',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  } finally {
+    connection.release();
   }
-);
+});
 
 export default router;

@@ -49,10 +49,11 @@ router.get('/', verifyToken, async (req, res) => {
         i.id,
         i.description,
         i.subject,
+        i.category,
         i.phase,
         i.created_at,
         i.teacher_id,
-        si.questionnaire_id,
+        i.questionnaire_id,
         q.title as questionnaire_title,
         t.subject as teacher_subject, 
         u.name as teacher_name,
@@ -65,7 +66,7 @@ router.get('/', verifyToken, async (req, res) => {
       LEFT JOIN users u ON t.user_id = u.id
       LEFT JOIN student_indicators si ON i.id = si.indicator_id
       LEFT JOIN students s ON si.student_id = s.id
-      LEFT JOIN questionnaires q ON si.questionnaire_id = q.id
+      LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       WHERE 1=1
     `;
     
@@ -544,20 +545,25 @@ router.put('/:id', verifyToken, async (req, res) => {
             }
           } else {
             // Si no existe una relación, creamos una nueva
-            const [result] = await connection.query(
-              `INSERT INTO student_indicators 
-               (indicator_id, student_id, achieved, questionnaire_id, assigned_at) 
-               VALUES (?, ?, ?, ?, ?)`,
-              [
-                id,
-                studentId,
-                achieved ? 1 : 0,
-                foundQuestionnaireId,
-                new Date()
-              ]
-            );
-            createdCount++;
-            console.log(`✅ Nueva relación creada para estudiante ${studentId} (ID: ${result.insertId})`);
+            // Usamos UPSERT: inserta si no existe, actualiza si ya existe
+          await connection.query(
+            `INSERT INTO student_indicators 
+            (indicator_id, student_id, achieved, questionnaire_id, assigned_at) 
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              achieved = VALUES(achieved),
+              questionnaire_id = VALUES(questionnaire_id),
+              assigned_at = VALUES(assigned_at)`,
+            [
+              id,
+              studentId,
+              achieved ? 1 : 0,
+              foundQuestionnaireId,
+              new Date()
+            ]
+          );
+          createdCount++;
+          console.log(`✅ Relación creada/actualizada para estudiante ${studentId}`);
           }
         } catch (error) {
           console.error(`❌ Error al procesar relación para estudiante ${studentId}:`, error);

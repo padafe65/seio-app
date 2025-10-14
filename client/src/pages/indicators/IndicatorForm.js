@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
 
 // Configuración de la API base
@@ -30,13 +31,17 @@ const IndicatorForm = () => {
   const [formData, setFormData] = useState({
     description: '',
     subject: '',
-    phase: '1',
+    category: '',
+    phase: '', // Cambiado a cadena vacía para mostrar 'Seleccione una fase' por defecto
     grade: '',
-    questionnaire_id: '',
-    students: [],
-    student_ids: [],  // Usando array para múltiples estudiantes
-    teacher_id: ''
+    questionnaire_id: '', // Cambiado de questionnaireid a questionnaire_id para mantener consistencia
+    students: [],       // lista de estudiantes (objetos con datos)
+    studentids: [],     // lista de IDs de estudiantes seleccionados (asegurar que sea array)
+    teacherid: null,
+    // otros campos relevantes que tengas en el formulario pueden agregarse aquí
   });
+  
+  
   
   // Estados del componente
   const [loading, setLoading] = useState(true);
@@ -63,8 +68,9 @@ const IndicatorForm = () => {
   const [showTableView, setShowTableView] = useState(true);
   const [questionnaires, setQuestionnaires] = useState([]);
   const [teacherSubject, setTeacherSubject] = useState('');
+  const [categories, setCategories] = useState([]);
   const [isUpdating, setIsUpdating] = useState(false);
-  const [selectedStudents, setSelectedStudents] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
  
   // Función auxiliar para cargar cuestionarios
   const loadQuestionnaires = useCallback(async (userId, editing = false) => {
@@ -93,30 +99,13 @@ const IndicatorForm = () => {
         
         setQuestionnaires(questionnairesData);
         
-        if (!editing && questionnairesData.length > 0) {
+        // Siempre establecer manualEntry como false si hay cuestionarios disponibles
+        if (questionnairesData.length > 0) {
           setManualEntry(false);
           
-          if (questionnairesData.length === 1) {
-            const firstQuestionnaire = questionnairesData[0];
-            console.log('📝 Configurando primer cuestionario:', firstQuestionnaire);
-            
-            setFormData(prev => ({
-              ...prev,
-              questionnaire_id: firstQuestionnaire.id,
-              description: firstQuestionnaire.description || firstQuestionnaire.title || '',
-              // Usar valores por defecto para subject, phase y grade ya que estos campos ya no vienen del cuestionario
-              subject: teacherSubject || '',
-              phase: '',
-              grade: '',
-              questionnaire_data: {
-                created_by: firstQuestionnaire.created_by || '',
-                teacher_name: firstQuestionnaire.created_by_name || '',
-                course_id: firstQuestionnaire.course_id || '',
-                course_name: firstQuestionnaire.course_name || '',
-                created_at: firstQuestionnaire.created_at || ''
-              }
-            }));
-          }
+          // Ya no seleccionamos automáticamente el primer cuestionario
+          // El usuario deberá seleccionar uno manualmente
+          console.log(`📊 Se cargaron ${questionnairesData.length} cuestionarios`);
         }
         
         return questionnairesData;
@@ -415,11 +404,16 @@ const IndicatorForm = () => {
       // 7. Actualizar el estado
       setStudents(allStudents);
       
-      // 8. Actualizar los IDs de estudiantes seleccionados si hay asignados
+      // 8. Actualizar los IDs de estudiantes seleccionados segun asignación actual
       if (assignedStudents.length > 0) {
         setFormData(prev => ({
           ...prev,
-          student_ids: assignedStudents.map(s => s.id)
+          studentids: assignedStudents.map(s => s.id)
+        }));
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          studentids: []
         }));
       }
       
@@ -499,7 +493,7 @@ const IndicatorForm = () => {
     setFormData(prev => ({
       ...prev,
       grade: selectedGrade,
-      student_ids: [] // Reiniciar la selección de estudiantes al cambiar el grado
+      studentids: [] // Reiniciar la selección de estudiantes al cambiar el grado
     }));
     
     // Cargar estudiantes para el grado seleccionado
@@ -519,11 +513,11 @@ const IndicatorForm = () => {
             // Actualizar el estado de los estudiantes
             setStudents(students);
             
-            // Si solo hay un estudiante, seleccionarlo automáticamente
-            if (students.length === 1 && students[0].id !== 'all' && students[0].id !== 'none') {
+            // Si solo hay un estudiante, seleccionarlo automáticamente solo en creación
+            if (!isEditing && students.length === 1 && students[0].id !== 'all' && students[0].id !== 'none') {
               setFormData(prev => ({
                 ...prev,
-                student_ids: [students[0].id]
+                studentids: [students[0].id]
               }));
             }
           }
@@ -594,7 +588,7 @@ const IndicatorForm = () => {
         
         const assignedStudentIds = assignedStudents.length > 0 ? 
           assignedStudents.map(s => String(s.id || s.student_id)) : 
-          (indicatorData.student_ids === 'all' ? ['all'] : []);
+          (indicatorData.studentids === 'all' ? ['all'] : []);
         
         console.log('👥 Estudiantes asignados al indicador:', assignedStudents);
         console.log('🆔 IDs de estudiantes asignados:', assignedStudentIds);
@@ -603,9 +597,10 @@ const IndicatorForm = () => {
         const formDataUpdate = {
           description: indicatorData.description || '',
           subject: indicatorData.subject || '',
+          category: indicatorData.category || '',
           phase: indicatorData.phase?.toString() || '1',
           grade: indicatorData.grade?.toString() || '',
-          student_ids: assignedStudentIds,
+          studentids: assignedStudentIds,
           questionnaire_id: indicatorData.questionnaire_id || '',
           students: assignedStudents
         };
@@ -628,25 +623,21 @@ const IndicatorForm = () => {
                 console.log('✅ Estudiantes cargados correctamente');
                 
                 // Marcar los estudiantes que ya tienen el indicador asignado
-                if (assignedStudentIds.length > 0) {
-                  console.log('🏷️ Marcando estudiantes con indicador asignado...');
-                  setStudents(prevStudents => 
-                    prevStudents.map(student => ({
-                      ...student,
-                      hasIndicator: assignedStudentIds.includes('all') || 
-                                  assignedStudentIds.includes(String(student.id)) || 
-                                  false
-                    }))
-                  );
-                  
-                  // Si hay estudiantes asignados, actualizar el estado del formulario
-                  if (assignedStudentIds[0] !== 'all') {
-                    setFormData(prev => ({
-                      ...prev,
-                      student_ids: assignedStudentIds
-                    }));
-                  }
-                }
+                console.log('🏷️ Marcando estudiantes con indicador asignado...');
+                setStudents(prevStudents => 
+                  prevStudents.map(student => ({
+                    ...student,
+                    hasIndicator: assignedStudentIds.includes('all') || 
+                                assignedStudentIds.includes(String(student.id)) || 
+                                false
+                  }))
+                );
+                
+                // Sincronizar siempre studentids con lo que viene del backend
+                setFormData(prev => ({
+                  ...prev,
+                  studentids: assignedStudentIds
+                }));
               })
               .catch(error => {
                 console.error('❌ Error al cargar estudiantes:', error);
@@ -767,81 +758,47 @@ const IndicatorForm = () => {
           
           console.log('📋 Datos del indicador procesados:', indicatorData);
           
-          if (indicatorData) {
-            // Actualizar el estado del formulario con los datos del indicador
-            const formDataUpdate = {
-              description: indicatorData.description || '',
-              subject: indicatorData.subject || '',
-              phase: indicatorData.phase?.toString() || '1',
-              grade: indicatorData.grade?.toString() || '',
-              questionnaire_id: indicatorData.questionnaire_id || '',
-              students: indicatorData.students || []
-            };
-            
-            setFormData(formDataUpdate);
-            console.log('📝 Formulario actualizado:', formDataUpdate);
-            
-            // Actualizar el estado del docente si está disponible
-            if (indicatorData.teacher_id) {
-              setTeacherId(indicatorData.teacher_id);
-              console.log('👨‍🏫 ID del docente actualizado:', indicatorData.teacher_id);
-            }
-            
-            // Si hay estudiantes asociados, cargarlos
-            if (indicatorData.students && indicatorData.students.length > 0) {
-              // Usar un Set para eliminar duplicados basados en el ID del estudiante
-              const uniqueStudents = [];
-              const seen = new Set();
-              
-              for (const student of indicatorData.students) {
-                const studentId = student.id || student.student_id;
-                if (!seen.has(studentId)) {
-                  seen.add(studentId);
-                  uniqueStudents.push({
-                    value: studentId,
-                    label: student.name || student.student_name
-                  });
-                }
-              }
-              
-              setSelectedStudents(uniqueStudents);
-              console.log('👥 Estudiantes cargados (sin duplicados):', uniqueStudents);
-            } else {
-              // Si no hay estudiantes en la respuesta, intentar cargarlos por separado
-              try {
-                const studentsResponse = await axios.get(`/api/indicators/${id}/students`, {
-                  headers: { 
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                  },
-                  withCredentials: true
-                });
-                
-                if (studentsResponse.data?.data?.length > 0) {
-                  // Eliminar duplicados también cuando se cargan desde el endpoint separado
-                  const uniqueStudents = [];
-                  const seen = new Set();
-                  
-                  for (const student of studentsResponse.data.data) {
-                    const studentId = student.id || student.student_id;
-                    if (!seen.has(studentId)) {
-                      seen.add(studentId);
-                      uniqueStudents.push({
-                        value: studentId,
-                        label: student.name || student.student_name
-                      });
-                    }
-                  }
-                  
-                  setSelectedStudents(uniqueStudents);
-                  console.log('👥 Estudiantes cargados desde endpoint separado (sin duplicados):', uniqueStudents);
-                }
-              } catch (studentsError) {
-                console.warn('⚠️ No se pudieron cargar los estudiantes:', studentsError.message);
-              }
-            }
-          }
-        } catch (error) {
+// Cargar datos iniciales del indicador
+if (indicatorData) {
+  const formDataUpdate = {
+    description: indicatorData.description || '',
+    subject: indicatorData.subject || '',
+    category: indicatorData.category || '',
+    phase: indicatorData.phase?.toString() || '1',
+    grade: indicatorData.grade?.toString() || '',
+    questionnaire_id: indicatorData.questionnaire_id || '',
+    students: indicatorData.students || []
+  };
+
+  setFormData(formDataUpdate);
+  console.log('📝 Formulario actualizado:', formDataUpdate);
+
+  if (indicatorData.teacher_id) {
+    setTeacherId(indicatorData.teacher_id);
+    console.log('👨‍🏫 ID del docente actualizado:', indicatorData.teacher_id);
+  }
+
+  // Detectar estudiantes asignados sin duplicados para seleccionar en el formulario
+  if (indicatorData.students && indicatorData.students.length > 0) {
+    const uniqueStudents = [];
+    const seen = new Set();
+
+    for (const student of indicatorData.students) {
+      const studentId = student.id || student.student_id;
+      if (!seen.has(studentId)) {
+        seen.add(studentId);
+        uniqueStudents.push(String(studentId));  // IDs como string
+      }
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      studentids: uniqueStudents
+    }));
+    console.log('👥 Estudiantes asignados cargados:', uniqueStudents);
+  }
+}
+} catch (error) {
           console.error('❌ Error al cargar los datos del indicador:', {
             error: error.message,
             response: error.response?.data,
@@ -908,6 +865,7 @@ const IndicatorForm = () => {
       ...(selectedQuestionnaire ? {
         description: selectedQuestionnaire.title || '',
         subject: selectedQuestionnaire.subject || teacherSubject || '',
+        category: selectedQuestionnaire.category || prev.category || '',
         phase: selectedQuestionnaire.phase || '',
         grade: selectedQuestionnaire.grade || '',
         // Guardar información adicional del cuestionario
@@ -928,20 +886,55 @@ const IndicatorForm = () => {
     setManualEntry(selectedQuestionnaireId === 'none');
   };
 
+  // Cargar categorías por materia seleccionada
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        if (!formData.subject) {
+          setCategories([]);
+          return;
+        }
+        const res = await axios.get(`/api/subject-categories/${encodeURIComponent(formData.subject)}`);
+        const rows = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+        let mapped = rows.map(r => r.category || r.category_name || r?.category)?.filter(Boolean);
+        
+        // Si estamos editando y el indicador tiene una categoría que no está en la lista, agregarla
+        if (isEditing && formData.category && !mapped.includes(formData.category)) {
+          mapped = [formData.category, ...mapped];
+        }
+        
+        setCategories(mapped);
+      } catch (e) {
+        console.warn('No se pudieron cargar categorías para la materia', formData.subject);
+        // Si hay error pero el indicador tiene categoría, al menos mostrarla
+        if (isEditing && formData.category) {
+          setCategories([formData.category]);
+        } else {
+          setCategories([]);
+        }
+      }
+    };
+    
+    // Cargar categorías siempre que haya materia
+    if (formData.subject) {
+      loadCategories();
+    }
+  }, [formData.subject, formData.category, isEditing]);
+
   const handleStudentChange = (e) => {
     const selectedStudentId = e.target.value;    
     // Manejar opciones especiales: 'none' o 'all'
     if (selectedStudentId === 'none' || selectedStudentId === 'all') {
       setFormData(prev => ({
         ...prev,
-        student_ids: selectedStudentId === 'all' ? ['all'] : []
+        studentids: selectedStudentId === 'all' ? ['all'] : []
       }));
       return;
     }
     
     // Si es un estudiante individual, agregar o quitar de la selección
     setFormData(prev => {
-      const currentIds = [...prev.student_ids];
+      const currentIds = [...prev.studentids];
       const studentIndex = currentIds.indexOf(selectedStudentId);
       
       if (studentIndex === -1) {
@@ -954,11 +947,11 @@ const IndicatorForm = () => {
       
       return {
         ...prev,
-        student_ids: currentIds
+        studentids: currentIds
       };
     });
     
-    console.log('✅ Estado actualizado con estudiantes:', formData.student_ids);
+    console.log('✅ Estado actualizado con estudiantes:', formData.studentids);
   };
   
   // Obtener la lista de estudiantes reales (excluyendo opciones especiales)
@@ -983,7 +976,7 @@ const IndicatorForm = () => {
       if (studentsWithIndicator.length > 0) {
         setFormData(prev => ({
           ...prev,
-          student_ids: studentsWithIndicator.map(s => s.id)
+          studentids: studentsWithIndicator.map(s => s.id)
         }));
       }
     }
@@ -1001,19 +994,19 @@ const IndicatorForm = () => {
       const uniqueStudentIds = [...new Set(allStudentIds)];
       
       setFormData(prev => {
-        // Asegurarse de que student_ids sea un array
-        const currentStudentIds = Array.isArray(prev.student_ids) ? prev.student_ids : [];
+        // Asegurarse de que studentids sea un array
+        const currentStudentIds = Array.isArray(prev.studentids) ? prev.studentids : [];
         
         return {
           ...prev,
-          student_ids: [...new Set([...currentStudentIds, ...uniqueStudentIds])] // Combinar y eliminar duplicados
+          studentids: [...new Set([...currentStudentIds, ...uniqueStudentIds])] // Combinar y eliminar duplicados
         };
       });
     } else {
       // Deseleccionar todos los estudiantes
       setFormData(prev => ({
         ...prev,
-        student_ids: []
+        studentids: []
       }));
     }
   };
@@ -1144,7 +1137,7 @@ const IndicatorForm = () => {
       if (studentsWithIndicator.length > 0) {
         setFormData(prev => ({
           ...prev,
-          student_ids: studentsWithIndicator.map(s => s.id)
+          studentids: studentsWithIndicator.map(s => s.id)
         }));
       }
       
@@ -1163,11 +1156,12 @@ const IndicatorForm = () => {
     }
   }, [id, teacherId, formData.grade]);
 
-  // Verificar si un estudiante está seleccionado
   const isStudentSelected = (studentId) => {
-    if (!formData.student_ids) return false;
-    return formData.student_ids.includes(studentId) || formData.student_ids.includes('all');
+    if (!Array.isArray(formData.studentids)) return false;
+    return formData.studentids.includes(studentId) || formData.studentids.includes('all');
   };
+  
+  
 
   // Toggle para cambiar entre vista de tabla y combo
   const toggleViewMode = () => {
@@ -1191,244 +1185,213 @@ const IndicatorForm = () => {
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async (event) => {
+    event.preventDefault();
     setLoading(true);
     setError(null);
-
+    
     try {
       console.log('📤 Iniciando envío del formulario...');
       
-      // Validar campos requeridos
-      const requiredFields = ['description', 'subject', 'phase', 'grade'];
-      const missingFields = requiredFields.filter(field => !formData[field]);
+      // 1. Obtener token y verificar autenticación
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        throw new Error('No se encontró el token de autenticación. Por favor, inicia sesión nuevamente.');
+      }
       
-      if (missingFields.length > 0) {
-        setLoading(false);
-        throw new Error(`Por favor complete los campos requeridos: ${missingFields.join(', ')}`);
+      // 2. Verificar que el usuario tenga teacher_id
+      if (!user || !user.teacher_id) {
+        throw new Error('No se pudo verificar la información del docente. Por favor, inicia sesión nuevamente.');
+      }
+  
+      // 2.1 Confirmar si se están removiendo asociaciones al actualizar
+      if (isEditing) {
+        // Construir set de asignados actuales en UI
+        const selectedNow = new Set(
+          (Array.isArray(formData.studentids) ? formData.studentids : [])
+            .filter(id => id !== 'all' && id !== 'none')
+            .map(String)
+        );
+
+        // Construir set de asignados según backend (hasIndicator)
+        const currentlyAssigned = new Set(
+          (Array.isArray(students) ? students : [])
+            .filter(s => s && s.id && s.id !== 'all' && s.id !== 'none' && (s.hasIndicator === true || s.has_indicator === 1))
+            .map(s => String(s.id))
+        );
+
+        // Detectar removidos (estaban asignados y ya no están seleccionados)
+        const removed = [...currentlyAssigned].filter(id => !selectedNow.has(id));
+
+        if (removed.length > 0) {
+          const { isConfirmed } = await Swal.fire({
+            icon: 'warning',
+            title: 'Confirmar actualización',
+            html: `Se eliminará la asociación del indicador con <b>${removed.length}</b> estudiante(s).<br/>¿Deseas continuar?`,
+            showCancelButton: true,
+            confirmButtonText: 'Sí, continuar',
+            cancelButtonText: 'Cancelar'
+          });
+          if (!isConfirmed) {
+            // Restaurar selección anterior basada en el estado del backend
+            setFormData(prev => ({
+              ...prev,
+              studentids: [...currentlyAssigned]
+            }));
+            setLoading(false);
+            return; // Cancelar envío
+          }
+        }
       }
 
-      // Validar que si no es entrada manual, debe tener un cuestionario seleccionado
-      if (!manualEntry && !formData.questionnaire_id) {
-        setLoading(false);
-        throw new Error('Debe seleccionar un cuestionario o habilitar la entrada manual');
-      }
-
-      // Asegurarse de que student_ids sea un array
-      const currentStudentIds = Array.isArray(formData.student_ids) ? formData.student_ids : [];
-      
-      // 1. Si se seleccionó 'todos', obtener los IDs de todos los estudiantes
-      const studentIdsToProcess = currentStudentIds.includes('all') 
-        ? realStudents.map(s => s.id)
-        : currentStudentIds;
-      
-      console.log('📝 Procesando estudiantes:', studentIdsToProcess);
-      
       // 3. Preparar datos para enviar
-      const dataToSend = {
-        description: formData.description,
-        subject: formData.subject,
-        phase: formData.phase,
-        grade: formData.grade,
-        teacher_id: teacherId,
+      const payload = {
+        ...formData,
+        teacher_id: user.teacher_id,
+        student_ids: Array.isArray(formData.studentids) 
+          ? formData.studentids.filter(id => id !== 'all' && id !== 'none')
+          : [],
         questionnaire_id: formData.questionnaire_id || null,
-        student_ids: formData.student_ids
+        category: formData.category || null
       };
+  
+      console.log('📝 Datos a enviar:', payload);
       
-      console.log('📤 Enviando datos al servidor:', dataToSend);
-      
-      // 4. Determinar si es una creación o actualización
-      const url = id ? `/api/indicators/${id}` : '/api/indicators';
-      const method = id ? 'put' : 'post';
-      
-      // 5. Realizar la petición
-      const response = await axios[method](url, dataToSend, {
+      // 4. Configurar headers con el token
+      const config = {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         withCredentials: true
-      });
-
-      console.log('✅ Respuesta del servidor:', response.data);
-
-      if (response.data.success) {
-        console.log('🎉 Indicador guardado exitosamente');
-        
-        // Verificar si hay un nuevo token en la respuesta
-        if (response.data.token) {
-          localStorage.setItem('authToken', response.data.token);
-          console.log('🔑 Token actualizado');
-          // Actualizar el token en Axios para las siguientes peticiones
-          axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.token}`;
-        }
-        
-        // Mostrar mensaje de éxito y redirigir
-        alert(isEditing ? 'Indicador actualizado correctamente' : 'Indicador creado correctamente');
-        navigate('/indicadores');
+      };
+  
+      // 5. Determinar si es una creación o actualización
+      let response;
+      if (id) {
+        // Actualización de indicador existente
+        console.log('🔄 Actualizando indicador existente...');
+        response = await api.put(`/api/indicators/${id}`, payload, config);
       } else {
-        throw new Error(response.data.message || 'Error al guardar el indicador');
+        // Creación de nuevo indicador
+        console.log('🆕 Creando nuevo indicador...');
+        response = await api.post('/api/indicators', payload, config);
       }
-    } catch (error) {
-      console.error('❌ Error al guardar indicador:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        config: {
-          url: error.config?.url,
-          method: error.config?.method,
-          data: error.config?.data
-        }
-      });
+  
+      if (!response.data?.success) {
+        throw new Error(response.data?.message || `Error al ${id ? 'actualizar' : 'crear'} el indicador`);
+      }
       
-      // Manejar error de autenticación expirada
-      if (error.response?.status === 401 || error.response?.data?.requiresLogin) {
-        // Verificar si el error es específicamente por token expirado
-        const errorMessage = (error.response?.data?.message || '').toString().toLowerCase();
-        const errorDetail = (error.response?.data?.error || '').toString().toLowerCase();
-        const isTokenExpired = errorMessage.includes('expirado') || errorDetail.includes('expirado');
+      console.log(`✅ Indicador ${id ? 'actualizado' : 'creado'} correctamente:`, response.data);
+      
+      // 6. Si es una creación, redirigir al listado
+      if (!id) {
+        // Mostrar mensaje de éxito
+        setSuccess('¡Indicador creado exitosamente!');
         
-        if (isTokenExpired) {
-          // Limpiar token expirado
-          localStorage.removeItem('authToken');
-          // Limpiar encabezado de autorización de Axios
-          delete axios.defaults.headers.common['Authorization'];
-          // Redirigir a login con mensaje
-          navigate('/login', { 
-            state: { 
-              message: 'Tu sesión ha expirado. Por favor inicia sesión nuevamente.',
-              from: window.location.pathname 
-            } 
-          });
-          return;
-        }
+        // Redirigir después de un breve retraso para que el usuario vea el mensaje
+        setTimeout(() => {
+          // Limpiar el estado antes de redirigir
+          setSuccess('');
+          // Redirigir al listado de indicadores (usar /indicadores en lugar de /indicators)
+          navigate('/indicadores', { replace: true });
+        }, 1500);
+        
+        // No hacer return aquí para evitar interrumpir el flujo
+        return;
       }
       
-      // Manejar otros errores sin redirigir
-      const errorMessage = error.response?.data?.message || 
-                         error.message || 
-                         'Error al guardar el indicador. Por favor, intente nuevamente.';
+      // 7. Si es una actualización, forzar recarga de datos
+      await fetchIndicator();
+      
+      // 8. Actualizar manualmente la lista de estudiantes
+      if (formData.grade && teacherId) {
+        await fetchStudents(teacherId, formData.grade);
+      }
+
+      // 8. Mostrar mensaje de éxito
+      console.log('🎉 Indicador actualizado correctamente');
+      setSuccess('Los cambios se guardaron correctamente');
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (error) {
+      console.error('❌ Error al guardar los cambios:', error);
+      
+      let errorMessage = 'Ocurrió un error al guardar los cambios';
+      
+      if (error.response) {
+        console.error('❌ Detalles del error:', error.response.data);
+        
+        if (error.response.status === 401) {
+          errorMessage = 'Tu sesión ha expirado. Por favor, inicia sesión nuevamente.';
+          navigate('/login');
+        } else if (error.response.status === 403) {
+          errorMessage = 'No tienes permisos para modificar este indicador. Verifica que seas el propietario.';
+          
+          if (error.response.data?.message) {
+            errorMessage += ` (${error.response.data.message})`;
+          }
+        } else if (error.response.data?.message) {
+          errorMessage = error.response.data.message;
+        }
+      } else if (error.request) {
+        errorMessage = 'No se pudo conectar con el servidor. Verifica tu conexión a Internet.';
+      } else {
+        errorMessage = error.message || 'Error desconocido al guardar los cambios';
+      }
       
       setError(errorMessage);
-      
-      // Mostrar mensaje de error al usuario
-      alert(errorMessage);
-      
-      // Desplazarse al principio del formulario para mostrar el error
-      window.scrollTo(0, 0);
     } finally {
       setLoading(false);
     }
   };
-
-const renderStudentSelectionInfo = () => {
-  return (
-    <div>
-      <span className="block mt-1 text-blue-600">
-        {students
-          .filter(s => formData.student_ids.includes(s.id))
-          .map(s => s.name)
-          .join(', ')}
-      </span>
-      <p className="text-sm text-gray-500 mt-1">
-        {formData.student_ids.includes('all')
-          ? 'El indicador se aplicará a todos los estudiantes del grado.'
-          : formData.student_ids.length > 0
-            ? `Se aplicará a ${formData.student_ids.length} estudiante(s) seleccionado(s).`
+  
+  
+  const renderStudentSelectionInfo = () => {
+    return (
+      <div>
+        <span className="block mt-1 text-blue-600">
+          {Array.isArray(formData.studentids)
+            ? students
+                .filter(s => Array.isArray(formData.studentids) && formData.studentids.includes(s.id))
+                .map(s => s.name)
+                .join(', ')
+            : ''}
+        </span>
+        <p className="text-sm text-gray-500 mt-1">
+          {Array.isArray(formData.studentids) && formData.studentids.includes('all')
+            ? 'El indicador se aplicará a todos los estudiantes del grado.'
+            : Array.isArray(formData.studentids) && formData.studentids.length > 0
+            ? `Se aplicará a ${formData.studentids.length} estudiante(s) seleccionado(s).`
             : 'No se aplicará a ningún estudiante por ahora.'}
-      </p>
-    </div>
-  );
-}
+        </p>
+      </div>
+    );
+  };
+  
 
   // Función para manejar el cambio de estado de un estudiante
-  const handleStudentToggle = async (student, isChecked) => {
-    console.log(`🔄 Cambiando estado de ${student.name} a ${isChecked ? 'marcado' : 'desmarcado'}`);
-    
-    if (isChecked) {
-      // Si se está marcando el estudiante
-      try {
-        console.log(`✅ Marcando estudiante ${student.name} como seleccionado`);
-        
-        console.log(`📡 Asignando indicador ${id} al estudiante ${student.id}`);
-        
-        // Usar la instancia de api configurada
-        const response = await api.post(
-          `/api/indicators/${id}/students`,
-          { 
-            student_id: student.id,
-            achieved: false
-          }
-        );
-        
-        console.log('✅ Respuesta de la API:', response.data);
-        
-        // Actualizar el estado local después de la asignación exitosa
-        setStudents(prev => 
-          prev.map(s => 
-            s.id === student.id 
-              ? { 
-                  ...s, 
-                  hasIndicator: true,
-                  has_indicator: 1
-                } 
-              : s
-          )
-        );
-        
-        // Actualizar los IDs de estudiantes seleccionados
-        setFormData(prev => ({
-          ...prev,
-          student_ids: [...new Set([
-            ...(Array.isArray(prev.student_ids) ? prev.student_ids : []),
-            student.id
-          ])].filter(id => id !== 'all' && id !== 'none')
-        }));
-      } catch (error) {
-        console.error('❌ Error al marcar estudiante:', error);
-        setError('No se pudo marcar el estudiante. Por favor, intente nuevamente.');
+  const handleStudentToggle = (studentId) => {
+    setFormData(prev => {
+      // Siempre asegura array
+      const currentStudentIds = Array.isArray(prev.studentids) ? prev.studentids : [];
+      const index = currentStudentIds.indexOf(studentId);
+      let updatedStudentIds;
+  
+      if (index === -1) {
+        updatedStudentIds = [...currentStudentIds, studentId];
+      } else {
+        updatedStudentIds = [...currentStudentIds];
+        updatedStudentIds.splice(index, 1);
       }
-    } else {
-      // Si se está desmarcando un estudiante
-      try {
-        // Si el estudiante tiene un indicador, pedir confirmación
-        if (student.hasIndicator || student.has_indicator) {
-          const confirmMessage = `¿Está seguro que desea eliminar este indicador del estudiante ${student.name}?`;
-          
-          if (!window.confirm(confirmMessage)) {
-            console.log('❌ Usuario canceló la eliminación del estudiante');
-            return;
-          }
-          
-          console.log(`🗑️ Eliminando indicador ${id} del estudiante ${student.id}`);
-          await api.delete(`/api/indicators/${id}/students/${student.id}`);
-        }
-        
-        // Actualizar el estado local
-        setStudents(prev => 
-          prev.map(s => 
-            s.id === student.id 
-              ? { 
-                  ...s, 
-                  hasIndicator: false,
-                  has_indicator: 0
-                } 
-              : s
-          )
-        );
-        
-        // Actualizar los IDs de estudiantes seleccionados
-        setFormData(prev => ({
-          ...prev,
-          student_ids: (Array.isArray(prev.student_ids) ? prev.student_ids : [])
-            .filter(id => id !== student.id && id !== 'all' && id !== 'none')
-        }));
-      } catch (error) {
-        console.error('❌ Error al desmarcar estudiante:', error);
-        setError('No se pudo desmarcar el estudiante. Por favor, intente nuevamente.');
-      }
-    }
+  
+      return {
+        ...prev,
+        studentids: updatedStudentIds
+      };
+    });
   };
+  
+  
 
   // Función para manejar la eliminación de un indicador
   const handleRemoveIndicator = async (student) => {
@@ -1486,11 +1449,11 @@ const renderStudentSelectionInfo = () => {
         
         // Actualizar el estado del formulario
         setFormData(prev => {
-          const updatedStudentIds = prev.student_ids.filter(id => id !== student.id && id !== 'all');
+          const updatedStudentIds = prev.studentids.filter(id => id !== student.id && id !== 'all');
           console.log('🔄 IDs de estudiantes actualizados en el formulario:', updatedStudentIds);
           return {
             ...prev,
-            student_ids: updatedStudentIds
+            studentids: updatedStudentIds
           };
         });
         
@@ -1546,118 +1509,103 @@ const renderStudentSelectionInfo = () => {
         </div>
       );
     }
-
+  
     if (studentsError) {
       return (
         <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <svg className="h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <div className="ml-3">
-              <p className="text-sm text-red-700">
-                {studentsError}
-              </p>
-            </div>
-          </div>
+          {/* ... contenido ... */}
         </div>
       );
     }
-
+  
     if (students.length === 0) {
       return (
         <div className="text-center py-8">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No hay estudiantes</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            No se encontraron estudiantes para el grado seleccionado.
-          </p>
+          {/* ... contenido ... */}
         </div>
       );
     }
-
-    // Usar los estudiantes ya filtrados y ordenados
-    const filteredStudents = realStudents;
-
+  
+    // Filtrar estudiantes por término de búsqueda
+    const filteredStudents = realStudents.filter(student => {
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.toLowerCase();
+      const nameMatch = student.name?.toLowerCase().includes(term);
+      const emailMatch = student.email?.toLowerCase().includes(term);
+      const idMatch = String(student.id).toLowerCase().includes(term);
+      return nameMatch || emailMatch || idMatch;
+    });
+  
     if (filteredStudents.length === 0) {
       return (
         <div className="text-center py-8">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No hay estudiantes disponibles</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            No se encontraron estudiantes que coincidan con los filtros actuales.
-          </p>
+          {/* ... contenido ... */}
         </div>
       );
     }
-
+  
     return (
-      <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-        {filteredStudents.map(student => {
-          const hasIndicator = student.hasIndicator === true || student.has_indicator === 1;
-          const isSelected = formData.student_ids?.includes(String(student.id));
-          
-          return (
-            <div 
-              key={student.id} 
-              className={`flex items-center p-3 transition-colors ${
+      <div className="space-y-4">
+        {/* Barra de búsqueda */}
+        <div className="input-group mb-3">
+          {/* ... contenido ... */}
+        </div>
+        
+        {/* Lista de estudiantes */}
+        <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+          {filteredStudents.map(student => {
+            const hasIndicator = student.hasIndicator === true || student.has_indicator === 1;
+            // Protección aquí
+            const isSelected = Array.isArray(formData.studentids) && formData.studentids.includes(String(student.id));
+            
+            return (
+              <div key={student.id} className={`flex items-center p-3 transition-colors ${
                 isSelected 
                   ? 'bg-blue-50 border-l-4 border-l-blue-500' 
                   : hasIndicator 
                     ? 'bg-green-50 border-l-4 border-l-green-500' 
                     : 'hover:bg-gray-50 border-l-4 border-l-transparent'
-              }`}
-            >
-              <div className="flex items-center w-full">
-                <div className="relative flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={isSelected || hasIndicator}
-                    onChange={(e) => handleStudentToggle(student, e.target.checked)}
-                    className={`w-5 h-5 rounded border ${
-                      isSelected || hasIndicator
-                        ? 'bg-blue-100 border-blue-600 text-blue-600 focus:ring-blue-200'
-                        : 'border-gray-300 hover:border-blue-500 bg-white hover:bg-gray-50 focus:ring-blue-200'
-                    } cursor-pointer transition-colors focus:ring-2 focus:ring-offset-1`}
-                    disabled={isUpdating}
-                    title={isSelected ? 'Deseleccionar estudiante' : 'Seleccionar estudiante'}
-                  />
-                </div>
-                <label className="ml-3 flex-1 flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center">
-                      <p className="text-sm font-medium text-gray-900 truncate">
+              }`}>
+                <div className="flex items-center w-full">
+                  <div className="relative flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => handleStudentToggle(student.id)}
+                      className={`w-5 h-5 rounded border ${
+                        isSelected
+                          ? 'bg-blue-100 border-blue-600 text-blue-600 focus:ring-blue-200'
+                          : 'border-gray-300 hover:border-blue-500 bg-white hover:bg-gray-50 focus:ring-blue-200'
+                      } cursor-pointer transition-colors focus:ring-2 focus:ring-offset-1`}
+                      disabled={isUpdating}
+                      title={isSelected ? 'Deseleccionar estudiante' : 'Seleccionar estudiante'}
+                    />
+                  </div>
+                  <label className="ml-3 flex-1 flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">
                         {student.name || `Estudiante ${student.id}`}
+                        {student.grade && ` - Grado ${student.grade}`}
                       </p>
-                      {hasIndicator && !isSelected && (
-                        <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          Asignado
-                        </span>
-                      )}
-                      {isSelected && (
-                        <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                          Seleccionado
-                        </span>
+                      {student.email && (
+                        <p className="text-sm text-gray-500">{student.email}</p>
                       )}
                     </div>
-                    <p className="text-sm text-gray-500 truncate">
-                      Grado: {student.grade || 'No especificado'}
-                    </p>
-                  </div>
-                </label>
+                    {hasIndicator && !isSelected && (
+                      <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
+                        Ya tiene indicador
+                      </span>
+                    )}
+                  </label>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     );
   };
+  
 
   if (loading) {
     return <div className="text-center py-5"><div className="spinner-border text-primary" role="status"></div></div>;
@@ -1694,63 +1642,60 @@ const renderStudentSelectionInfo = () => {
             </label>
           </div>
           
-          {!manualEntry && questionnaires.length > 0 && (
-            <div className="mb-4">
-              <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="questionnaire_id">
-                Cuestionario
-              </label>
-              <div className="space-y-4">
-                <select
-                  id="questionnaire_id"
-                  name="questionnaire_id"
-                  value={formData.questionnaire_id || ''}
-                  onChange={handleQuestionnaireChange}
-                  className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                  disabled={loading}
-                  required={!manualEntry}
-                >
-                  <option value="">Seleccione un cuestionario</option>
-                  {questionnaires.map((q) => (
-                    <option key={q.id} value={q.id}>
-                      {q.title} - Grado {q.grade}°
-                    </option>
-                  ))}
-                </select>
+          <div className="mb-4">
+            <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="questionnaire_id">
+              Asociar a cuestionario (opcional)
+            </label>
+            <div className="space-y-4">
+              <select
+                id="questionnaire_id"
+                name="questionnaire_id"
+                value={formData.questionnaire_id || ''}
+                onChange={handleQuestionnaireChange}
+                className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                disabled={loading || questionnaires.length === 0}
+              >
+                <option value="">Seleccione un cuestionario (opcional)</option>
+                {questionnaires.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.title} - Grado {q.grade}°
+                  </option>
+                ))}
+              </select>
 
-                {formData.questionnaire_data && (
-                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    <h4 className="font-semibold text-gray-800 mb-2">Información del cuestionario seleccionado:</h4>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span className="font-medium text-gray-600">Docente:</span>
-                        <span className="ml-2">{formData.questionnaire_data.teacher_name || 'No disponible'}</span>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-600">Categoría:</span>
-                        <span className="ml-2">{formData.questionnaire_data.category || 'No especificada'}</span>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-600">Fase:</span>
-                        <span className="ml-2">{formData.questionnaire_data.phase || 'No especificada'}</span>
-                      </div>
-                      <div>
-                        <span className="font-medium text-gray-600">Grado:</span>
-                        <span className="ml-2">{formData.questionnaire_data.grade || 'No especificado'}</span>
-                      </div>
-                      <div className="col-span-2">
-                        <span className="font-medium text-gray-600">Creado el:</span>
-                        <span className="ml-2">
-                          {formData.questionnaire_data.created_at 
-                            ? new Date(formData.questionnaire_data.created_at).toLocaleDateString() 
-                            : 'Fecha no disponible'}
-                        </span>
-                      </div>
+              {formData.questionnaire_data && (
+                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-4">
+                  <h4 className="font-semibold text-gray-800 mb-2">Información del cuestionario seleccionado:</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-600">Docente:</span>
+                      <span className="ml-2">{formData.questionnaire_data.teacher_name || 'No disponible'}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Categoría:</span>
+                      <span className="ml-2">{formData.questionnaire_data.category || 'No especificada'}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Fase:</span>
+                      <span className="ml-2">{formData.questionnaire_data.phase || 'No especificada'}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Grado:</span>
+                      <span className="ml-2">{formData.questionnaire_data.grade || 'No especificado'}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="font-medium text-gray-600">Creado el:</span>
+                      <span className="ml-2">
+                        {formData.questionnaire_data.created_at 
+                          ? new Date(formData.questionnaire_data.created_at).toLocaleDateString() 
+                          : 'Fecha no disponible'}
+                      </span>
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
         
         <div className="mb-3">
@@ -1775,11 +1720,31 @@ const renderStudentSelectionInfo = () => {
             name="subject"
             value={formData.subject}
             onChange={handleChange}
-            readOnly={!manualEntry && formData.questionnaire_id}
+            readOnly={false}
             required
           />
           {teacherSubject && (
             <div className="form-text">Materia asignada: {teacherSubject}</div>
+          )}
+        </div>
+
+        <div className="mb-3">
+          <label htmlFor="category" className="form-label">Categoría</label>
+          <select
+            id="category"
+            name="category"
+            className="form-select"
+            value={formData.category || ''}
+            onChange={handleChange}
+            disabled={!formData.subject}
+          >
+            <option value="">Seleccione una categoría</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          {!formData.subject && (
+            <div className="form-text">Seleccione primero la materia para cargar categorías</div>
           )}
         </div>
 
@@ -1823,6 +1788,26 @@ const renderStudentSelectionInfo = () => {
         {/* Selección de estudiantes */}
         <div className="mb-4 p-4 border rounded-lg bg-white">
           <h3 className="text-lg font-medium text-gray-900 mb-3">Aplicar indicador a estudiantes</h3>
+          {realStudents.length > 0 && (
+            <div className="d-flex gap-2 mb-3">
+              <button
+                type="button"
+                className="btn btn-outline-primary btn-sm"
+                onClick={() => toggleSelectAllStudents(true)}
+                disabled={loading}
+              >
+                Seleccionar todo el curso
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                onClick={() => toggleSelectAllStudents(false)}
+                disabled={loading}
+              >
+                Deseleccionar todo
+              </button>
+            </div>
+          )}
           
           {!formData.grade ? (
             <div className="p-4 text-center text-gray-500 bg-gray-50 rounded">

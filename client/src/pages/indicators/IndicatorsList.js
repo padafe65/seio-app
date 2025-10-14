@@ -11,6 +11,7 @@ const IndicatorsList = () => {
   const [filters, setFilters] = useState({
     description: '',
     subject: '',
+    category: '',
     phase: '',
     grade: '',
     questionnaire: '',
@@ -195,6 +196,7 @@ const IndicatorsList = () => {
       return (
         indicator.description.toLowerCase().includes(filters.description.toLowerCase()) &&
         indicator.subject.toLowerCase().includes(filters.subject.toLowerCase()) &&
+        (indicator.category || '').toLowerCase().includes(filters.category.toLowerCase()) &&
         indicator.phase.toString().includes(filters.phase) &&
         (indicator.grade ? indicator.grade.toString() : 'Todos').toLowerCase().includes(filters.grade.toLowerCase()) &&
         (indicator.questionnaire_title ? indicator.questionnaire_title.toLowerCase().includes(filters.questionnaire.toLowerCase()) : filters.questionnaire === '') &&
@@ -231,6 +233,7 @@ const IndicatorsList = () => {
     setFilters({
       description: '',
       subject: '',
+      category: '',
       phase: '',
       grade: '',
       questionnaire: '',
@@ -290,6 +293,19 @@ const IndicatorsList = () => {
                       type="text"
                       name="subject"
                       value={filters.subject}
+                      onChange={handleFilterChange}
+                      className="form-control form-control-sm mt-1"
+                      placeholder="Filtrar..."
+                    />
+                  </div>
+                </th>
+                <th>
+                  <div className="d-flex flex-column">
+                    <span>Categoría</span>
+                    <input
+                      type="text"
+                      name="category"
+                      value={filters.category}
                       onChange={handleFilterChange}
                       className="form-control form-control-sm mt-1"
                       placeholder="Filtrar..."
@@ -358,6 +374,13 @@ const IndicatorsList = () => {
                 <tr key={indicator.id}>
                   <td>{indicator.description}</td>
                   <td>{indicator.subject}</td>
+                  <td>
+                    {indicator.category ? (
+                      indicator.category
+                    ) : (
+                      <span className="text-muted">Sin categoría</span>
+                    )}
+                  </td>
                   <td>{indicator.phase}</td>
                   <td>{indicator.grade || 'Todos'}</td>
                   <td>

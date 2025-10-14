@@ -1,20 +1,41 @@
 // pages/CreateQuestionPage.js
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import axios from '../api/axiosClient';
 import Swal from 'sweetalert2';
-import 'bootstrap/dist/css/bootstrap.min.css';
 import { ArrowLeft } from 'lucide-react';
 // Importaciones para KaTeX
 import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+// Estilos para las expresiones matemáticas
+const styles = {
+  mathPreview: {
+    overflowX: 'auto',
+    maxWidth: '100%',
+    padding: '0.5rem 0',
+    '& .katex': {
+      fontSize: '1.1em',
+      maxWidth: '100%',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    },
+    '& .katex-display > .katex': {
+      display: 'inline-block',
+      textAlign: 'left',
+      width: '100%'
+    }
+  }
+};
+
+// URL base para las imágenes (solo para vistas previas)
+const IMAGE_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
 const CreateQuestionPage = () => {
   const { id: questionnaireIdFromUrl } = useParams();
-  const navigate = useNavigate();
-  
+  // Se mantiene useNavigate importado para futuras implementaciones
+  // const navigate = useNavigate();
+
   const initialFormState = {
     questionnaire_id: questionnaireIdFromUrl || '',
     question_text: '',
@@ -55,7 +76,7 @@ const CreateQuestionPage = () => {
           }));
           
           // Cargar detalles del cuestionario y sus preguntas en una sola petición
-          const questionnaireResponse = await axios.get(`${API_URL}/api/questionnaires/${questionnaireIdFromUrl}`);
+          const questionnaireResponse = await axios.get(`/questionnaires/${questionnaireIdFromUrl}`);
           console.log("Cuestionario create:", questionnaireResponse.data);
           
           // Establecer el cuestionario actual
@@ -86,7 +107,7 @@ const CreateQuestionPage = () => {
 
   const fetchQuestions = async () => {
     try {
-      const res = await axios.get(`${API_URL}/api/questions`);
+      const res = await axios.get('/questions');
       setQuestions(res.data);
     } catch (err) {
       console.error('Error cargando preguntas:', err.message);
@@ -95,7 +116,7 @@ const CreateQuestionPage = () => {
 
   const fetchQuestionnaires = async () => {
     try {
-      const res = await axios.get(`${API_URL}/api/questionnaires`);
+      const res = await axios.get('/questionnaires');
       setQuestionnaires(res.data);
     } catch (err) {
       console.error('Error cargando cuestionarios:', err.message);
@@ -150,22 +171,30 @@ const CreateQuestionPage = () => {
 
     // Si no se seleccionó una nueva imagen, mantener la existente
     if (editingId && !formData.image && preview) {
-      data.append('image_url', preview.replace(`${API_URL}`, ''));
+      data.append('image_url', preview.replace(/^https?:\/\/[^/]+/, ''));
     }
 
     try {
       if (editingId) {
-        await axios.put(`${API_URL}/api/questions/${editingId}`, data);
+        await axios.put(`/questions/${editingId}`, data, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
         Swal.fire('Pregunta actualizada', '', 'success');
       } else {
-        await axios.post(`${API_URL}/api/questions`, data);
+await axios.post(`/questions`, data, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        });
         Swal.fire('Pregunta creada', '', 'success');
       }
       resetForm();
       
       if (questionnaireIdFromUrl) {
         // Recargar solo las preguntas del cuestionario actual
-        const questionsResponse = await axios.get(`${API_URL}/api/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+        const questionsResponse = await axios.get(`/questions?questionnaire_id=${questionnaireIdFromUrl}`);
         setQuestions(questionsResponse.data);
       } else {
         fetchQuestions();
@@ -207,7 +236,7 @@ const CreateQuestionPage = () => {
       image: null,
       image_url: question.image_url || ''
     });
-    setPreview(question.image_url ? `${API_URL}${question.image_url}` : null);
+    setPreview(question.image_url ? question.image_url.startsWith('http') ? question.image_url : `${IMAGE_BASE_URL}${question.image_url}` : null);
   };
 
   const handleDelete = async (id) => {
@@ -224,12 +253,12 @@ const CreateQuestionPage = () => {
     
     if (result.isConfirmed) {
       try {
-        await axios.delete(`${API_URL}/api/questions/${id}`);
+        await axios.delete(`/questions/${id}`);
         Swal.fire('Eliminada', 'La pregunta ha sido eliminada', 'success');
         
         if (questionnaireIdFromUrl) {
           // Recargar solo las preguntas del cuestionario actual
-          const questionsResponse = await axios.get(`${API_URL}/api/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+          const questionsResponse = await axios.get(`/questions?questionnaire_id=${questionnaireIdFromUrl}`);
           setQuestions(questionsResponse.data);
         } else {
           fetchQuestions();
@@ -470,20 +499,24 @@ const CreateQuestionPage = () => {
                     <tr key={q.id}>
                       <td>{q.id}</td>
                       <td>
-                        {containsLatex(q.question_text) ? (
-                          <BlockMath math={q.question_text} />
+                        {q.question_text ? (
+                          <div className="math-preview">
+                            <BlockMath math={q.question_text || ''} />
+                          </div>
                         ) : (
-                          q.question_text
+                          <span className="text-muted">Sin texto</span>
                         )}
                       </td>
                       <td>
                         <ol className="mb-0 ps-3">
                           {[1, 2, 3, 4].map((n) => (
                             <li key={n}>
-                              {containsLatex(q[`option${n}`]) ? (
-                                <InlineMath math={q[`option${n}`]} />
+                              {q[`option${n}`] ? (
+                                <div className="math-preview">
+                                  <InlineMath math={q[`option${n}`] || ''} />
+                                </div>
                               ) : (
-                                q[`option${n}`]
+                                <span className="text-muted">Sin opción {n}</span>
                               )}
                             </li>
                           ))}
@@ -498,7 +531,7 @@ const CreateQuestionPage = () => {
                       <td className="text-center">
                         {q.image_url ? (
                           <img
-                            src={`${API_URL}${q.image_url}`}
+                            src={q.image_url.startsWith('http') ? q.image_url : `${IMAGE_BASE_URL}${q.image_url}`}
                             alt="Pregunta"
                             style={{ width: '100px' }}
                             className="img-thumbnail"
