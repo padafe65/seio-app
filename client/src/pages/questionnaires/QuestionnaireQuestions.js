@@ -80,9 +80,10 @@ const QuestionnaireQuestions = () => {
         formData.append('image', currentQuestion.image);
       }
       
-      const response = await axios.post(`${API_URL}/api/questions`, formData, {
+      const response = await axios.post(`${API_URL}/api/questions/question`, formData, {
         headers: {
-          'Content-Type': 'multipart/form-data'
+          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
         }
       });
       
@@ -226,29 +227,67 @@ const QuestionnaireQuestions = () => {
               <div className="mb-3">
                 <div className="d-flex justify-content-between align-items-center">
                   <label htmlFor="question_text" className="form-label">Texto de la pregunta</label>
-                  <button 
-                    type="button" 
-                    className="btn btn-sm btn-outline-info"
-                    onClick={() => setShowLatexGuide(!showLatexGuide)}
-                  >
-                    {showLatexGuide ? 'Ocultar guía LaTeX' : 'Mostrar guía LaTeX'}
-                  </button>
+                  <div>
+                    <button 
+                      type="button" 
+                      className="btn btn-sm btn-outline-success me-2"
+                      onClick={() => setShowLatexGuide(!showLatexGuide)}
+                    >
+                      {showLatexGuide ? 'Ocultar guía LaTeX' : 'Ver guía y ejemplos'}
+                    </button>
+                  </div>
                 </div>
+                
+                <div className="alert alert-info py-2 mb-2">
+                  <small>
+                    <strong>💡 Tips:</strong> 
+                    <br />
+                    • Escribe texto normal libremente. Presiona <kbd>Enter</kbd> para hacer saltos de línea.
+                    <br />
+                    • Para fórmulas matemáticas, rodéalas con símbolos de dólar: <code>$formula$</code>
+                    <br />
+                    <strong>Ejemplo:</strong> "Si el radio es $r = 5m$ y la velocidad es $v = 10m/s$, entonces..."
+                  </small>
+                </div>
+                
                 <textarea
                   id="question_text"
                   name="question_text"
                   value={currentQuestion.question_text}
                   onChange={handleQuestionChange}
                   className="form-control"
-                  rows="3"
+                  rows="8"
+                  style={{ 
+                    minHeight: '200px',
+                    width: '100%',
+                    resize: 'vertical', 
+                    overflowY: 'auto',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap'
+                  }}
                   required
-                  placeholder="Escribe la pregunta aquí. Puedes usar sintaxis LaTeX entre $ $ para expresiones matemáticas."
+                  placeholder="Ejemplo:&#10;Una piedra atada a una cuerda de longitud $L = 2.5m$ gira con frecuencia $f = 3Hz$.&#10;&#10;¿Cuál es su velocidad angular $\omega$?&#10;&#10;Presiona Enter para crear saltos de línea y organizar mejor tu pregunta."
                 />
                 {currentQuestion.question_text && (
-                  <div className="mt-2 p-3 border rounded bg-light">
-                    <strong>Vista previa:</strong>
+                  <div 
+                    className="mt-2 p-3 border rounded bg-light"
+                    style={{
+                      width: '100%',
+                      overflowX: 'auto',
+                      overflowY: 'auto',
+                      maxWidth: '100%'
+                    }}
+                  >
+                    <strong>📝 Vista previa (así se verá la pregunta):</strong>
+                    <hr className="my-2" />
                     <MathJax>
-                      <div dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} />
+                      <div 
+                        style={{ 
+                          fontSize: '1.05rem', 
+                          lineHeight: '1.6'
+                        }}
+                        dangerouslySetInnerHTML={{ __html: currentQuestion.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') }} 
+                      />
                     </MathJax>
                   </div>
                 )}
@@ -256,25 +295,55 @@ const QuestionnaireQuestions = () => {
               
               {/* Guía de LaTeX (colapsable) */}
               {showLatexGuide && (
-                <div className="mb-3 p-3 border rounded bg-light">
-                  <h5>Guía rápida de LaTeX</h5>
-                  <p className="text-muted">Escribe expresiones matemáticas entre símbolos $ $ en tu texto.</p>
+                <div className="mb-3 p-4 border rounded" style={{ backgroundColor: '#f8f9fa' }}>
+                  <h5 className="text-success mb-3">📚 Guía rápida: Cómo escribir preguntas con fórmulas</h5>
+                  
+                  <div className="alert alert-success mb-3">
+                    <h6 className="mb-2">✅ Ejemplos de preguntas completas:</h6>
+                    <div className="mb-3">
+                      <strong>Ejemplo 1 (Física):</strong>
+                      <div className="bg-white p-2 rounded mt-1 mb-2">
+                        <code style={{ fontSize: '0.9rem' }}>
+                          Un cuerpo se mueve con velocidad inicial $v_0 = 10m/s$ y aceleración $a = 2m/s^2$. Si el tiempo es $t = 5s$, ¿cuál es la velocidad final usando $v = v_0 + at$?
+                        </code>
+                      </div>
+                      <div className="bg-light p-2 rounded border">
+                        <MathJax>
+                          <div dangerouslySetInnerHTML={{ __html: 'Un cuerpo se mueve con velocidad inicial \\(v_0 = 10m/s\\) y aceleración \\(a = 2m/s^2\\). Si el tiempo es \\(t = 5s\\), ¿cuál es la velocidad final usando \\(v = v_0 + at\\)?' }} />
+                        </MathJax>
+                      </div>
+                    </div>
+                    
+                    <div className="mb-2">
+                      <strong>Ejemplo 2 (Matemáticas):</strong>
+                      <div className="bg-white p-2 rounded mt-1 mb-2">
+                        <code style={{ fontSize: '0.9rem' }}>
+                          {`Resuelve la ecuación cuadrática $x^2 - 5x + 6 = 0$ usando la fórmula $x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$`}
+                        </code>
+                      </div>
+                      <div className="bg-light p-2 rounded border">
+                        <MathJax>
+                          <div dangerouslySetInnerHTML={{ __html: 'Resuelve la ecuación cuadrática \\(x^2 - 5x + 6 = 0\\) usando la fórmula \\(x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}\\)' }} />
+                        </MathJax>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <h6 className="mt-4 mb-2">📝 Símbolos matemáticos más usados:</h6>
                   <div className="table-responsive">
-                    <table className="table table-sm">
-                      <thead>
+                    <table className="table table-sm table-bordered">
+                      <thead className="table-light">
                         <tr>
-                          <th>Descripción</th>
-                          <th>Sintaxis</th>
-                          <th>Ejemplo</th>
-                          <th>Resultado</th>
+                          <th>Qué necesitas</th>
+                          <th>Escribe esto</th>
+                          <th>Se verá así</th>
                         </tr>
                       </thead>
                       <tbody>
                         {latexExamples.map((example, index) => (
                           <tr key={index}>
                             <td>{example.description}</td>
-                            <td><code>{example.latex}</code></td>
-                            <td><code>${example.ejemplo}$</code></td>
+                            <td><code className="text-primary">${example.ejemplo}$</code></td>
                             <td>
                               <MathJax>
                                 <div dangerouslySetInnerHTML={{ __html: `\\(${example.ejemplo}\\)` }} />
@@ -284,6 +353,10 @@ const QuestionnaireQuestions = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                  
+                  <div className="alert alert-warning mt-3 mb-0">
+                    <strong>⚠️ Importante:</strong> Solo usa los símbolos <code>$...$</code> alrededor de las fórmulas matemáticas. El resto del texto escríbelo normalmente.
                   </div>
                 </div>
               )}

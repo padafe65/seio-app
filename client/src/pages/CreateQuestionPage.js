@@ -7,6 +7,7 @@ import { ArrowLeft } from 'lucide-react';
 // Importaciones para KaTeX
 import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
+import { MathJax, MathJaxContext } from 'better-react-mathjax';
 
 // Estilos para las expresiones matemáticas
 const styles = {
@@ -183,9 +184,10 @@ const CreateQuestionPage = () => {
         });
         Swal.fire('Pregunta actualizada', '', 'success');
       } else {
-await axios.post(`/questions`, data, {
+await axios.post(`/questions/question`, data, {
           headers: {
-            'Content-Type': 'multipart/form-data'
+            'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
           }
         });
         Swal.fire('Pregunta creada', '', 'success');
@@ -281,6 +283,7 @@ await axios.post(`/questions`, data, {
   }
 
   return (
+    <MathJaxContext>
     <div className="container mt-4">
       {questionnaireIdFromUrl && currentQuestionnaire && (
         <div className="mb-4">
@@ -349,9 +352,43 @@ await axios.post(`/questions`, data, {
                 </button>
               </label>
               
+              <div className="alert alert-info py-2 mb-2">
+                <small>
+                  <strong>💡 Tips:</strong>
+                  <br />
+                  • Escribe texto normal libremente. Presiona <kbd>Enter</kbd> para hacer saltos de línea.
+                  <br />
+                  • Para fórmulas matemáticas, rodéalas con símbolos de dólar: <code>$formula$</code>
+                  <br />
+                  <strong>Ejemplo:</strong> {`"Si el radio es $r = 5m$ y la velocidad es $v = 10m/s$, entonces la aceleración centrípeta es $a_c = \\frac{v^2}{r}$"`}
+                </small>
+              </div>
+              
               {mathPreview.question_text ? (
-                <div className="border rounded p-3 bg-light">
-                  <BlockMath math={formData.question_text || ''} />
+                <div 
+                  className="border rounded p-3 bg-light" 
+                  style={{
+                    minHeight: '200px',
+                    width: '100%',
+                    overflowY: 'auto',
+                    overflowX: 'auto',
+                    maxWidth: '100%',
+                    whiteSpace: 'pre-wrap'
+                  }}
+                >
+                  <strong>📝 Vista previa:</strong>
+                  <hr className="my-2" />
+                  <MathJax>
+                    <div 
+                      style={{ 
+                        fontSize: '1.05rem', 
+                        lineHeight: '1.6'
+                      }}
+                      dangerouslySetInnerHTML={{ 
+                        __html: formData.question_text.replace(/\$(.*?)\$/g, '\\($1\\)') 
+                      }} 
+                    />
+                  </MathJax>
                 </div>
               ) : (
                 <textarea
@@ -360,13 +397,21 @@ await axios.post(`/questions`, data, {
                   value={formData.question_text}
                   onChange={handleChange}
                   required
-                  rows={3}
-                  placeholder="Usa sintaxis LaTeX para expresiones matemáticas. Ej: \frac{1}{2} para fracciones"
+                  rows={8}
+                  style={{ 
+                    minHeight: '200px',
+                    width: '100%',
+                    resize: 'vertical', 
+                    overflowY: 'auto',
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap'
+                  }}
+                  placeholder="Ejemplo:&#10;Una piedra atada a una cuerda de longitud $L = 2.5m$ gira con frecuencia $f = 3Hz$.&#10;&#10;¿Cuál es su velocidad angular $\omega = 2\pi f$?&#10;&#10;Presiona Enter para crear saltos de línea y organizar mejor tu pregunta."
                 />
               )}
               
               <small className="form-text text-muted">
-                Para fracciones usa \frac{'n'}{'d'}, para raíces \sqrt{'x'}, para potencias x^{'n'}
+                <strong>Fórmulas comunes:</strong> Fracciones: <code>{`$\\frac{a}{b}$`}</code> | Raíces: <code>{`$\\sqrt{x}$`}</code> | Potencias: <code>$x^2$</code> | Subíndices: <code>$v_0$</code>
               </small>
             </div>
 
@@ -590,6 +635,7 @@ await axios.post(`/questions`, data, {
         </div>
       </div>
     </div>
+    </MathJaxContext>
   );
 };
 
