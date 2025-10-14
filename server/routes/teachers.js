@@ -17,7 +17,7 @@ const isTeacherOrAdmin = (req, res, next) => {
 router.use(verifyToken);
 
 // Obtener todos los profesores con sus datos de usuario (solo admin)
-router.get('/', isAdmin, async (req, res) => {
+router.get('/', isTeacherOrAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT t.*, u.name, u.email, u.phone, u.role 

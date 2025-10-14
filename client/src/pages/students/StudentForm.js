@@ -163,12 +163,13 @@ const StudentForm = ({ isViewMode = false }) => {
             phone: teacher.user.phone
           } : teacher;
           
-          // Usar user_id como ID principal si está disponible
-          const teacherId = teacherData.user_id || teacherData.id;
+          // IMPORTANTE: Usar teachers.id (NO user_id) como ID principal
+          // teachers.id es lo que se usa en teacher_students.teacher_id
+          const teacherId = teacherData.id;
           
           return {
-            id: teacherId,
-            user_id: teacherData.user_id,
+            id: teacherId,  // Este es teachers.id
+            user_id: teacherData.user_id,  // Este es users.id (solo para referencia)
             name: teacherData.user_name || teacherData.name || `Docente #${teacherId}`,
             email: teacherData.user_email || teacherData.email || '',
             phone: teacherData.phone || ''
@@ -180,7 +181,8 @@ const StudentForm = ({ isViewMode = false }) => {
         
         // 4. Si hay un docente actual, asegurarse de que esté seleccionado
         if (currentTeacher) {
-          const teacherId = currentTeacher.user_id || currentTeacher.id;
+          // Usar teachers.id (NO user_id)
+          const teacherId = currentTeacher.id;
           if (teacherId) {
             setFormData(prev => ({
               ...prev,
@@ -422,11 +424,13 @@ const StudentForm = ({ isViewMode = false }) => {
         html: `
           <div class="text-start">
             <p class="mb-2">${errorMessage}</p>
-            ${error.response?.data?.details ? 
+            ${error.response?.data?.details && typeof error.response.data.details === 'string' ? 
+              `<p class="mb-1"><strong>Detalles:</strong> ${error.response.data.details}</p>` : 
+              error.response?.data?.details && typeof error.response.data.details === 'object' ?
               `<p class="mb-1 fw-bold">Detalles:</p>
               <ul class="mb-0">
                 ${Object.entries(error.response.data.details)
-                  .map(([field, message]) => `<li>${field}: ${message}</li>`)
+                  .map(([field, message]) => `<li><strong>${field}:</strong> ${message}</li>`)
                   .join('')}
               </ul>` : ''}
           </div>

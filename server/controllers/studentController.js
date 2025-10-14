@@ -288,9 +288,9 @@ export const updateStudent = async (req, res) => {
 
     // 5. Actualizar la relación con el docente si se proporcionó teacher_id
     if (teacher_id) {
-      // Verificar que el docente exista (teacher_id es en realidad el user_id)
+      // Verificar que el docente exista (teacher_id es teachers.id)
       const [teacher] = await connection.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
+        'SELECT id FROM teachers WHERE id = ?',
         [teacher_id]
       );
 
@@ -300,11 +300,9 @@ export const updateStudent = async (req, res) => {
           success: false,
           message: 'El docente especificado no existe',
           error: 'TEACHER_NOT_FOUND',
-          details: `No se encontró un docente con user_id: ${teacher_id}`
+          details: `No se encontró un docente con id: ${teacher_id}`
         });
       }
-
-      const teacherDbId = teacher[0].id;
 
       // Eliminar asignaciones existentes
       await connection.query(
@@ -312,10 +310,10 @@ export const updateStudent = async (req, res) => {
         [id]
       );
 
-      // Crear nueva asignación usando el id real de la tabla teachers
+      // Crear nueva asignación usando el id de la tabla teachers
       await connection.query(
         'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-        [teacherDbId, id]
+        [teacher_id, id]
       );
     }
 
