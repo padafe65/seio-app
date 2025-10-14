@@ -707,6 +707,21 @@ app.get('/api/teacher/subject/:userId', async (req, res) => {
   }
 });
 
+// Ruta para obtener todas las materias disponibles (DEBE IR ANTES de la ruta con :subject)
+app.get('/api/subject-categories-list/subjects', async (req, res) => {
+  try {
+    // Obtener todas las materias únicas de la tabla subject_categories
+    const [rows] = await pool.query(
+      'SELECT DISTINCT subject FROM subject_categories ORDER BY subject'
+    );
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener materias:', error);
+    res.status(500).json({ message: 'Error al obtener materias' });
+  }
+});
+
 // Ruta para obtener categorías por materia
 app.get('/api/subject-categories/:subject', async (req, res) => {
   try {

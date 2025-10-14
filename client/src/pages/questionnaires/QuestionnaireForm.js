@@ -26,6 +26,7 @@ const QuestionnaireForm = () => {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
+    subject: '',
     category: '',
     grade: '',
     phase: '',
@@ -34,6 +35,7 @@ const QuestionnaireForm = () => {
   });
   
   const [courses, setCourses] = useState([]);
+  const [subjects, setSubjects] = useState([]);
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -43,11 +45,16 @@ const QuestionnaireForm = () => {
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [newCategory, setNewCategory] = useState('');
   
+  // Estado para nueva materia
+  const [isCreatingSubject, setIsCreatingSubject] = useState(false);
+  const [customSubject, setCustomSubject] = useState('');
+  
   // Estado para el modal de nuevo cuestionario
   const [showModal, setShowModal] = useState(false);
   const [newQuestionnaireData, setNewQuestionnaireData] = useState({
     title: '',
     description: '',
+    subject: '',
     category: '',
     grade: '',
     phase: '',
@@ -58,6 +65,10 @@ const QuestionnaireForm = () => {
   // Estado para nueva categoría en el modal
   const [isCreatingModalCategory, setIsCreatingModalCategory] = useState(false);
   const [newModalCategory, setNewModalCategory] = useState('');
+  
+  // Estado para nueva materia en el modal
+  const [isCreatingModalSubject, setIsCreatingModalSubject] = useState(false);
+  const [customModalSubject, setCustomModalSubject] = useState('');
   
   // Efecto para depuración
   useEffect(() => {
@@ -75,16 +86,37 @@ const QuestionnaireForm = () => {
         const coursesResponse = await axios.get(`${API_URL}/api/courses`);
         setCourses(coursesResponse.data);
         
-        // Cargar materia del docente
+        // Cargar todas las materias disponibles
+        const subjectsResponse = await axios.get(`${API_URL}/api/subject-categories-list/subjects`);
+        let loadedSubjects = subjectsResponse.data;
+        
+        // Cargar materia del docente (para determinar la materia por defecto)
+        let teacherSubject = 'Matematicas';
         if (user?.id) {
           const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
-          const subject = subjectResponse.data.subject || 'Matematicas';
-          setSubjectName(subject);
+          teacherSubject = subjectResponse.data.subject || 'Matematicas';
+          setSubjectName(teacherSubject);
           
-          // Cargar categorías basadas en la materia
-          const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${subject}`);
-          setCategories(categoriesResponse.data);
+          // Asegurar que la materia del docente esté en la lista de materias
+          const subjectExists = loadedSubjects.some(s => s.subject === teacherSubject);
+          if (!subjectExists) {
+            loadedSubjects.push({ subject: teacherSubject });
+          }
+          
+          // Pre-seleccionar la materia del docente en formData si no estamos editando
+          if (!isEditing) {
+            setFormData(prev => ({
+              ...prev,
+              subject: teacherSubject
+            }));
+            
+            // Cargar categorías basadas en la materia del docente
+            const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${teacherSubject}`);
+            setCategories(categoriesResponse.data);
+          }
         }
+        
+        setSubjects(loadedSubjects);
         
         // Si estamos editando, cargar datos del cuestionario
         if (isEditing) {
@@ -96,21 +128,83 @@ const QuestionnaireForm = () => {
             
             console.log('Datos del cuestionario recibidos:', questionnaireResponse.data);
             
-            // Actualizar el estado del formulario con los datos del cuestionario
+            // MIGRACIÓN AUTOMÁTICA: Si el cuestionario NO tiene subject pero SÍ tiene category
+            let extractedSubject = questionnaireData.subject;
+            let extractedCategory = questionnaireData.category;
+            
+            if (!extractedSubject && questionnaireData.category) {
+              // CASO 1: Formato antiguo "Matematicas_Geometria"
+              if (questionnaireData.category.includes('_')) {
+                const parts = questionnaireData.category.split('_');
+                extractedSubject = parts[0];
+                extractedCategory = parts.slice(1).join('_'); // Por si hay más de un underscore
+                
+                console.log('📦 Migración automática (formato antiguo):', {
+                  category_antigua: questionnaireData.category,
+                  subject_extraido: extractedSubject,
+                  category_extraida: extractedCategory
+                });
+              } 
+              // CASO 2: Ya tiene category migrada pero falta subject -> usar materia del docente
+              else {
+                extractedSubject = teacherSubject; // Usar la materia del docente como fallback
+                extractedCategory = questionnaireData.category;
+                
+                console.log('📦 Migración automática (subject faltante):', {
+                  category_existente: questionnaireData.category,
+                  subject_asignado: extractedSubject
+                });
+              }
+            }
+            
+            // Si el cuestionario tiene una materia que no está en la lista, agregarla
+            if (extractedSubject) {
+              const subjectExistsInList = loadedSubjects.some(s => s.subject === extractedSubject);
+              if (!subjectExistsInList) {
+                loadedSubjects.push({ subject: extractedSubject });
+                setSubjects([...loadedSubjects]); // Actualizar el estado con la nueva materia
+              }
+            }
+            
+            // Actualizar el estado del formulario con los datos del cuestionario (con valores migrados si aplica)
             setFormData({
               title: questionnaireData.title || '',
               description: questionnaireData.description || '',
-              category: questionnaireData.category || '',
+              subject: extractedSubject || '',
+              category: extractedCategory || '',
               grade: String(questionnaireData.grade) || '',
               phase: String(questionnaireData.phase) || '',
               course_id: String(questionnaireData.course_id) || '',
               created_by: user?.id
             });
             
+            // Si el cuestionario tiene materia, cargar sus categorías
+            if (extractedSubject) {
+              const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${extractedSubject}`);
+              const loadedCategories = categoriesResponse.data;
+              
+              // Verificar si la categoría actual del cuestionario está en la lista
+              if (extractedCategory) {
+                const categoryExists = loadedCategories.some(cat => cat.category === extractedCategory);
+                
+                // Si la categoría no existe en la lista, agregarla
+                if (!categoryExists) {
+                  loadedCategories.push({
+                    id: 'temp-' + extractedCategory,
+                    subject: extractedSubject,
+                    category: extractedCategory
+                  });
+                }
+              }
+              
+              setCategories(loadedCategories);
+            }
+            
             console.log('FormData actualizado:', {
               title: questionnaireData.title || '',
               description: questionnaireData.description || '',
-              category: questionnaireData.category || '',
+              subject: extractedSubject || '',
+              category: extractedCategory || '',
               grade: String(questionnaireData.grade) || '',
               phase: String(questionnaireData.phase) || '',
               course_id: String(questionnaireData.course_id) || '',
@@ -143,23 +237,83 @@ const QuestionnaireForm = () => {
     fetchData();
   }, [id, isEditing, user, categoryFromUrl]);
   
+  // useEffect para cargar categorías cuando cambia la materia (solo si no estamos en el useEffect inicial)
+  useEffect(() => {
+    // Evitar cargar categorías si estamos en modo edición y aún no se ha cargado el cuestionario
+    if (isEditing && !formData.title) {
+      return; // Esperar a que se cargue el cuestionario primero
+    }
+    
+    const loadCategories = async () => {
+      if (formData.subject) {
+        try {
+          const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${formData.subject}`);
+          setCategories(categoriesResponse.data);
+        } catch (error) {
+          console.error('Error al cargar categorías:', error);
+        }
+      } else {
+        setCategories([]);
+      }
+    };
+    
+    loadCategories();
+  }, [formData.subject, isEditing, formData.title]);
+  
   // Manejar cambios en el formulario principal
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    
+    // Si cambia la materia, limpiar la categoría
+    if (name === 'subject') {
+      setFormData(prev => ({
+        ...prev,
+        subject: value,
+        category: '' // Limpiar categoría al cambiar materia
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    }
   };
+  
+  // useEffect para cargar categorías cuando cambia la materia en el modal
+  useEffect(() => {
+    const loadModalCategories = async () => {
+      if (newQuestionnaireData.subject) {
+        try {
+          const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${newQuestionnaireData.subject}`);
+          setCategories(categoriesResponse.data);
+        } catch (error) {
+          console.error('Error al cargar categorías del modal:', error);
+        }
+      }
+    };
+    
+    loadModalCategories();
+  }, [newQuestionnaireData.subject]);
   
   // Manejar cambios en el formulario del modal
   const handleModalChange = (e) => {
     const { name, value } = e.target;
-    setNewQuestionnaireData(prev => ({
-      ...prev,
-      [name]: value,
-      created_by: user?.id
-    }));
+    
+    // Si cambia la materia en el modal, limpiar la categoría
+    if (name === 'subject') {
+      setNewQuestionnaireData(prev => ({
+        ...prev,
+        subject: value,
+        category: '', // Limpiar categoría al cambiar materia
+        created_by: user?.id
+      }));
+    } else {
+      setNewQuestionnaireData(prev => ({
+        ...prev,
+        [name]: value,
+        created_by: user?.id
+      }));
+    }
   };
   
   // Manejar creación de nueva categoría
@@ -370,7 +524,16 @@ const QuestionnaireForm = () => {
             <button
               type="button"
               className="btn btn-light btn-sm me-2"
-              onClick={() => setShowModal(true)}
+              onClick={() => {
+                // Pre-seleccionar la materia del docente cuando se abre el modal
+                setNewQuestionnaireData(prev => ({
+                  ...prev,
+                  subject: subjectName || '',
+                  category: '',
+                  created_by: user?.id
+                }));
+                setShowModal(true);
+              }}
             >
               Crear y Añadir Preguntas
             </button>
@@ -412,56 +575,157 @@ const QuestionnaireForm = () => {
             
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="category" className="form-label">Categoría</label>
-                {!isCreatingCategory ? (
+                <label htmlFor="subject" className="form-label">Materia</label>
+                {!isCreatingSubject ? (
                   <div>
-                    <div className="input-group mb-2">
+                    <div className="input-group">
                       <select
                         className="form-select"
-                        id="category"
-                        name="category"
-                        value={String(formData.category) || ''}
+                        id="subject"
+                        name="subject"
+                        value={String(formData.subject) || ''}
                         onChange={handleChange}
                         required
                       >
-                        <option value="">Seleccionar categoría</option>
-                        {categories.map((cat, index) => (
-                          <option key={index} value={cat.category}>
-                            {cat.category.split('_')[1] || cat.category}
+                        <option value="">Seleccionar materia</option>
+                        {subjects.map((subj, index) => (
+                          <option key={index} value={subj.subject}>
+                            {subj.subject}
                           </option>
                         ))}
                       </select>
                       <button 
                         type="button" 
-                        className="btn btn-outline-secondary"
-                        onClick={() => setIsCreatingCategory(true)}
+                        className="btn btn-outline-primary"
+                        onClick={() => setIsCreatingSubject(true)}
+                        title="Agregar nueva materia"
                       >
-                        <i className="bi bi-plus"></i> Nueva
+                        <strong>+</strong>
                       </button>
                     </div>
-                    <div className="d-flex align-items-center">
-                      <small className="text-muted me-2">¿No encuentras la categoría que necesitas?</small>
-                      <Link 
-                        to="/materias-categorias?redirect=cuestionarios/nuevo" 
-                        className="btn btn-outline-primary btn-sm d-flex align-items-center"
-                      >
-                        <FileText size={14} className="me-1" /> Gestionar Materias y Categorías
-                      </Link>
-                    </div>
+                    <small className="d-block mt-1 px-2 py-1 rounded" style={{backgroundColor: '#0d6efd', color: 'white', fontSize: '0.75rem'}}>
+                      💡 ¿No encuentras la materia? Haz clic en + para agregar una nueva.
+                    </small>
                   </div>
                 ) : (
                   <div className="input-group">
                     <input
                       type="text"
                       className="form-control"
-                      placeholder="Nombre de la nueva categoría"
+                      placeholder="Nombre de la nueva materia (ej: Física)"
+                      value={customSubject}
+                      onChange={(e) => setCustomSubject(e.target.value)}
+                    />
+                    <button 
+                      type="button" 
+                      className="btn btn-success"
+                      onClick={() => {
+                        if (customSubject.trim()) {
+                          // Agregar la materia a la lista y seleccionarla
+                          const newSubjects = [...subjects, { subject: customSubject.trim() }];
+                          setSubjects(newSubjects);
+                          setFormData(prev => ({
+                            ...prev,
+                            subject: customSubject.trim(),
+                            category: '' // Limpiar categoría
+                          }));
+                          setCustomSubject('');
+                          setIsCreatingSubject(false);
+                        }
+                      }}
+                    >
+                      Guardar
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn btn-outline-secondary"
+                      onClick={() => {
+                        setIsCreatingSubject(false);
+                        setCustomSubject('');
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                )}
+              </div>
+              
+              <div className="col-md-6 mb-3">
+                <label htmlFor="category" className="form-label">Categoría</label>
+                {!isCreatingCategory ? (
+                  <div>
+                    <div className="input-group">
+                      {categories.length > 0 ? (
+                        <select
+                          className="form-select"
+                          id="category"
+                          name="category"
+                          value={String(formData.category) || ''}
+                          onChange={handleChange}
+                          disabled={!formData.subject}
+                        >
+                          <option value="">Seleccionar categoría</option>
+                          {categories.map((cat, index) => (
+                            <option key={index} value={cat.category}>
+                              {cat.category}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          className="form-control"
+                          id="category"
+                          name="category"
+                          value={formData.category || ''}
+                          onChange={handleChange}
+                          placeholder="Escribe el nombre de la categoría"
+                          disabled={!formData.subject}
+                        />
+                      )}
+                      <button 
+                        type="button" 
+                        className="btn btn-outline-primary"
+                        onClick={() => setIsCreatingCategory(true)}
+                        disabled={!formData.subject}
+                        title="Agregar nueva categoría"
+                      >
+                        <strong>+</strong>
+                      </button>
+                    </div>
+                    <small className="d-block mt-1 px-2 py-1 rounded" style={{backgroundColor: !formData.subject ? '#6c757d' : '#0d6efd', color: 'white', fontSize: '0.75rem'}}>
+                      {!formData.subject ? '⚠️ Primero selecciona una materia' : '💡 Clic en + para nueva categoría'}
+                    </small>
+                  </div>
+                ) : (
+                  <div className="input-group">
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Nueva categoría (ej: Geometría)"
                       value={newCategory}
                       onChange={(e) => setNewCategory(e.target.value)}
                     />
                     <button 
                       type="button" 
                       className="btn btn-success"
-                      onClick={handleCreateCategory}
+                      onClick={() => {
+                        if (newCategory.trim()) {
+                          // Agregar la categoría a la lista y seleccionarla
+                          const newCat = { 
+                            id: 'temp-' + Date.now(), 
+                            subject: formData.subject, 
+                            category: newCategory.trim() 
+                          };
+                          setCategories([...categories, newCat]);
+                          setFormData(prev => ({
+                            ...prev,
+                            category: newCategory.trim()
+                          }));
+                          setNewCategory('');
+                          setIsCreatingCategory(false);
+                        }
+                      }}
                     >
                       Guardar
                     </button>
@@ -478,7 +742,9 @@ const QuestionnaireForm = () => {
                   </div>
                 )}
               </div>
-              
+            </div>
+            
+            <div className="row">
               <div className="col-md-6 mb-3">
                 <label htmlFor="grade" className="form-label">Grado</label>
                 <select
@@ -499,9 +765,7 @@ const QuestionnaireForm = () => {
                   <option value="11">11°</option>
                 </select>
               </div>
-            </div>
-            
-            <div className="row">
+              
               <div className="col-md-6 mb-3">
                 <label htmlFor="phase" className="form-label">Fase</label>
                 <select
@@ -594,59 +858,157 @@ const QuestionnaireForm = () => {
           
           <div className="row">
             <div className="col-md-6 mb-3">
-              <label htmlFor="modal-category" className="form-label">Categoría</label>
-              {!isCreatingModalCategory ? (
+              <label htmlFor="modal-subject" className="form-label">Materia</label>
+              {!isCreatingModalSubject ? (
                 <div>
-                  <div className="input-group mb-2">
+                  <div className="input-group">
                     <select
                       className="form-select"
-                      id="modal-category"
-                      name="category"
-                      value={newQuestionnaireData.category || ''}
+                      id="modal-subject"
+                      name="subject"
+                      value={newQuestionnaireData.subject || ''}
                       onChange={handleModalChange}
                       required
                     >
-                      <option value="">Seleccionar categoría</option>
-                      {categories.map((cat, index) => (
-                        <option key={index} value={cat.category}>
-                          {cat.category.split('_')[1] || cat.category}
+                      <option value="">Seleccionar materia</option>
+                      {subjects.map((subj, index) => (
+                        <option key={index} value={subj.subject}>
+                          {subj.subject}
                         </option>
                       ))}
                     </select>
                     <button 
                       type="button" 
-                      className="btn btn-outline-secondary"
-                      onClick={() => setIsCreatingModalCategory(true)}
+                      className="btn btn-outline-primary"
+                      onClick={() => setIsCreatingModalSubject(true)}
+                      title="Agregar nueva materia"
                     >
-                      <i className="bi bi-plus"></i> Nueva
+                      <strong>+</strong>
                     </button>
                   </div>
-                  <div className="d-flex align-items-center">
-                    <small className="text-muted me-2">¿No encuentras la categoría que necesitas?</small>
-                    <Link 
-                      to="/materias-categorias?redirect=cuestionarios/nuevo" 
-                      className="btn btn-outline-primary btn-sm d-flex align-items-center"
-                      onClick={() => setShowModal(false)}
-                    >
-                      <FileText size={14} className="me-1" /> Gestionar Materias y Categorías
-                    </Link>
-                  </div>
+                  <small className="d-block mt-1 px-2 py-1 rounded" style={{backgroundColor: '#0d6efd', color: 'white', fontSize: '0.75rem'}}>
+                    💡 Clic en + para nueva materia
+                  </small>
                 </div>
               ) : (
                 <div className="input-group">
                   <input
                     type="text"
                     className="form-control"
-                    placeholder="Nombre de la nueva categoría"
+                    placeholder="Nueva materia (ej: Física)"
+                    value={customModalSubject}
+                    onChange={(e) => setCustomModalSubject(e.target.value)}
+                  />
+                  <button 
+                    type="button" 
+                    className="btn btn-success"
+                    onClick={() => {
+                      if (customModalSubject.trim()) {
+                        const newSubjects = [...subjects, { subject: customModalSubject.trim() }];
+                        setSubjects(newSubjects);
+                        setNewQuestionnaireData(prev => ({
+                          ...prev,
+                          subject: customModalSubject.trim(),
+                          category: ''
+                        }));
+                        setCustomModalSubject('');
+                        setIsCreatingModalSubject(false);
+                      }
+                    }}
+                  >
+                    OK
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn btn-outline-secondary"
+                    onClick={() => {
+                      setIsCreatingModalSubject(false);
+                      setCustomModalSubject('');
+                    }}
+                  >
+                    X
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            <div className="col-md-6 mb-3">
+              <label htmlFor="modal-category" className="form-label">Categoría</label>
+              {!isCreatingModalCategory ? (
+                <div>
+                  <div className="input-group">
+                    {categories.length > 0 ? (
+                      <select
+                        className="form-select"
+                        id="modal-category"
+                        name="category"
+                        value={newQuestionnaireData.category || ''}
+                        onChange={handleModalChange}
+                        disabled={!newQuestionnaireData.subject}
+                      >
+                        <option value="">Seleccionar categoría</option>
+                        {categories.map((cat, index) => (
+                          <option key={index} value={cat.category}>
+                            {cat.category}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        className="form-control"
+                        id="modal-category"
+                        name="category"
+                        value={newQuestionnaireData.category || ''}
+                        onChange={handleModalChange}
+                        placeholder="Escribe el nombre de la categoría"
+                        disabled={!newQuestionnaireData.subject}
+                      />
+                    )}
+                    <button 
+                      type="button" 
+                      className="btn btn-outline-primary"
+                      onClick={() => setIsCreatingModalCategory(true)}
+                      disabled={!newQuestionnaireData.subject}
+                      title="Agregar nueva categoría"
+                    >
+                      <strong>+</strong>
+                    </button>
+                  </div>
+                  <small className="d-block mt-1 px-2 py-1 rounded" style={{backgroundColor: !newQuestionnaireData.subject ? '#6c757d' : '#0d6efd', color: 'white', fontSize: '0.75rem'}}>
+                    {!newQuestionnaireData.subject ? '⚠️ Primero selecciona una materia' : '💡 Clic en + para nueva categoría'}
+                  </small>
+                </div>
+              ) : (
+                <div className="input-group">
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Nueva categoría"
                     value={newModalCategory}
                     onChange={(e) => setNewModalCategory(e.target.value)}
                   />
                   <button 
                     type="button" 
                     className="btn btn-success"
-                    onClick={handleCreateModalCategory}
+                    onClick={() => {
+                      if (newModalCategory.trim()) {
+                        const newCat = { 
+                          id: 'temp-' + Date.now(), 
+                          subject: newQuestionnaireData.subject, 
+                          category: newModalCategory.trim() 
+                        };
+                        setCategories([...categories, newCat]);
+                        setNewQuestionnaireData(prev => ({
+                          ...prev,
+                          category: newModalCategory.trim()
+                        }));
+                        setNewModalCategory('');
+                        setIsCreatingModalCategory(false);
+                      }
+                    }}
                   >
-                    Guardar
+                    OK
                   </button>
                   <button 
                     type="button" 
@@ -656,12 +1018,14 @@ const QuestionnaireForm = () => {
                       setNewModalCategory('');
                     }}
                   >
-                    Cancelar
+                    X
                   </button>
                 </div>
               )}
             </div>
-            
+          </div>
+          
+          <div className="row">
             <div className="col-md-6 mb-3">
               <label htmlFor="modal-grade" className="form-label">Grado</label>
               <select

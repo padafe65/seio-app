@@ -21,12 +21,29 @@ const ResultList = () => {
   useEffect(() => {
     const fetchResults = async () => {
       try {
+        // Obtener token de autenticación
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          setError('No se encontró el token de autenticación. Por favor, inicia sesión nuevamente.');
+          setLoading(false);
+          return;
+        }
+
+        // Configuración de headers con token
+        const config = {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          withCredentials: true
+        };
+
         let url = `${API_URL}/api/evaluation-results`;
         
         // Si es estudiante, filtrar solo sus resultados
         if (user && user.role === 'estudiante') {
-          // Obtener el student_id asociado con el user_id
-          const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
+          // Obtener el student_id asociado con el user_id (users.id = students.user_id)
+          const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`, config);
           if (studentResponse.data && studentResponse.data.id) {
             url = `${API_URL}/api/evaluation-results/student/${studentResponse.data.id}`;
           }
@@ -36,7 +53,7 @@ const ResultList = () => {
           url = `${API_URL}/api/evaluation-results/course/${selectedCourse}`;
         }
         
-        const response = await axios.get(url);
+        const response = await axios.get(url, config);
         
         // Obtener detalles de los intentos para cada resultado
         const resultsWithDetails = await Promise.all(
@@ -44,14 +61,16 @@ const ResultList = () => {
             try {
               // Obtener detalles del intento seleccionado
               const attemptResponse = await axios.get(
-                `${API_URL}/api/quiz-attempts/${result.selected_attempt_id}`
+                `${API_URL}/api/quiz-attempts/${result.selected_attempt_id}`,
+                config
               );
               
-              // Obtener detalles del cuestionario
+              // Obtener detalles del cuestionario (questionnaires.id = questions.questionnaire_id)
               let questionnaireData = null;
               if (attemptResponse.data && attemptResponse.data.questionnaire_id) {
                 const questionnaireResponse = await axios.get(
-                  `${API_URL}/api/questionnaires/${attemptResponse.data.questionnaire_id}`
+                  `${API_URL}/api/questionnaires/${attemptResponse.data.questionnaire_id}`,
+                  config
                 );
                 questionnaireData = questionnaireResponse.data.questionnaire || questionnaireResponse.data;
               }
@@ -60,7 +79,8 @@ const ResultList = () => {
               let studentData = null;
               if (attemptResponse.data && attemptResponse.data.student_id) {
                 const studentResponse = await axios.get(
-                  `${API_URL}/api/students/${attemptResponse.data.student_id}`
+                  `${API_URL}/api/students/${attemptResponse.data.student_id}`,
+                  config
                 );
                 studentData = studentResponse.data;
               }
@@ -94,17 +114,34 @@ const ResultList = () => {
     
     const fetchCourses = async () => {
       try {
+        // Obtener token de autenticación
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          console.error('No se encontró el token de autenticación');
+          return;
+        }
+
+        // Configuración de headers con token
+        const config = {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          withCredentials: true
+        };
+
         // Si es docente, obtener solo sus cursos asignados
         let url = `${API_URL}/api/courses`;
         if (user && user.role === 'docente') {
-          // Obtener el teacher_id asociado con el user_id
-          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+          // Obtener el teacher_id asociado con el user_id (users.id = teachers.user_id)
+          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`, config);
           if (teacherResponse.data && teacherResponse.data.id) {
+            // teachers.id se usa para consultar cursos del docente
             url = `${API_URL}/api/teachers/${teacherResponse.data.id}/courses`;
           }
         }
         
-        const response = await axios.get(url);
+        const response = await axios.get(url, config);
         setCourses(response.data);
       } catch (error) {
         console.error('Error al cargar cursos:', error);

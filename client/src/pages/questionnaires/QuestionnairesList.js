@@ -144,6 +144,7 @@ const QuestionnairesList = () => {
                 <thead>
                   <tr>
                     <th>Título</th>
+                    <th>Materia</th>
                     <th>Categoría</th>
                     <th>Grado</th>
                     <th>Fase</th>
@@ -159,7 +160,8 @@ const QuestionnairesList = () => {
                     filteredQuestionnaires.map((questionnaire) => (
                       <tr key={questionnaire.id}>
                         <td>{questionnaire.title}</td>
-                        <td>{questionnaire.category.replace('_', ' - ')}</td>
+                        <td>{questionnaire.subject || <span className="text-muted">-</span>}</td>
+                        <td>{questionnaire.category || <span className="text-muted">-</span>}</td>
                         <td>{questionnaire.grade}°</td>
                         <td>
                           <span className={`badge bg-${getPhaseColor(questionnaire.phase)}`}>
@@ -200,7 +202,7 @@ const QuestionnairesList = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="9" className="text-center py-3">
+                      <td colSpan="10" className="text-center py-3">
                         No se encontraron cuestionarios
                       </td>
                     </tr>
