@@ -1,6 +1,7 @@
 // routes/questionnaireRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
+import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
 
 const router = express.Router();
 
@@ -113,6 +114,11 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Cuestionario no encontrado' });
     }
     
+    const questionnaire = rows[0];
+    
+    // Asegurar que la combinación subject-category existe en subject_categories
+    await ensureSubjectCategoryExists(questionnaire.subject, questionnaire.category);
+    
     // Obtener las preguntas asociadas al cuestionario
     const [questions] = await pool.query(
       'SELECT * FROM questions WHERE questionnaire_id = ?',
@@ -120,7 +126,7 @@ router.get('/:id', async (req, res) => {
     );
     
     res.json({
-      questionnaire: rows[0],
+      questionnaire,
       questions
     });
   } catch (error) {
@@ -160,6 +166,9 @@ router.post('/', async (req, res) => {
       }
     }
     
+    // Asegurar que la combinación subject-category existe en subject_categories
+    await ensureSubjectCategoryExists(subject, category);
+    
     const [result] = await pool.query(
       `INSERT INTO questionnaires (title, subject, category, grade, phase, course_id, created_by, description) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -181,6 +190,9 @@ router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { title, subject, category, grade, phase, course_id, description } = req.body;
+    
+    // Asegurar que la combinación subject-category existe en subject_categories
+    await ensureSubjectCategoryExists(subject, category);
     
     const [result] = await pool.query(
       `UPDATE questionnaires 

@@ -239,41 +239,133 @@ export const updateIndicator = async (req, res) => {
     );
     
     // Si se proporcionaron estudiantes, actualizar las relaciones
-    if (student_ids) {
-      // Obtener las relaciones existentes para preservar el estado 'achieved'
-      const [existingRelations] = await connection.query(
-        'SELECT student_id, achieved FROM student_indicators WHERE indicator_id = ?',
-        [id]
-      );
+    if (student_ids && Array.isArray(student_ids)) {
+      const now = new Date();
       
-      // Crear un mapa de relaciones existentes para búsqueda rápida
-      const existingMap = new Map(
-        existingRelations.map(rel => [rel.student_id.toString(), rel.achieved])
-      );
+      // Obtener el parámetro de filtrado del query string
+      const isFiltered = req.query.isFiltered === 'true';
       
-      // Eliminar relaciones existentes
-      await connection.query(
-        'DELETE FROM student_indicators WHERE indicator_id = ?',
-        [id]
-      );
+      console.log('🔍 Parámetros de la solicitud:', {
+        isFiltered,
+        studentCount: student_ids.length,
+        studentIds: student_ids,
+        queryParams: req.query
+      });
       
-      // Agregar nuevas relaciones si hay estudiantes
-      if (student_ids.length > 0) {
-        const now = new Date();
-        const studentValues = student_ids.map(studentId => [
-          id, 
-          studentId,
-          existingMap.get(studentId.toString()) || false, // Preservar estado achieved si existe
-          now, // created_at
-          now  // updated_at
-        ]);
+      // Si es una operación de filtrado (solo un estudiante), solo actualizamos/agregamos ese estudiante
+      if (isFiltered && student_ids.length === 1) {
+        const studentId = student_ids[0];
         
-        await connection.query(
-          `INSERT INTO student_indicators 
-           (indicator_id, student_id, achieved, created_at, updated_at)
-           VALUES ?`,
-          [studentValues]
+        console.log(`🔄 Modo filtrado: Actualizando solo el estudiante ${studentId}`);
+        
+        // Verificar si ya existe una relación para este estudiante
+        const [existingRelation] = await connection.query(
+          'SELECT id, achieved FROM student_indicators WHERE indicator_id = ? AND student_id = ?',
+          [id, studentId]
         );
+        
+        if (existingRelation.length > 0) {
+          // Actualizar relación existente
+          console.log(`✅ Actualizando relación existente para estudiante ${studentId}`);
+          await connection.query(
+            `UPDATE student_indicators 
+             SET updated_at = ?
+             WHERE indicator_id = ? AND student_id = ?`,
+            [now, id, studentId]
+          );
+        } else {
+          // Crear nueva relación
+          console.log(`➕ Creando nueva relación para estudiante ${studentId}`);
+          await connection.query(
+            `INSERT INTO student_indicators 
+             (indicator_id, student_id, achieved, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)`,
+            [id, studentId, false, now, now]
+          );
+        }
+      } else {
+        console.log(`🔄 Modo asignación masiva: Procesando ${student_ids.length} estudiantes`);
+        
+        // Si no es un filtrado, es una asignación masiva y debemos sincronizar
+        // Obtener las relaciones existentes
+        const [existingRelations] = await connection.query(
+          'SELECT student_id, achieved FROM student_indicators WHERE indicator_id = ?',
+          [id]
+        );
+
+        // Crear un mapa de relaciones existentes para búsqueda rápida
+        const existingMap = new Map(
+          existingRelations.map(rel => [rel.student_id.toString(), rel.achieved])
+        );
+
+        // Identificar relaciones a eliminar (las que ya no están en student_ids)
+        const studentIdsToKeep = new Set(student_ids.map(id => id.toString()));
+        const relationsToDelete = existingRelations
+          .filter(rel => !studentIdsToKeep.has(rel.student_id.toString()))
+          .map(rel => rel.student_id);
+
+        // Eliminar solo las relaciones que ya no son necesarias
+        if (relationsToDelete.length > 0) {
+          console.log(`➖ Eliminando ${relationsToDelete.length} relaciones:`, relationsToDelete);
+          
+          // Usar una transacción para asegurar que la operación sea atómica
+          await connection.beginTransaction();
+          
+          try {
+            // Primero, eliminar las relaciones existentes
+            await connection.query(
+              'DELETE FROM student_indicators WHERE indicator_id = ? AND student_id IN (?)',
+              [id, relationsToDelete]
+            );
+            
+            // Registrar en el log para depuración
+            console.log(`✅ Relaciones eliminadas exitosamente`);
+            
+            // Confirmar la transacción
+            await connection.commit();
+          } catch (error) {
+            // Revertir la transacción en caso de error
+            await connection.rollback();
+            console.error('Error al eliminar relaciones:', error);
+            throw error; // Relanzar el error para manejarlo en el catch externo
+          }
+        }
+
+        // Identificar relaciones a agregar (las que no están en existingMap)
+        const relationsToAdd = student_ids
+          .filter(studentId => !existingMap.has(studentId.toString()))
+          .map(studentId => [
+            id,
+            studentId,
+            false, // achieved por defecto
+            now,   // created_at
+            now    // updated_at
+          ]);
+
+        // Agregar nuevas relaciones si las hay
+        if (relationsToAdd.length > 0) {
+          console.log(`➕ Agregando ${relationsToAdd.length} nuevas relaciones`);
+          await connection.query(
+            `INSERT INTO student_indicators 
+             (indicator_id, student_id, achieved, created_at, updated_at)
+             VALUES ?`,
+            [relationsToAdd]
+          );
+        }
+
+        // Actualizar la fecha de actualización de las relaciones existentes que se mantienen
+        const relationsToUpdate = student_ids
+          .filter(studentId => existingMap.has(studentId.toString()));
+
+        if (relationsToUpdate.length > 0) {
+          console.log(`🔄 Actualizando ${relationsToUpdate.length} relaciones existentes`);
+          await connection.query(
+            `UPDATE student_indicators 
+             SET updated_at = ? 
+             WHERE indicator_id = ? AND student_id IN (?)`,
+            [now, id, relationsToUpdate]
+          );
+        }
       }
     }
     

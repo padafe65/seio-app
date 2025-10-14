@@ -22,6 +22,7 @@ import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
 import teachers from './routes/teachers.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
 import pool from './config/db.js';
+import { syncSubjectCategories } from './utils/syncSubjectCategories.js';
 
 
 dotenv.config();
@@ -1161,6 +1162,13 @@ app.get('/api/auth/verify', verificarToken, (req, res) => {
 
 // Servidor corriendo en el puerto 5000
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
+  
+  // Sincronizar subject_categories con questionnaires al iniciar
+  try {
+    await syncSubjectCategories();
+  } catch (error) {
+    console.error('⚠️ No se pudo sincronizar subject_categories al iniciar:', error.message);
+  }
 });
