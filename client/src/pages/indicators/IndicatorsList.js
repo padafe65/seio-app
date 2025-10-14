@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
+import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
 
 const IndicatorsList = () => {
@@ -218,14 +219,81 @@ const IndicatorsList = () => {
   };
   
   const handleDelete = async (id) => {
-    if (window.confirm('¿Está seguro de eliminar este indicador?')) {
-      try {
-        await axios.delete(`/api/indicators/${id}`);
-        setIndicators(indicators.filter(indicator => indicator.id !== id));
-      } catch (error) {
-        console.error('Error al eliminar indicador:', error);
-        setError('Error al eliminar indicador. Intente nuevamente.');
+    try {
+      // 1. Obtener token de autenticación
+      const token = localStorage.getItem('authToken');
+      if (!token) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error de autenticación',
+          text: 'No se encontró el token de autenticación. Por favor, inicia sesión nuevamente.'
+        });
+        return;
       }
+
+      // 2. Obtener información del indicador y sus asociaciones
+      const config = {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        withCredentials: true
+      };
+
+      // Obtener estudiantes asociados al indicador
+      const studentsResponse = await axios.get(`/api/indicators/${id}/students`, config);
+      const associatedStudents = studentsResponse.data?.data || studentsResponse.data || [];
+      const studentCount = Array.isArray(associatedStudents) ? associatedStudents.length : 0;
+
+      // 3. Mostrar confirmación con SweetAlert2
+      const result = await Swal.fire({
+        icon: 'warning',
+        title: '¿Eliminar indicador?',
+        html: studentCount > 0 
+          ? `<p>Este indicador está asociado con <b>${studentCount}</b> estudiante(s).</p>
+             <p>Al eliminarlo, se borrarán <b>todas las asociaciones</b> en la tabla <code>student_indicators</code>.</p>
+             <p class="text-danger"><b>Esta acción no se puede deshacer.</b></p>
+             <p>¿Deseas continuar?</p>`
+          : `<p>¿Estás seguro de que deseas eliminar este indicador?</p>
+             <p class="text-danger"><b>Esta acción no se puede deshacer.</b></p>`,
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar',
+        focusCancel: true
+      });
+
+      if (!result.isConfirmed) {
+        return; // Usuario canceló
+      }
+
+      // 4. Eliminar el indicador (el backend debe eliminar las asociaciones en cascada)
+      await axios.delete(`/api/indicators/${id}`, config);
+
+      // 5. Actualizar el estado local
+      setIndicators(indicators.filter(indicator => indicator.id !== id));
+
+      // 6. Mostrar mensaje de éxito
+      Swal.fire({
+        icon: 'success',
+        title: 'Indicador eliminado',
+        text: studentCount > 0 
+          ? `El indicador y sus ${studentCount} asociación(es) fueron eliminados correctamente.`
+          : 'El indicador fue eliminado correctamente.',
+        timer: 3000,
+        showConfirmButton: false
+      });
+
+    } catch (error) {
+      console.error('Error al eliminar indicador:', error);
+      
+      Swal.fire({
+        icon: 'error',
+        title: 'Error al eliminar',
+        text: error.response?.data?.message || error.message || 'Error al eliminar el indicador. Intente nuevamente.',
+        confirmButtonText: 'Aceptar'
+      });
     }
   };
   
