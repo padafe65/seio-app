@@ -242,8 +242,14 @@ const IndicatorsList = () => {
 
       // Obtener estudiantes asociados al indicador
       const studentsResponse = await axios.get(`/api/indicators/${id}/students`, config);
-      const associatedStudents = studentsResponse.data?.data || studentsResponse.data || [];
-      const studentCount = Array.isArray(associatedStudents) ? associatedStudents.length : 0;
+      const allStudents = studentsResponse.data?.data || studentsResponse.data || [];
+      
+      // Filtrar solo los estudiantes que REALMENTE tienen el indicador asignado
+      const associatedStudents = Array.isArray(allStudents) 
+        ? allStudents.filter(s => s.has_indicator === 1 || s.hasIndicator === true || s.indicator_id != null)
+        : [];
+      
+      const studentCount = associatedStudents.length;
 
       // 3. Mostrar confirmación con SweetAlert2
       const result = await Swal.fire({
