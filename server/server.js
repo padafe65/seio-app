@@ -18,6 +18,8 @@ import studentRoutes from './routes/studentRoutes.js';
 import evaluationResultsRoutes from './routes/evaluationResults.js';
 import improvementPlansRoutes from './routes/improvementPlans.js';
 import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
+import questionnaireIndicatorsRoutes from './routes/questionnaireIndicators.js';
+import indicatorEvaluationRoutes from './routes/indicatorEvaluation.js';
 
 // Middleware imports
 import { verifyToken } from './middleware/authMiddleware.js';
@@ -83,6 +85,8 @@ app.use('/api/improvement-plans', improvementPlansRoutes);
 app.use('/api/phase-evaluation', phaseEvaluationRoutes);
 app.use('/api/teachers', teachers);
 app.use('/api/teacher-courses', teacherCoursesRoutes);
+app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
+app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
 
 // Configurar multer

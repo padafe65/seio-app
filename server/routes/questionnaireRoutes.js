@@ -18,7 +18,8 @@ router.get('/', async (req, res) => {
         c.name as course_name,
         (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
       FROM questionnaires q
-      JOIN users u ON q.created_by = u.id
+      JOIN teachers t ON q.created_by = t.id
+      JOIN users u ON t.user_id = u.id
       JOIN courses c ON q.course_id = c.id
     `;
     
