@@ -18,6 +18,10 @@ import studentRoutes from './routes/studentRoutes.js';
 import evaluationResultsRoutes from './routes/evaluationResults.js';
 import improvementPlansRoutes from './routes/improvementPlans.js';
 import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
+
+// Middleware imports
+import { verifyToken } from './middleware/authMiddleware.js';
+import { recalculatePhaseAverages, recalculateAllStudentsPhaseAverages } from './utils/recalculatePhaseAverages.js';
 import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
 import teachers from './routes/teachers.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
@@ -969,11 +973,36 @@ app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', 
   }
 });
 
+// Obtener todos los intentos de un estudiante
+app.get('/api/quiz-attempts/student/:studentId', async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    
+    const [attempts] = await pool.query(`
+      SELECT qa.*,
+             u.name as student_name,
+             q.title as questionnaire_title
+      FROM quiz_attempts qa
+      JOIN students st ON qa.student_id = st.id
+      JOIN users u ON st.user_id = u.id
+      JOIN questionnaires q ON qa.questionnaire_id = q.id
+      WHERE qa.student_id = ?
+      ORDER BY qa.questionnaire_id, qa.attempt_number ASC
+    `, [studentId]);
+    
+    console.log(`🎯 Todos los intentos encontrados para estudiante ${studentId}:`, attempts);
+    res.json(attempts);
+  } catch (error) {
+    console.error('Error al obtener todos los intentos del estudiante:', error);
+    res.status(500).json({ message: 'Error al obtener intentos del estudiante' });
+  }
+});
+
 // Obtener cursos asignados a un profesor
 app.get('/api/teachers/:id/courses', async (req, res) => {
   try {
     const [courses] = await pool.query(`
-      SELECT DISTINCT c.* 
+      SELECT DISTINCT c.*
       FROM courses c
       JOIN students s ON c.id = s.course_id
       JOIN teacher_students ts ON s.id = ts.student_id
@@ -984,6 +1013,143 @@ app.get('/api/teachers/:id/courses', async (req, res) => {
   } catch (error) {
     console.error('Error al obtener cursos del profesor:', error);
     res.status(500).json({ message: 'Error al obtener cursos del profesor' });
+  }
+});
+
+// Obtener notas de un estudiante
+app.get('/api/students/:studentId/grades', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    console.log(`📊 Solicitud de notas para estudiante ${studentId}`);
+    
+    const [grades] = await pool.query(`
+      SELECT g.*, q.title as questionnaire_title
+      FROM grades g
+      LEFT JOIN questionnaires q ON g.questionnaire_id = q.id
+      WHERE g.student_id = ?
+      ORDER BY g.created_at DESC
+    `, [studentId]);
+    
+    console.log(`📊 Notas obtenidas para estudiante ${studentId}:`, grades);
+    res.json(grades);
+  } catch (error) {
+    console.error('Error al obtener notas del estudiante:', error);
+    res.status(500).json({ message: 'Error al obtener notas del estudiante' });
+  }
+});
+
+// Actualizar notas de un estudiante
+app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { phase1, phase2, phase3, phase4, average } = req.body;
+    
+    console.log(`📝 Actualizando notas para estudiante ${studentId}:`, req.body);
+    
+    // Buscar si ya existe un registro de notas para este estudiante
+    const [existingGrades] = await pool.query(`
+      SELECT id FROM grades WHERE student_id = ?
+    `, [studentId]);
+    
+    if (existingGrades.length > 0) {
+      // Actualizar notas existentes
+      await pool.query(`
+        UPDATE grades 
+        SET phase1 = ?, phase2 = ?, phase3 = ?, phase4 = ?, average = ?
+        WHERE student_id = ?
+      `, [phase1, phase2, phase3, phase4, average, studentId]);
+    } else {
+      // Crear nuevo registro de notas
+      await pool.query(`
+        INSERT INTO grades (student_id, phase1, phase2, phase3, phase4, average, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, NOW())
+      `, [studentId, phase1, phase2, phase3, phase4, average]);
+    }
+    
+    // Actualizar phase_averages si hay notas válidas
+    // Recalcular automáticamente phase_averages basándose en evaluation_results
+    try {
+      console.log(`🔄 Iniciando recálculo automático para estudiante ${studentId}...`);
+      const result = await recalculatePhaseAverages(studentId);
+      if (result.success) {
+        console.log(`✅ Phase averages recalculadas automáticamente para estudiante ${studentId}:`, result);
+      } else {
+        console.error(`❌ Error en recálculo automático para estudiante ${studentId}:`, result.error);
+      }
+    } catch (error) {
+      console.error('❌ Error crítico al recalcular phase_averages automáticamente:', error);
+      // No interrumpir el flujo principal si hay error en el recálculo automático
+    }
+    
+    console.log(`✅ Notas actualizadas exitosamente para estudiante ${studentId}`);
+    res.json({ success: true, message: 'Notas actualizadas correctamente' });
+    
+  } catch (error) {
+    console.error('Error al actualizar notas del estudiante:', error);
+    res.status(500).json({ message: 'Error al actualizar notas del estudiante' });
+  }
+});
+
+// Actualizar un intento de quiz específico
+app.put('/api/quiz-attempts/:attemptId', verifyToken, async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const { score } = req.body;
+    
+    console.log(`📝 Actualizando intento ${attemptId} con puntaje ${score}`);
+    
+    await pool.query(`
+      UPDATE quiz_attempts 
+      SET score = ?, attempt_date = NOW()
+      WHERE id = ?
+    `, [score, attemptId]);
+    
+    // Obtener información del intento actualizado
+    const [updatedAttempt] = await pool.query(`
+      SELECT qa.*, s.id as student_id
+      FROM quiz_attempts qa
+      JOIN students s ON qa.student_id = s.id
+      WHERE qa.id = ?
+    `, [attemptId]);
+    
+    if (updatedAttempt.length > 0) {
+      const attempt = updatedAttempt[0];
+      
+      // Actualizar evaluation_results si existe
+      await pool.query(`
+        UPDATE evaluation_results 
+        SET best_score = (
+          SELECT MAX(score) FROM quiz_attempts 
+          WHERE student_id = ? AND questionnaire_id = ?
+        ),
+        min_score = (
+          SELECT MIN(score) FROM quiz_attempts 
+          WHERE student_id = ? AND questionnaire_id = ?
+        )
+        WHERE student_id = ? AND questionnaire_id = ?
+      `, [attempt.student_id, attempt.questionnaire_id, attempt.student_id, attempt.questionnaire_id, attempt.student_id, attempt.questionnaire_id]);
+      
+      // Recalcular automáticamente phase_averages después de actualizar intentos
+      try {
+        console.log(`🔄 Iniciando recálculo automático para estudiante ${attempt.student_id}...`);
+        const result = await recalculatePhaseAverages(attempt.student_id);
+        if (result.success) {
+          console.log(`✅ Phase averages recalculadas automáticamente después de actualizar intento para estudiante ${attempt.student_id}:`, result);
+        } else {
+          console.error(`❌ Error en recálculo automático para estudiante ${attempt.student_id}:`, result.error);
+        }
+      } catch (error) {
+        console.error('❌ Error crítico al recalcular phase_averages después de actualizar intento:', error);
+        // No interrumpir el flujo principal si hay error en el recálculo automático
+      }
+    }
+    
+    console.log(`✅ Intento ${attemptId} actualizado exitosamente`);
+    res.json({ success: true, message: 'Intento actualizado correctamente' });
+    
+  } catch (error) {
+    console.error('Error al actualizar intento:', error);
+    res.status(500).json({ message: 'Error al actualizar intento' });
   }
 });
 
@@ -1244,5 +1410,43 @@ app.listen(PORT, async () => {
     await syncSubjectCategories();
   } catch (error) {
     console.error('⚠️ No se pudo sincronizar subject_categories al iniciar:', error.message);
+  }
+});
+
+// Ruta para recalcular phase_averages de un estudiante específico
+app.post('/api/recalculate-phase-averages/:studentId', verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    console.log(`🔧 Solicitud manual de recálculo para estudiante ${studentId}`);
+    
+    const result = await recalculatePhaseAverages(parseInt(studentId));
+    
+    if (result.success) {
+      console.log(`✅ Recálculo manual exitoso para estudiante ${studentId}`);
+      res.json(result);
+    } else {
+      console.error(`❌ Recálculo manual fallido para estudiante ${studentId}:`, result.error);
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    console.error('❌ Error crítico al recalcular phase_averages:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Ruta para recalcular phase_averages de todos los estudiantes de un profesor
+app.post('/api/recalculate-phase-averages/teacher/:teacherId', verifyToken, async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    const result = await recalculateAllStudentsPhaseAverages(parseInt(teacherId));
+    
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    console.error('Error al recalcular phase_averages:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });

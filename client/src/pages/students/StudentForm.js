@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../config/axios';
+import StudentGradesEditor from '../../components/StudentGradesEditor';
 
 const StudentForm = ({ isViewMode = false }) => {
   const { id } = useParams();
@@ -11,6 +12,7 @@ const StudentForm = ({ isViewMode = false }) => {
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [showGradesEditor, setShowGradesEditor] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -655,6 +657,19 @@ const StudentForm = ({ isViewMode = false }) => {
                 </button>
               </div>
             )}
+
+            {/* Botón para editar notas (solo cuando se está editando un estudiante existente) */}
+            {id && !isViewMode && (
+              <div className="d-flex justify-content-start mt-3">
+                <button 
+                  type="button" 
+                  className="btn btn-outline-info"
+                  onClick={() => setShowGradesEditor(!showGradesEditor)}
+                >
+                  {showGradesEditor ? 'Ocultar Editor de Notas' : 'Editar Notas del Estudiante'}
+                </button>
+              </div>
+            )}
             
             {isViewMode && (
               <div className="d-flex justify-content-end mt-4">
@@ -677,6 +692,17 @@ const StudentForm = ({ isViewMode = false }) => {
           </form>
         </div>
       </div>
+
+      {/* Editor de notas */}
+      {showGradesEditor && id && (
+        <StudentGradesEditor 
+          studentId={id} 
+          onGradesUpdated={() => {
+            // Callback opcional para refrescar datos si es necesario
+            console.log('Notas actualizadas');
+          }}
+        />
+      )}
     </div>
   );
 };
