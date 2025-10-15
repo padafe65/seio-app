@@ -38,9 +38,10 @@ const ResultList = () => {
           withCredentials: true
         };
 
+        // El backend ya maneja el filtrado por roles automáticamente
         let url = `${API_URL}/api/evaluation-results`;
         
-        // Si es estudiante, filtrar solo sus resultados
+        // Si es estudiante, usar endpoint específico
         if (user && user.role === 'estudiante') {
           // Obtener el student_id asociado con el user_id (users.id = students.user_id)
           const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`, config);
@@ -48,60 +49,35 @@ const ResultList = () => {
             url = `${API_URL}/api/evaluation-results/student/${studentResponse.data.id}`;
           }
         }
-        // Si es docente y ha seleccionado un curso, filtrar por curso
+        // Si es docente y ha seleccionado un curso específico, filtrar por curso
         else if (user && user.role === 'docente' && selectedCourse) {
           url = `${API_URL}/api/evaluation-results/course/${selectedCourse}`;
         }
+        // Si es admin/super_administrador o docente sin filtro de curso, usar endpoint principal
+        // (el backend filtrará automáticamente según el rol)
         
+        console.log(`🔍 Solicitando resultados desde: ${url}`);
         const response = await axios.get(url, config);
         
-        // Obtener detalles de los intentos para cada resultado
-        const resultsWithDetails = await Promise.all(
-          response.data.map(async (result) => {
-            try {
-              // Obtener detalles del intento seleccionado
-              const attemptResponse = await axios.get(
-                `${API_URL}/api/quiz-attempts/${result.selected_attempt_id}`,
-                config
-              );
-              
-              // Obtener detalles del cuestionario (questionnaires.id = questions.questionnaire_id)
-              let questionnaireData = null;
-              if (attemptResponse.data && attemptResponse.data.questionnaire_id) {
-                const questionnaireResponse = await axios.get(
-                  `${API_URL}/api/questionnaires/${attemptResponse.data.questionnaire_id}`,
-                  config
-                );
-                questionnaireData = questionnaireResponse.data.questionnaire || questionnaireResponse.data;
-              }
-              
-              // Obtener detalles del estudiante
-              let studentData = null;
-              if (attemptResponse.data && attemptResponse.data.student_id) {
-                const studentResponse = await axios.get(
-                  `${API_URL}/api/students/${attemptResponse.data.student_id}`,
-                  config
-                );
-                studentData = studentResponse.data;
-              }
-              
-              return {
-                ...result,
-                attempt: attemptResponse.data,
-                questionnaire: questionnaireData,
-                student: studentData
-              };
-            } catch (err) {
-              console.error('Error al obtener detalles:', err);
-              return result;
+        // Los datos ya vienen completos del backend, solo necesitamos formatear
+        const resultsWithDetails = response.data.map(result => {
+          // El backend ya incluye: student_name, questionnaire_title, course_name, phase
+          return {
+            ...result,
+            // Mantener compatibilidad con el código existente
+            student: {
+              name: result.student_name
+            },
+            questionnaire: {
+              title: result.questionnaire_title
             }
-          })
-        );
+          };
+        });
         
         setResults(resultsWithDetails);
         
         // Extraer fases únicas de los resultados
-        const uniquePhases = [...new Set(resultsWithDetails.map(r => r.attempt?.phase).filter(Boolean))];
+        const uniquePhases = [...new Set(resultsWithDetails.map(r => r.phase).filter(Boolean))];
         setPhases(uniquePhases.sort((a, b) => a - b));
         
         setLoading(false);
@@ -277,48 +253,48 @@ const ResultList = () => {
               <table className="table table-hover">
                 <thead>
                   <tr>
-                      <th>Estudiante</th>
-                      <th>Cuestionario</th>
-                      <th>Curso</th> {/* Nueva columna */}
-                      <th>Fase</th>
-                      <th>Mejor Puntaje</th>
-                      <th>Fecha</th>
-                      <th className="text-end">Acciones</th>
-                    </tr>
+                    <th>Estudiante</th>
+                    <th>Cuestionario</th>
+                    <th>Curso</th>
+                    <th>Fase</th>
+                    <th>Mejor Puntaje</th>
+                    <th>Fecha</th>
+                    <th className="text-end">Acciones</th>
+                  </tr>
                 </thead>
                 <tbody>
-                {filteredResults.length > 0 ? (
-                  filteredResults.map((result) => (
-                    <tr key={result.id}>
-                      <td>{result.student?.name || 'N/A'}</td>
-                      <td>{result.questionnaire?.title || 'N/A'}</td>
-                      <td>{result.student?.course_name || 'N/A'}</td> {/* Nueva celda */}
-                      <td>{result.attempt?.phase || 'N/A'}</td>
-                      <td>
-                        <span className={`badge ${parseFloat(result.best_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
-                          {formatScore(result.best_score)}
-                        </span>
-                      </td>
-                      <td>{formatDate(result.recorded_at)}</td>
-                      <td className="text-end">
-                        <div className="btn-group">
-                          <Link 
-                            to={`/resultados/${result.id}`} 
-                            className="btn btn-sm btn-outline-info"
-                          >
-                            <Eye size={16} className="me-1" /> Ver Detalles
-                          </Link>
-                        </div>
+                  {filteredResults.length > 0 ? (
+                    filteredResults.map((result) => (
+                      <tr key={result.id}>
+                        <td>{result.student?.name || 'N/A'}</td>
+                        <td>{result.questionnaire?.title || 'N/A'}</td>
+                        <td>{result.course_name || 'N/A'}</td>
+                        <td>{result.phase || 'N/A'}</td>
+                        <td>
+                          <span className={`badge ${parseFloat(result.best_score) >= 3.5 ? 'bg-success' : 'bg-danger'}`}>
+                            {formatScore(result.best_score)}
+                          </span>
+                        </td>
+                        <td>{formatDate(result.recorded_at)}</td>
+                        <td className="text-end">
+                          <div className="btn-group">
+                            <Link 
+                              to={`/resultados/${result.id}`} 
+                              className="btn btn-sm btn-outline-info"
+                            >
+                              <Eye size={16} className="me-1" /> Ver Detalles
+                            </Link>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="7" className="text-center py-3">
+                        No se encontraron resultados
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="7" className="text-center py-3">
-                      No se encontraron resultados
-                    </td>
-                  </tr>
-                )}
+                  )}
               </tbody>
               </table>
             </div>

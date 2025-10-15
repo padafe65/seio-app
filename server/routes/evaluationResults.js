@@ -1,25 +1,54 @@
 // routes/evaluationResults.js
 import express from 'express';
 import db from '../config/db.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // Obtener todos los resultados de evaluación
-router.get('/evaluation-results', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
-    const [results] = await db.query(`
+    const user = req.user;
+    console.log(`📊 Usuario solicitando resultados: ${user.role} (ID: ${user.id})`);
+    
+    let query = `
       SELECT er.*, 
              s.name as student_name,
              q.title as questionnaire_title,
-             c.name as course_name
+             q.phase,
+             c.name as course_name,
+             c.id as course_id
       FROM evaluation_results er
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       JOIN students st ON qa.student_id = st.id
       JOIN users s ON st.user_id = s.id
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       LEFT JOIN courses c ON st.course_id = c.id
-      ORDER BY er.recorded_at DESC
-    `);
+    `;
+    
+    let params = [];
+    
+    // Si es docente, filtrar solo sus estudiantes
+    if (user.role === 'docente') {
+      query += `
+        JOIN teacher_students ts ON st.id = ts.student_id
+        JOIN teachers t ON ts.teacher_id = t.id
+        WHERE t.user_id = ?
+      `;
+      params.push(user.id);
+      console.log(`📚 Filtrando resultados para docente: ${user.id}`);
+    } else if (user.role === 'admin' || user.role === 'super_administrador') {
+      console.log(`👑 Admin/SuperAdmin: mostrando todos los resultados`);
+      // No agregar filtros, mostrar todos los resultados
+    } else {
+      return res.status(403).json({ message: 'Acceso denegado' });
+    }
+    
+    query += ` ORDER BY er.recorded_at DESC`;
+    
+    const [results] = await db.query(query, params);
+    console.log(`📊 Total de resultados obtenidos: ${results.length}`);
+    
     res.json(results);
   } catch (error) {
     console.error('Error al obtener resultados:', error);
@@ -28,7 +57,7 @@ router.get('/evaluation-results', async (req, res) => {
 });
 
 // Obtener un resultado específico por ID
-router.get('/evaluation-results/:id', async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const [results] = await db.query(`
       SELECT er.*, 
@@ -56,7 +85,7 @@ router.get('/evaluation-results/:id', async (req, res) => {
 });
 
 // Obtener resultados de un estudiante específico (por student_id de la tabla students)
-router.get('/evaluation-results/student/:id', async (req, res) => {
+router.get('/student/:id', async (req, res) => {
   try {
     const [results] = await db.query(`
       SELECT er.*, 
@@ -77,7 +106,7 @@ router.get('/evaluation-results/student/:id', async (req, res) => {
 });
 
 // Obtener resultados de un estudiante por su user_id
-router.get('/evaluation-results/user/:userId', async (req, res) => {
+router.get('/user/:userId', async (req, res) => {
   try {
     // Primero obtenemos el student_id asociado con este user_id
     const [students] = await db.query(`
@@ -111,7 +140,7 @@ router.get('/evaluation-results/user/:userId', async (req, res) => {
 });
 
 // Obtener resultados por curso
-router.get('/evaluation-results/course/:id', async (req, res) => {
+router.get('/course/:id', async (req, res) => {
   try {
     const [results] = await db.query(`
       SELECT er.*, 
@@ -135,7 +164,7 @@ router.get('/evaluation-results/course/:id', async (req, res) => {
 });
 
 // Obtener resultados para un profesor (por sus cursos asignados)
-router.get('/evaluation-results/teacher/:userId', async (req, res) => {
+router.get('/teacher/:userId', async (req, res) => {
   try {
     // Primero obtenemos el teacher_id asociado con este user_id
     const [teachers] = await db.query(`

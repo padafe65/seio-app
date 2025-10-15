@@ -891,27 +891,99 @@ app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
     
     // Obtener calificaciones de los estudiantes asignados al profesor
     const [rows] = await pool.query(`
-      SELECT 
+      SELECT DISTINCT
         s.id as student_id, 
         s.user_id,
         u.name as student_name,
         c.name as course_name,
-        g.phase1, g.phase2, g.phase3, g.phase4,
-        g.average,
-        pa.phase, pa.average_score, pa.evaluations_completed, pa.updated_at
+        g.phase1, 
+        g.phase2, 
+        g.phase3, 
+        g.phase4,
+        g.average
       FROM teacher_students ts
       JOIN students s ON ts.student_id = s.id
       JOIN users u ON s.user_id = u.id
       JOIN courses c ON s.course_id = c.id
       LEFT JOIN grades g ON s.id = g.student_id
-      LEFT JOIN phase_averages pa ON s.id = pa.student_id AND ts.teacher_id = pa.teacher_id
       WHERE ts.teacher_id = ?
+      ORDER BY u.name
     `, [realTeacherId]);
+    
+    console.log(`📊 Calificaciones obtenidas para el profesor ${realTeacherId}:`, JSON.stringify(rows, null, 2));
     
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener calificaciones:', error);
     res.status(500).json({ message: 'Error al obtener calificaciones' });
+  }
+});
+
+// Obtener detalles de un intento de quiz específico
+app.get('/api/quiz-attempts/:id', async (req, res) => {
+  try {
+    const [attempts] = await pool.query(`
+      SELECT qa.*,
+             u.name as student_name,
+             q.title as questionnaire_title
+      FROM quiz_attempts qa
+      JOIN students st ON qa.student_id = st.id
+      JOIN users u ON st.user_id = u.id
+      JOIN questionnaires q ON qa.questionnaire_id = q.id
+      WHERE qa.id = ?
+    `, [req.params.id]);
+    
+    if (attempts.length === 0) {
+      return res.status(404).json({ message: 'Intento no encontrado' });
+    }
+    
+    res.json(attempts[0]);
+  } catch (error) {
+    console.error('Error al obtener detalles del intento:', error);
+    res.status(500).json({ message: 'Error al obtener detalles del intento' });
+  }
+});
+
+// Obtener todos los intentos de un estudiante para un cuestionario específico
+app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', async (req, res) => {
+  try {
+    const { studentId, questionnaireId } = req.params;
+    
+    const [attempts] = await pool.query(`
+      SELECT qa.*,
+             u.name as student_name,
+             q.title as questionnaire_title
+      FROM quiz_attempts qa
+      JOIN students st ON qa.student_id = st.id
+      JOIN users u ON st.user_id = u.id
+      JOIN questionnaires q ON qa.questionnaire_id = q.id
+      WHERE qa.student_id = ? AND qa.questionnaire_id = ?
+      ORDER BY qa.attempt_number ASC
+    `, [studentId, questionnaireId]);
+    
+    console.log(`🎯 Intentos encontrados para estudiante ${studentId} y cuestionario ${questionnaireId}:`, attempts);
+    res.json(attempts);
+  } catch (error) {
+    console.error('Error al obtener intentos del estudiante:', error);
+    res.status(500).json({ message: 'Error al obtener intentos del estudiante' });
+  }
+});
+
+// Obtener cursos asignados a un profesor
+app.get('/api/teachers/:id/courses', async (req, res) => {
+  try {
+    const [courses] = await pool.query(`
+      SELECT DISTINCT c.* 
+      FROM courses c
+      JOIN students s ON c.id = s.course_id
+      JOIN teacher_students ts ON s.id = ts.student_id
+      WHERE ts.teacher_id = ?
+    `, [req.params.id]);
+    
+    res.json(courses);
+  } catch (error) {
+    console.error('Error al obtener cursos del profesor:', error);
+    res.status(500).json({ message: 'Error al obtener cursos del profesor' });
   }
 });
 
