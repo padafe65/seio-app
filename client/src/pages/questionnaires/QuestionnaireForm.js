@@ -8,6 +8,8 @@ import Button from 'react-bootstrap/Button';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 import { FileText } from 'lucide-react';
+import QuestionnaireIndicatorsManager from '../../components/QuestionnaireIndicatorsManager';
+import IndicatorEvaluationManager from '../../components/IndicatorEvaluationManager';
 
 const MySwal = withReactContent(Swal);
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
@@ -1105,6 +1107,23 @@ const QuestionnaireForm = () => {
           </Button>
         </Modal.Footer>
       </Modal>
+
+      {/* Gestor de Indicadores - Solo mostrar si estamos editando */}
+        {isEditing && id && (
+          <div className="mt-4">
+            <QuestionnaireIndicatorsManager 
+              questionnaireId={id}
+              questionnaireTitle={formData.title}
+            />
+            
+            <div className="mt-4">
+              <IndicatorEvaluationManager 
+                questionnaireId={id}
+                questionnaireTitle={formData.title}
+              />
+            </div>
+          </div>
+        )}
     </div>
   );
 };

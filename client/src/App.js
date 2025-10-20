@@ -45,6 +45,7 @@ import StudentIndicators from './pages/indicators/StudentIndicators';
 import ImprovementPlansList from './pages/improvement-plans/ImprovementPlansList.js';
 import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.js';
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
+import ImprovementPlanDetailEnhanced from './pages/improvement-plans/ImprovementPlanDetailEnhanced.js';
 import TeacherCoursesManager from './pages/courses/TeacherCoursesManager';
 
 // Componente para el temporizador de inactividad
@@ -348,6 +349,8 @@ function AppContent() {
             <Route path="/planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
             <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
             <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
+            {/* Nueva ruta mejorada para planes de mejoramiento */}
+            <Route path="/planes-mejoramiento/:id/detalle" element={<ImprovementPlanDetailEnhanced />} />
             {/* Añadir la ruta dentro del componente TeacherDashboardLayout*/}
             <Route path="/mis-cursos" element={<TeacherCoursesManager />} />
 

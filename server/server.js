@@ -81,7 +81,7 @@ app.use('/api/questions', questionRoutes);
 app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/evaluation-results', evaluationResultsRoutes);
-app.use('/api/improvement-plans', improvementPlansRoutes);
+app.use('/api', improvementPlansRoutes);
 app.use('/api/phase-evaluation', phaseEvaluationRoutes);
 app.use('/api/teachers', teachers);
 app.use('/api/teacher-courses', teacherCoursesRoutes);

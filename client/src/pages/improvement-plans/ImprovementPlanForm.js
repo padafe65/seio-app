@@ -32,6 +32,12 @@ const ImprovementPlanForm = () => {
     file_url: '',
     failed_achievements: '',
     passed_achievements: '',
+    video_urls: '',
+    resource_links: '',
+    activity_status: 'pending',
+    teacher_notes: '',
+    student_feedback: '',
+    attempts_count: 0,
     completed: false,
     email_sent: false
   });
@@ -399,6 +405,58 @@ const ImprovementPlanForm = () => {
               </div>
               
               <div className="col-md-6">
+                <label htmlFor="activity_status" className="form-label">Estado del Plan</label>
+                <select
+                  id="activity_status"
+                  name="activity_status"
+                  className="form-select"
+                  value={formData.activity_status}
+                  onChange={handleInputChange}
+                >
+                  <option value="pending">Pendiente</option>
+                  <option value="in_progress">En Progreso</option>
+                  <option value="completed">Completado</option>
+                  <option value="failed">Fallido</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="row mb-3">
+              <div className="col-md-6">
+                <label htmlFor="video_urls" className="form-label">URLs de Videos</label>
+                <textarea
+                  id="video_urls"
+                  name="video_urls"
+                  className="form-control"
+                  rows="3"
+                  value={formData.video_urls}
+                  onChange={handleInputChange}
+                  placeholder="https://youtube.com/watch?v=ejemplo1&#10;https://youtube.com/watch?v=ejemplo2"
+                />
+                <small className="form-text text-muted">
+                  Una URL por línea. Soporta YouTube, Vimeo, etc.
+                </small>
+              </div>
+              
+              <div className="col-md-6">
+                <label htmlFor="resource_links" className="form-label">Enlaces a Recursos</label>
+                <textarea
+                  id="resource_links"
+                  name="resource_links"
+                  className="form-control"
+                  rows="3"
+                  value={formData.resource_links}
+                  onChange={handleInputChange}
+                  placeholder="https://khanacademy.org/math&#10;https://mathway.com"
+                />
+                <small className="form-text text-muted">
+                  Enlaces a recursos externos, uno por línea.
+                </small>
+              </div>
+            </div>
+
+            <div className="row mb-3">
+              <div className="col-md-6">
                 <label htmlFor="file_url" className="form-label">URL de Archivo (opcional)</label>
                 <input
                   type="text"
@@ -407,6 +465,47 @@ const ImprovementPlanForm = () => {
                   className="form-control"
                   value={formData.file_url}
                   onChange={handleInputChange}
+                />
+              </div>
+              
+              <div className="col-md-6">
+                <label htmlFor="attempts_count" className="form-label">Intentos del Estudiante</label>
+                <input
+                  type="number"
+                  id="attempts_count"
+                  name="attempts_count"
+                  className="form-control"
+                  value={formData.attempts_count}
+                  onChange={handleInputChange}
+                  min="0"
+                />
+              </div>
+            </div>
+
+            <div className="row mb-3">
+              <div className="col-md-6">
+                <label htmlFor="teacher_notes" className="form-label">Notas del Profesor</label>
+                <textarea
+                  id="teacher_notes"
+                  name="teacher_notes"
+                  className="form-control"
+                  rows="3"
+                  value={formData.teacher_notes}
+                  onChange={handleInputChange}
+                  placeholder="Notas adicionales para el estudiante..."
+                />
+              </div>
+              
+              <div className="col-md-6">
+                <label htmlFor="student_feedback" className="form-label">Comentarios del Estudiante</label>
+                <textarea
+                  id="student_feedback"
+                  name="student_feedback"
+                  className="form-control"
+                  rows="3"
+                  value={formData.student_feedback}
+                  onChange={handleInputChange}
+                  placeholder="Comentarios del estudiante sobre el plan..."
                 />
               </div>
             </div>

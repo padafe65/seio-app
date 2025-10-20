@@ -1,11 +1,17 @@
 // routes/improvementPlans.js
 import express from 'express';
 import db from '../config/db.js';
+import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
+// Ruta de prueba sin autenticación
+router.get('/test', (req, res) => {
+  res.json({ message: 'Rutas de improvement plans funcionando correctamente' });
+});
+
 // Obtener todos los planes de mejoramiento
-router.get('/improvement-plans', async (req, res) => {
+router.get('/improvement-plans', verifyToken, async (req, res) => {
   try {
     const [plans] = await db.query(`
       SELECT ip.*, 
@@ -68,7 +74,7 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
 });
 
 // Obtener planes de mejoramiento por profesor (usando user_id)
-router.get('/improvement-plans/teacher/:userId', async (req, res) => {
+router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) => {
   try {
     // Primero obtenemos el teacher_id asociado con este user_id
     const [teachers] = await db.query(
@@ -149,7 +155,14 @@ router.post('/improvement-plans', async (req, res) => {
       deadline, 
       file_url, 
       failed_achievements, 
-      passed_achievements 
+      passed_achievements,
+      video_urls,
+      resource_links,
+      activity_status,
+      teacher_notes,
+      student_feedback,
+      attempts_count,
+      last_activity_date
     } = req.body;
     
     // Verificar que student_id existe
@@ -175,10 +188,13 @@ router.post('/improvement-plans', async (req, res) => {
     const [result] = await db.query(
       `INSERT INTO improvement_plans 
        (student_id, teacher_id, title, subject, description, activities, deadline, 
-        file_url, failed_achievements, passed_achievements, completed, email_sent, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())`,
+        file_url, failed_achievements, passed_achievements, video_urls, resource_links,
+        activity_status, teacher_notes, student_feedback, attempts_count, last_activity_date,
+        completed, email_sent, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())`,
       [student_id, teacher_id, title, subject, description, activities, deadline, 
-       file_url, failed_achievements, passed_achievements]
+       file_url, failed_achievements, passed_achievements, video_urls, resource_links,
+       activity_status || 'pending', teacher_notes, student_feedback, attempts_count || 0, last_activity_date]
     );
     
     // Si hay email, enviar notificación (implementar después)
@@ -208,6 +224,14 @@ router.put('/improvement-plans/:id', async (req, res) => {
       file_url, 
       failed_achievements, 
       passed_achievements,
+      video_urls,
+      resource_links,
+      activity_status,
+      completion_date,
+      teacher_notes,
+      student_feedback,
+      attempts_count,
+      last_activity_date,
       completed,
       email_sent
     } = req.body;
@@ -223,10 +247,14 @@ router.put('/improvement-plans/:id', async (req, res) => {
       `UPDATE improvement_plans 
        SET title = ?, subject = ?, description = ?, activities = ?, deadline = ?, 
            file_url = ?, failed_achievements = ?, passed_achievements = ?, 
+           video_urls = ?, resource_links = ?, activity_status = ?, completion_date = ?,
+           teacher_notes = ?, student_feedback = ?, attempts_count = ?, last_activity_date = ?,
            completed = ?, email_sent = ?
        WHERE id = ?`,
       [title, subject, description, activities, deadline, file_url, 
-       failed_achievements, passed_achievements, completed, email_sent, id]
+       failed_achievements, passed_achievements, video_urls, resource_links,
+       activity_status, completion_date, teacher_notes, student_feedback, 
+       attempts_count, last_activity_date, completed, email_sent, id]
     );
     
     res.json({ message: 'Plan de mejoramiento actualizado correctamente' });
@@ -345,5 +373,368 @@ router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
   }
 });
 
+
+// ===== RUTAS PARA RECURSOS DE RECUPERACIÓN =====
+
+// Obtener recursos de un plan de mejoramiento
+router.get('/improvement-plans/:id/resources', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const [resources] = await db.query(`
+      SELECT * FROM recovery_resources 
+      WHERE improvement_plan_id = ? 
+      ORDER BY order_index ASC, created_at ASC
+    `, [id]);
+    
+    res.json(resources);
+  } catch (error) {
+    console.error('Error al obtener recursos:', error);
+    res.status(500).json({ message: 'Error al obtener recursos' });
+  }
+});
+
+// Crear un nuevo recurso
+router.post('/improvement-plans/:id/resources', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      resource_type, 
+      title, 
+      description, 
+      url, 
+      file_path, 
+      thumbnail_url,
+      duration_minutes,
+      difficulty_level,
+      order_index,
+      is_required
+    } = req.body;
+    
+    // Verificar que el plan existe
+    const [planCheck] = await db.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
+    if (planCheck.length === 0) {
+      return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
+    }
+    
+    const [result] = await db.query(`
+      INSERT INTO recovery_resources 
+      (improvement_plan_id, resource_type, title, description, url, file_path, 
+       thumbnail_url, duration_minutes, difficulty_level, order_index, is_required)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, resource_type, title, description, url, file_path, thumbnail_url, 
+        duration_minutes, difficulty_level || 'basic', order_index || 0, is_required !== false]);
+    
+    res.status(201).json({ 
+      message: 'Recurso creado correctamente',
+      id: result.insertId
+    });
+  } catch (error) {
+    console.error('Error al crear recurso:', error);
+    res.status(500).json({ message: 'Error al crear recurso' });
+  }
+});
+
+// Actualizar un recurso
+router.put('/resources/:resourceId', async (req, res) => {
+  try {
+    const { resourceId } = req.params;
+    const { 
+      resource_type, 
+      title, 
+      description, 
+      url, 
+      file_path, 
+      thumbnail_url,
+      duration_minutes,
+      difficulty_level,
+      order_index,
+      is_required
+    } = req.body;
+    
+    await db.query(`
+      UPDATE recovery_resources 
+      SET resource_type = ?, title = ?, description = ?, url = ?, file_path = ?,
+          thumbnail_url = ?, duration_minutes = ?, difficulty_level = ?, 
+          order_index = ?, is_required = ?
+      WHERE id = ?
+    `, [resource_type, title, description, url, file_path, thumbnail_url,
+        duration_minutes, difficulty_level, order_index, is_required, resourceId]);
+    
+    res.json({ message: 'Recurso actualizado correctamente' });
+  } catch (error) {
+    console.error('Error al actualizar recurso:', error);
+    res.status(500).json({ message: 'Error al actualizar recurso' });
+  }
+});
+
+// Eliminar un recurso
+router.delete('/resources/:resourceId', async (req, res) => {
+  try {
+    const { resourceId } = req.params;
+    
+    await db.query('DELETE FROM recovery_resources WHERE id = ?', [resourceId]);
+    
+    res.json({ message: 'Recurso eliminado correctamente' });
+  } catch (error) {
+    console.error('Error al eliminar recurso:', error);
+    res.status(500).json({ message: 'Error al eliminar recurso' });
+  }
+});
+
+// Marcar recurso como visto
+router.post('/resources/:resourceId/viewed', async (req, res) => {
+  try {
+    const { resourceId } = req.params;
+    const { student_id, completion_percentage } = req.body;
+    
+    await db.query(`
+      UPDATE recovery_resources 
+      SET viewed = 1, viewed_at = NOW(), completion_percentage = ?
+      WHERE id = ?
+    `, [completion_percentage || 100, resourceId]);
+    
+    // Registrar en el progreso
+    await db.query(`
+      INSERT INTO recovery_progress 
+      (improvement_plan_id, student_id, resource_id, progress_type, progress_data, score)
+      VALUES (
+        (SELECT improvement_plan_id FROM recovery_resources WHERE id = ?),
+        ?, ?, 'resource_viewed', 
+        JSON_OBJECT('completion_percentage', ?),
+        ?
+      )
+    `, [resourceId, student_id, resourceId, completion_percentage || 100, completion_percentage || 100]);
+    
+    res.json({ message: 'Recurso marcado como visto' });
+  } catch (error) {
+    console.error('Error al marcar recurso como visto:', error);
+    res.status(500).json({ message: 'Error al marcar recurso como visto' });
+  }
+});
+
+// ===== RUTAS PARA ACTIVIDADES DE RECUPERACIÓN =====
+
+// Obtener actividades de un plan de mejoramiento
+router.get('/improvement-plans/:id/activities', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const [activities] = await db.query(`
+      SELECT ra.*, 
+             i.description as indicator_description,
+             q.title as questionnaire_title
+      FROM recovery_activities ra
+      LEFT JOIN indicators i ON ra.indicator_id = i.id
+      LEFT JOIN questionnaires q ON ra.questionnaire_id = q.id
+      WHERE ra.improvement_plan_id = ? 
+      ORDER BY ra.due_date ASC, ra.created_at ASC
+    `, [id]);
+    
+    res.json(activities);
+  } catch (error) {
+    console.error('Error al obtener actividades:', error);
+    res.status(500).json({ message: 'Error al obtener actividades' });
+  }
+});
+
+// Crear una nueva actividad
+router.post('/improvement-plans/:id/activities', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      indicator_id,
+      questionnaire_id,
+      activity_type, 
+      title, 
+      description, 
+      instructions, 
+      due_date, 
+      max_attempts,
+      passing_score,
+      weight
+    } = req.body;
+    
+    // Verificar que el plan existe
+    const [planCheck] = await db.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
+    if (planCheck.length === 0) {
+      return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
+    }
+    
+    const [result] = await db.query(`
+      INSERT INTO recovery_activities 
+      (improvement_plan_id, indicator_id, questionnaire_id, activity_type, title, 
+       description, instructions, due_date, max_attempts, passing_score, weight)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, indicator_id, questionnaire_id, activity_type, title, description, 
+        instructions, due_date, max_attempts || 3, passing_score || 3.5, weight || 1.00]);
+    
+    res.status(201).json({ 
+      message: 'Actividad creada correctamente',
+      id: result.insertId
+    });
+  } catch (error) {
+    console.error('Error al crear actividad:', error);
+    res.status(500).json({ message: 'Error al crear actividad' });
+  }
+});
+
+// Actualizar una actividad
+router.put('/activities/:activityId', async (req, res) => {
+  try {
+    const { activityId } = req.params;
+    const { 
+      indicator_id,
+      questionnaire_id,
+      activity_type, 
+      title, 
+      description, 
+      instructions, 
+      due_date, 
+      max_attempts,
+      passing_score,
+      weight,
+      status,
+      student_score,
+      attempts_count,
+      completed_at,
+      teacher_feedback,
+      student_notes
+    } = req.body;
+    
+    await db.query(`
+      UPDATE recovery_activities 
+      SET indicator_id = ?, questionnaire_id = ?, activity_type = ?, title = ?, 
+          description = ?, instructions = ?, due_date = ?, max_attempts = ?, 
+          passing_score = ?, weight = ?, status = ?, student_score = ?, 
+          attempts_count = ?, completed_at = ?, teacher_feedback = ?, student_notes = ?
+      WHERE id = ?
+    `, [indicator_id, questionnaire_id, activity_type, title, description, 
+        instructions, due_date, max_attempts, passing_score, weight, status,
+        student_score, attempts_count, completed_at, teacher_feedback, 
+        student_notes, activityId]);
+    
+    res.json({ message: 'Actividad actualizada correctamente' });
+  } catch (error) {
+    console.error('Error al actualizar actividad:', error);
+    res.status(500).json({ message: 'Error al actualizar actividad' });
+  }
+});
+
+// Eliminar una actividad
+router.delete('/activities/:activityId', async (req, res) => {
+  try {
+    const { activityId } = req.params;
+    
+    await db.query('DELETE FROM recovery_activities WHERE id = ?', [activityId]);
+    
+    res.json({ message: 'Actividad eliminada correctamente' });
+  } catch (error) {
+    console.error('Error al eliminar actividad:', error);
+    res.status(500).json({ message: 'Error al eliminar actividad' });
+  }
+});
+
+// Completar una actividad
+router.post('/activities/:activityId/complete', async (req, res) => {
+  try {
+    const { activityId } = req.params;
+    const { student_id, score, student_notes } = req.body;
+    
+    // Obtener información de la actividad
+    const [activity] = await db.query(`
+      SELECT ra.*, ip.student_id as plan_student_id
+      FROM recovery_activities ra
+      JOIN improvement_plans ip ON ra.improvement_plan_id = ip.id
+      WHERE ra.id = ?
+    `, [activityId]);
+    
+    if (activity.length === 0) {
+      return res.status(404).json({ message: 'Actividad no encontrada' });
+    }
+    
+    const activityData = activity[0];
+    
+    // Verificar que el estudiante es el correcto
+    if (activityData.plan_student_id != student_id) {
+      return res.status(403).json({ message: 'No tienes permisos para completar esta actividad' });
+    }
+    
+    // Determinar el estado basado en la puntuación
+    const passingScore = activityData.passing_score || 3.5;
+    const newStatus = score >= passingScore ? 'completed' : 'failed';
+    
+    // Actualizar la actividad
+    await db.query(`
+      UPDATE recovery_activities 
+      SET status = ?, student_score = ?, attempts_count = attempts_count + 1,
+          completed_at = NOW(), student_notes = ?
+      WHERE id = ?
+    `, [newStatus, score, student_notes, activityId]);
+    
+    // Registrar en el progreso
+    await db.query(`
+      INSERT INTO recovery_progress 
+      (improvement_plan_id, student_id, activity_id, progress_type, progress_data, score)
+      VALUES (?, ?, ?, 'activity_completed', 
+              JSON_OBJECT('attempts_count', ?, 'passing_score', ?, 'status', ?),
+              ?)
+    `, [activityData.improvement_plan_id, student_id, activityId, 
+        activityData.attempts_count + 1, passingScore, newStatus, score]);
+    
+    res.json({ 
+      message: 'Actividad completada',
+      status: newStatus,
+      passed: score >= passingScore
+    });
+  } catch (error) {
+    console.error('Error al completar actividad:', error);
+    res.status(500).json({ message: 'Error al completar actividad' });
+  }
+});
+
+// ===== RUTAS PARA SEGUIMIENTO DE PROGRESO =====
+
+// Obtener progreso de un estudiante en un plan
+router.get('/improvement-plans/:id/progress/:studentId', async (req, res) => {
+  try {
+    const { id, studentId } = req.params;
+    
+    const [progress] = await db.query(`
+      SELECT rp.*, 
+             rr.title as resource_title,
+             rr.resource_type,
+             ra.title as activity_title,
+             ra.activity_type
+      FROM recovery_progress rp
+      LEFT JOIN recovery_resources rr ON rp.resource_id = rr.id
+      LEFT JOIN recovery_activities ra ON rp.activity_id = ra.id
+      WHERE rp.improvement_plan_id = ? AND rp.student_id = ?
+      ORDER BY rp.created_at DESC
+    `, [id, studentId]);
+    
+    // Calcular estadísticas
+    const [stats] = await db.query(`
+      SELECT 
+        COUNT(DISTINCT rr.id) as total_resources,
+        COUNT(DISTINCT CASE WHEN rr.viewed = 1 THEN rr.id END) as viewed_resources,
+        COUNT(DISTINCT ra.id) as total_activities,
+        COUNT(DISTINCT CASE WHEN ra.status = 'completed' THEN ra.id END) as completed_activities,
+        AVG(ra.student_score) as average_score
+      FROM improvement_plans ip
+      LEFT JOIN recovery_resources rr ON ip.id = rr.improvement_plan_id
+      LEFT JOIN recovery_activities ra ON ip.id = ra.improvement_plan_id
+      WHERE ip.id = ?
+    `, [id]);
+    
+    res.json({
+      progress,
+      statistics: stats[0]
+    });
+  } catch (error) {
+    console.error('Error al obtener progreso:', error);
+    res.status(500).json({ message: 'Error al obtener progreso' });
+  }
+});
 
 export default router;

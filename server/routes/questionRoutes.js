@@ -195,12 +195,11 @@ router.get('/questions/:id', async (req, res) => {
 });
 
 
-// ✅ Actualizar una pregunta
-// ✅ Actualizar una pregunta existente
 // ✅ Actualizar una pregunta existente
 router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
+    const requestingUserId = req.user.id;
     
     // Verificar si la pregunta existe
     const [existingQuestion] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
@@ -208,6 +207,21 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
       return res.status(404).json({ 
         success: false, 
         message: 'Pregunta no encontrada' 
+      });
+    }
+
+    // Verificar que el cuestionario de la pregunta pertenece al docente autenticado
+    const [questionnaireCheck] = await pool.query(`
+      SELECT q.created_by, t.user_id 
+      FROM questionnaires q 
+      JOIN teachers t ON q.created_by = t.id 
+      WHERE q.id = ?
+    `, [existingQuestion[0].questionnaire_id]);
+    
+    if (questionnaireCheck.length === 0 || questionnaireCheck[0].user_id !== requestingUserId) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'No tienes permisos para editar esta pregunta' 
       });
     }
 
@@ -221,6 +235,23 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
       correct_answer,
       category
     } = req.body;
+
+    // Verificar que el nuevo cuestionario también pertenece al docente
+    if (questionnaire_id && questionnaire_id !== existingQuestion[0].questionnaire_id) {
+      const [newQuestionnaireCheck] = await pool.query(`
+        SELECT q.created_by, t.user_id 
+        FROM questionnaires q 
+        JOIN teachers t ON q.created_by = t.id 
+        WHERE q.id = ?
+      `, [questionnaire_id]);
+      
+      if (newQuestionnaireCheck.length === 0 || newQuestionnaireCheck[0].user_id !== requestingUserId) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'No tienes permisos para asignar esta pregunta al cuestionario seleccionado' 
+        });
+      }
+    }
 
     const image_url = req.file ? `/uploads/${req.file.filename}` : null;
 
@@ -248,6 +279,12 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
     if (image_url) {
       fields.push('image_url = ?');
       values.push(image_url);
+    }
+
+    // Si se cambió el cuestionario, actualizarlo
+    if (questionnaire_id) {
+      fields.push('questionnaire_id = ?');
+      values.push(questionnaire_id);
     }
 
     values.push(id); // Para la cláusula WHERE

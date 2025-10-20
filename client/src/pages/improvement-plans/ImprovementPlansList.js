@@ -34,7 +34,12 @@ const ImprovementPlansList = () => {
           url = `${API_URL}/api/improvement-plans/student/${selectedStudent}`;
         }
         
-        const response = await axios.get(url);
+        const response = await axios.get(url, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+            'Content-Type': 'application/json'
+          }
+        });
         setPlans(response.data);
         setLoading(false);
       } catch (error) {
@@ -48,9 +53,19 @@ const ImprovementPlansList = () => {
       if (user.role === 'docente') {
         try {
           // Obtener el teacher_id asociado con el user_id
-          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
+          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`, {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+              'Content-Type': 'application/json'
+            }
+          });
           if (teacherResponse.data && teacherResponse.data.id) {
-            const studentsResponse = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
+            const studentsResponse = await axios.get(`${API_URL}/api/teachers/${teacherResponse.data.id}/students`, {
+              headers: {
+                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                'Content-Type': 'application/json'
+              }
+            });
             setStudents(studentsResponse.data);
           }
         } catch (error) {
@@ -77,7 +92,12 @@ const ImprovementPlansList = () => {
       });
       
       if (result.isConfirmed) {
-        await axios.delete(`${API_URL}/api/improvement-plans/${id}`);
+        await axios.delete(`${API_URL}/api/improvement-plans/${id}`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+            'Content-Type': 'application/json'
+          }
+        });
         setPlans(plans.filter(plan => plan.id !== id));
         
         Swal.fire(
