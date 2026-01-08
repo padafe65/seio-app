@@ -44,12 +44,34 @@ const StudentGradesEditor = ({ studentId, onGradesUpdated }) => {
       
       if (gradesResponse.data && gradesResponse.data.length > 0) {
         const studentGrades = gradesResponse.data[0];
+        
+        // Función para corregir valores que están en escala incorrecta (40.00 -> 4.00)
+        const correctScore = (score) => {
+          if (!score || score === '' || score === null) return '';
+          const numScore = parseFloat(score);
+          if (isNaN(numScore)) return '';
+          
+          // Si el valor es mayor a 5 pero menor o igual a 50, corregir dividiendo por 10
+          if (numScore > 5 && numScore <= 50) {
+            console.warn(`⚠️ Valor ${numScore} detectado en escala incorrecta, corrigiendo a ${numScore / 10}`);
+            return (numScore / 10).toFixed(2);
+          }
+          
+          // Si es mayor a 50, es un error y no mostrar
+          if (numScore > 50) {
+            console.error(`❌ Valor ${numScore} está fuera de rango válido`);
+            return '';
+          }
+          
+          return numScore.toFixed(2);
+        };
+        
         setGrades({
-          phase1: studentGrades.phase1 || '',
-          phase2: studentGrades.phase2 || '',
-          phase3: studentGrades.phase3 || '',
-          phase4: studentGrades.phase4 || '',
-          average: studentGrades.average || ''
+          phase1: correctScore(studentGrades.phase1),
+          phase2: correctScore(studentGrades.phase2),
+          phase3: correctScore(studentGrades.phase3),
+          phase4: correctScore(studentGrades.phase4),
+          average: correctScore(studentGrades.average)
         });
       }
 
@@ -74,13 +96,46 @@ const StudentGradesEditor = ({ studentId, onGradesUpdated }) => {
   };
 
   const handleGradeChange = (phase, value) => {
+    // Validar que el valor esté en el rango 0-5
+    let validatedValue = value;
+    
+    if (value !== '' && value !== null && value !== undefined) {
+      const numValue = parseFloat(value);
+      
+      if (!isNaN(numValue)) {
+        // Si el valor es mayor a 5 pero menor o igual a 50, probablemente es un error de escala
+        if (numValue > 5 && numValue <= 50) {
+          Swal.fire({
+            icon: 'warning',
+            title: 'Valor corregido',
+            text: `El valor ${numValue} parece estar en escala incorrecta. Se ha corregido a ${(numValue / 10).toFixed(2)}`,
+            timer: 3000,
+            showConfirmButton: false
+          });
+          validatedValue = (numValue / 10).toFixed(2);
+        } else if (numValue > 50) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Valor inválido',
+            text: `El valor ${numValue} está fuera del rango válido (0-5). Por favor ingrese un valor entre 0 y 5.`,
+            timer: 4000
+          });
+          return; // No actualizar si el valor es inválido
+        } else if (numValue < 0) {
+          validatedValue = '0';
+        } else if (numValue > 5) {
+          validatedValue = '5';
+        }
+      }
+    }
+    
     setGrades(prev => ({
       ...prev,
-      [phase]: value
+      [phase]: validatedValue
     }));
     
     // Calcular promedio automáticamente
-    calculateAverage(phase, value);
+    calculateAverage(phase, validatedValue);
   };
 
   const calculateAverage = (changedPhase, newValue) => {

@@ -1,4 +1,72 @@
-import { db } from '../config/db.js';
+import pool from '../config/db.js';
+
+export const createTeacherIfNotExists = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el ID de usuario'
+      });
+    }
+
+    console.log(`🔍 Verificando si existe profesor con user_id: ${userId}`);
+    
+    // Verificar si el profesor ya existe
+    const [existingTeachers] = await pool.query(
+      'SELECT id FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+
+    if (existingTeachers && existingTeachers.length > 0) {
+      console.log(`✅ Profesor ya existe con ID: ${existingTeachers[0].id}`);
+      return res.status(200).json({
+        success: true,
+        message: 'El profesor ya existe',
+        teacher_id: existingTeachers[0].id
+      });
+    }
+
+    // Obtener información del usuario
+    const [users] = await pool.query(
+      'SELECT id, name, email, role FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (!users || users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    const user = users[0];
+
+    // Crear el registro del profesor
+    const [result] = await pool.query(
+      'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
+      [userId, 'Sin asignar', 'Sin asignar']
+    );
+
+    console.log(`✅ Profesor creado con ID: ${result.insertId}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Profesor creado exitosamente',
+      teacher_id: result.insertId,
+      user: user
+    });
+
+  } catch (error) {
+    console.error('❌ Error en createTeacherIfNotExists:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error del servidor al crear profesor',
+      error: error.message
+    });
+  }
+};
 
 export const getTeacherByUserId = async (req, res) => {
   try {
@@ -14,7 +82,7 @@ export const getTeacherByUserId = async (req, res) => {
     console.log(`🔍 Buscando profesor con user_id: ${userId}`);
     
     // Buscar el profesor por user_id incluyendo la información del usuario
-    const [teachers] = await db.query(
+    const [teachers] = await pool.query(
       `SELECT t.*, u.name, u.email, u.phone, u.role 
        FROM teachers t 
        JOIN users u ON t.user_id = u.id 
@@ -34,7 +102,7 @@ export const getTeacherByUserId = async (req, res) => {
     console.log(`✅ Profesor encontrado:`, { id: teacher.id, name: teacher.name });
 
     // Obtener los cursos asignados al profesor
-    const [courses] = await db.query(
+    const [courses] = await pool.query(
       `SELECT c.* 
        FROM teacher_courses tc
        JOIN courses c ON tc.course_id = c.id
@@ -43,7 +111,7 @@ export const getTeacherByUserId = async (req, res) => {
     );
 
     // Obtener los estudiantes asignados al profesor
-    const [students] = await db.query(
+    const [students] = await pool.query(
       `SELECT s.*, u.name, u.email, u.phone, c.name as course_name
        FROM teacher_students ts
        JOIN students s ON ts.student_id = s.id
@@ -54,13 +122,13 @@ export const getTeacherByUserId = async (req, res) => {
     );
 
     // Obtener los cuestionarios creados por el profesor
-    const [questionnaires] = await db.query(
+    const [questionnaires] = await pool.query(
       `SELECT * FROM questionnaires WHERE created_by = ?`,
       [teacher.id]
     );
 
     // Obtener los indicadores creados por el profesor
-    const [indicators] = await db.query(
+    const [indicators] = await pool.query(
       `SELECT * FROM indicators WHERE teacher_id = ?`,
       [teacher.id]
     );
@@ -144,7 +212,7 @@ export const getStudentsByGrade = async (req, res) => {
     }
 
     // Verificar que el docente exista
-    const [teacher] = await db.query(
+    const [teacher] = await pool.query(
       'SELECT id, user_id, subject FROM teachers WHERE id = ?',
       [teacherId]
     );
@@ -162,7 +230,7 @@ export const getStudentsByGrade = async (req, res) => {
     // Si el usuario es docente, verificar que solo pueda ver sus propios estudiantes
     if (requestingUserRole === 'docente') {
       console.log('🔐 Verificando permisos del docente...');
-      const [requestingTeacher] = await db.query(
+      const [requestingTeacher] = await pool.query(
         'SELECT id, user_id FROM teachers WHERE user_id = ?',
         [requestingUserId]
       );
@@ -214,25 +282,25 @@ export const getStudentsByGrade = async (req, res) => {
     console.log('\n🔍 Verificando datos en la base de datos...');
     
     // Verificar si el docente existe
-    const [teacherCheck] = await db.query('SELECT id FROM teachers WHERE id = ?', [teacherId]);
+    const [teacherCheck] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacherId]);
     console.log(`👨‍🏫 Docente con ID ${teacherId} existe:`, teacherCheck.length > 0 ? 'Sí' : 'No');
     
     // Verificar si hay estudiantes asignados al docente
-    const [assignedStudents] = await db.query(
+    const [assignedStudents] = await pool.query(
       'SELECT COUNT(*) as count FROM teacher_students WHERE teacher_id = ?', 
       [teacherId]
     );
     console.log(`📊 Total de estudiantes asignados al docente: ${assignedStudents[0].count}`);
     
     // Verificar si hay estudiantes en el grado especificado
-    const [gradeStudents] = await db.query(
+    const [gradeStudents] = await pool.query(
       'SELECT COUNT(*) as count FROM students WHERE grade = ?', 
       [grade]
     );
     console.log(`📊 Total de estudiantes en el grado ${grade}: ${gradeStudents[0].count}`);
     
     // Ejecutar la consulta principal
-    const [students] = await db.query(query, [teacherId, grade]);
+    const [students] = await pool.query(query, [teacherId, grade]);
     
     console.log('\n📊 Resultados de la consulta:');
     console.log(`✅ Se encontraron ${students.length} estudiantes para el docente ${teacherId}, grado ${grade}`);
@@ -276,7 +344,7 @@ export const getTeacherIndicators = async (req, res) => {
     console.log(`🔍 Obteniendo indicadores para el profesor ID: ${teacherId}`);
 
     // Verificar que el profesor existe
-    const [teachers] = await db.query(
+    const [teachers] = await pool.query(
       'SELECT id FROM teachers WHERE id = ?',
       [teacherId]
     );
@@ -290,7 +358,7 @@ export const getTeacherIndicators = async (req, res) => {
     }
 
     // Obtener los indicadores del profesor con información relacionada
-    const [indicators] = await db.query(
+    const [indicators] = await pool.query(
       `SELECT i.*, 
               q.title as questionnaire_title,
               q.grade as questionnaire_grade,

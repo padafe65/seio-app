@@ -4,6 +4,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../api/axiosClient';
 import Swal from 'sweetalert2';
 import { ArrowLeft } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 // Importaciones para KaTeX
 import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
@@ -36,6 +37,7 @@ const CreateQuestionPage = () => {
   const { id: questionnaireIdFromUrl } = useParams();
   // Se mantiene useNavigate importado para futuras implementaciones
   // const navigate = useNavigate();
+  const { user } = useAuth();
 
   const initialFormState = {
     questionnaire_id: questionnaireIdFromUrl || '',
@@ -93,8 +95,13 @@ const CreateQuestionPage = () => {
           setQuestions(questionnaireResponse.data.questions);
         } else {
           // Si no hay ID, carga todos los cuestionarios y preguntas como antes
-          fetchQuestions();
-          fetchQuestionnaires();
+          // Esperar a que el usuario esté disponible antes de cargar cuestionarios
+          if (user && user.id) {
+            fetchQuestions();
+            fetchQuestionnaires();
+          } else {
+            console.log('⏳ Esperando a que el usuario esté disponible...');
+          }
         }
         setLoading(false);
       } catch (error) {
@@ -104,7 +111,7 @@ const CreateQuestionPage = () => {
     };
     
     fetchData();
-  }, [questionnaireIdFromUrl]);
+  }, [questionnaireIdFromUrl, user]);
 
   const fetchQuestions = async () => {
     try {
@@ -126,16 +133,74 @@ const CreateQuestionPage = () => {
     }
   };
 
-  const fetchQuestionnaires = async () => {
+  // Función para cargar preguntas por ID de cuestionario
+  const fetchQuestionsByQuestionnaire = async (questionnaireId) => {
     try {
-      const res = await axios.get('/questionnaires');
-      setQuestionnaires(res.data);
+      if (!questionnaireId) {
+        // Si no hay ID, cargar todas las preguntas del docente
+        fetchQuestions();
+        return;
+      }
+      
+      // Cargar solo las preguntas del cuestionario seleccionado
+      const questionsResponse = await axios.get(`/questions?questionnaire_id=${questionnaireId}`);
+      setQuestions(questionsResponse.data);
     } catch (err) {
-      console.error('Error cargando cuestionarios:', err.message);
+      console.error('Error cargando preguntas del cuestionario:', err.message);
+      // En caso de error, intentar cargar todas las preguntas
+      fetchQuestions();
     }
   };
 
-  const handleChange = (e) => {
+  const fetchQuestionnaires = async () => {
+    try {
+      // Obtener el user_id del usuario autenticado
+      if (!user || !user.id) {
+        console.error('No hay usuario autenticado');
+        return;
+      }
+      
+      const userId = user.id;
+      const userRole = user.role;
+      console.log('🔍 Cargando cuestionarios para el usuario:', userId, 'Rol:', userRole);
+      
+      // Usar axiosClient que ya tiene el baseURL configurado con /api
+      // Para super_administrador: cargar todos los cuestionarios
+      // Para docente: cargar solo los suyos (el backend filtra automáticamente)
+      // No necesitamos pasar created_by porque el backend lo detecta del token
+      const res = await axios.get('/questionnaires');
+      
+      console.log('📋 Respuesta del servidor:', res.data);
+      
+      // El endpoint puede devolver un array directo o un objeto con data
+      let questionnairesData = [];
+      
+      if (Array.isArray(res.data)) {
+        questionnairesData = res.data;
+      } else if (res.data && Array.isArray(res.data.data)) {
+        questionnairesData = res.data.data;
+      } else if (res.data && res.data.success && Array.isArray(res.data.data)) {
+        questionnairesData = res.data.data;
+      } else {
+        console.warn('⚠️ Formato de respuesta inesperado:', res.data);
+        questionnairesData = [];
+      }
+      
+      setQuestionnaires(questionnairesData);
+      console.log(`✅ Se cargaron ${questionnairesData.length} cuestionarios ${userRole === 'super_administrador' ? '(todos)' : '(del profesor)'}`);
+      
+      if (questionnairesData.length === 0) {
+        console.warn('⚠️ No se encontraron cuestionarios');
+      }
+      
+    } catch (err) {
+      console.error('❌ Error cargando cuestionarios:', err);
+      console.error('Detalles del error:', err.response?.data || err.message);
+      setQuestionnaires([]);
+    }
+  };
+
+  const handleChange = async (e) => {
     const { name, value, files } = e.target;
     if (name === 'image') {
       const file = files[0];
@@ -144,8 +209,8 @@ const CreateQuestionPage = () => {
     } else {
       setFormData({ ...formData, [name]: value });
       
-      // Si cambia el cuestionario, actualizar la categoría automáticamente
-      if (name === 'questionnaire_id' && value) {
+      // Si cambia el cuestionario, actualizar la categoría y cargar las preguntas del cuestionario
+      if (name === 'questionnaire_id') {
         const selectedQuestionnaire = questionnaires.find(q => q.id === parseInt(value) || q.id === value);
         if (selectedQuestionnaire) {
           setFormData(prev => ({
@@ -153,6 +218,11 @@ const CreateQuestionPage = () => {
             category: selectedQuestionnaire.category,
             [name]: value
           }));
+          // Cargar solo las preguntas del cuestionario seleccionado
+          await fetchQuestionsByQuestionnaire(value);
+        } else if (!value) {
+          // Si se deselecciona el cuestionario, cargar todas las preguntas del docente
+          fetchQuestions();
         }
       }
     }
@@ -205,11 +275,14 @@ await axios.post(`/questions/question`, data, {
       }
       resetForm();
       
-      if (questionnaireIdFromUrl) {
+      // Recargar las preguntas según el contexto
+      const currentQuestionnaireId = questionnaireIdFromUrl || formData.questionnaire_id;
+      if (currentQuestionnaireId) {
         // Recargar solo las preguntas del cuestionario actual
-        const questionsResponse = await axios.get(`/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+        const questionsResponse = await axios.get(`/questions?questionnaire_id=${currentQuestionnaireId}`);
         setQuestions(questionsResponse.data);
       } else {
+        // Si no hay cuestionario seleccionado, cargar todas las preguntas del docente
         fetchQuestions();
       }
     } catch (error) {
@@ -219,9 +292,14 @@ await axios.post(`/questions/question`, data, {
   };
 
   const resetForm = () => {
+    // Mantener el questionnaire_id si hay uno seleccionado (ya sea de URL o del combo)
+    const currentQuestionnaireId = questionnaireIdFromUrl || formData.questionnaire_id || '';
+    
     setFormData({
       ...initialFormState,
-      questionnaire_id: questionnaireIdFromUrl || ''
+      questionnaire_id: currentQuestionnaireId,
+      // Mantener la categoría si hay cuestionario seleccionado
+      category: currentQuestionnaireId && questionnaires.find(q => q.id === parseInt(currentQuestionnaireId) || q.id === currentQuestionnaireId)?.category || ''
     });
     setPreview(null);
     setEditingId(null);
@@ -269,11 +347,14 @@ await axios.post(`/questions/question`, data, {
         await axios.delete(`/questions/${id}`);
         Swal.fire('Eliminada', 'La pregunta ha sido eliminada', 'success');
         
-        if (questionnaireIdFromUrl) {
+        // Recargar las preguntas según el contexto
+        const currentQuestionnaireId = questionnaireIdFromUrl || formData.questionnaire_id;
+        if (currentQuestionnaireId) {
           // Recargar solo las preguntas del cuestionario actual
-          const questionsResponse = await axios.get(`/questions?questionnaire_id=${questionnaireIdFromUrl}`);
+          const questionsResponse = await axios.get(`/questions?questionnaire_id=${currentQuestionnaireId}`);
           setQuestions(questionsResponse.data);
         } else {
+          // Si no hay cuestionario seleccionado, cargar todas las preguntas del docente
           fetchQuestions();
         }
       } catch (error) {
@@ -534,7 +615,7 @@ await axios.post(`/questions/question`, data, {
           
           {questions.length === 0 ? (
             <div className="alert alert-info">
-              No hay preguntas registradas {questionnaireIdFromUrl ? 'para este cuestionario' : ''}.
+              No hay preguntas registradas {questionnaireIdFromUrl || formData.questionnaire_id ? 'para este cuestionario' : ''}.
             </div>
           ) : (
             <div className="table-responsive">
@@ -545,7 +626,7 @@ await axios.post(`/questions/question`, data, {
                     <th>Texto</th>
                     <th>Opciones</th>
                     <th>Respuesta</th>
-                    {!questionnaireIdFromUrl && <th>Cuestionario</th>}
+                    {!questionnaireIdFromUrl && !formData.questionnaire_id && <th>Cuestionario</th>}
                     <th>Imagen</th>
                     <th>Acciones</th>
                   </tr>
@@ -590,7 +671,7 @@ await axios.post(`/questions/question`, data, {
                         </ol>
                       </td>
                       <td className="text-center">{q.correct_answer}</td>
-                      {!questionnaireIdFromUrl && (
+                      {!questionnaireIdFromUrl && !formData.questionnaire_id && (
                         <td>
                           {questionnaires.find(quest => quest.id === parseInt(q.questionnaire_id))?.title || q.questionnaire_id}
                         </td>

@@ -2,13 +2,19 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
+import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 // Obtener todos los cuestionarios
-router.get('/', async (req, res) => {
+// Si el usuario es super_administrador: devuelve todos
+// Si el usuario es docente: devuelve solo los que creó
+router.get('/', verifyToken, async (req, res) => {
   try {
     const { created_by, phase, grade, studentId, description } = req.query;
+    const userRole = req.user?.role;
+    const userId = req.user?.id;
+    
     let params = [];
     let conditions = [];
     let query = `
@@ -43,18 +49,53 @@ router.get('/', async (req, res) => {
       }
     }
     
-    if (created_by) {
-      // Obtener el ID del profesor a partir del ID de usuario
+    // Lógica de roles: super_administrador ve todos, docente solo los suyos
+    if (userRole === 'super_administrador') {
+      // Super administrador puede ver todos los cuestionarios
+      // Si hay created_by en el query, respetarlo; si no, mostrar todos
+      if (created_by) {
+        const [teacherRows] = await pool.query(
+          'SELECT id FROM teachers WHERE user_id = ?',
+          [created_by]
+        );
+        
+        if (teacherRows.length > 0) {
+          const teacherId = teacherRows[0].id;
+          conditions.push('q.created_by = ?');
+          params.push(teacherId);
+        }
+      }
+      // Si no hay created_by, no agregar filtro (mostrar todos)
+    } else if (userRole === 'docente') {
+      // Docente solo puede ver sus propios cuestionarios
+      // Obtener el teacher_id del usuario autenticado
       const [teacherRows] = await pool.query(
         'SELECT id FROM teachers WHERE user_id = ?',
-        [created_by]
+        [userId]
       );
       
       if (teacherRows.length > 0) {
         const teacherId = teacherRows[0].id;
         conditions.push('q.created_by = ?');
         params.push(teacherId);
+        console.log(`🔒 Filtrando cuestionarios para docente (teacher_id: ${teacherId})`);
+      } else {
+        // Si el docente no tiene registro en teachers, devolver vacío
+        console.warn(`⚠️ Docente ${userId} no tiene registro en teachers`);
+        return res.json([]);
       }
+    } else {
+      // Otros roles (estudiante, etc.) no pueden ver cuestionarios aquí
+      return res.status(403).json({ 
+        success: false,
+        message: 'No tienes permiso para ver cuestionarios' 
+      });
+    }
+    
+    // Si hay created_by en el query y el usuario no es super_administrador, ignorarlo
+    // (ya se filtró arriba por el rol)
+    if (created_by && userRole !== 'super_administrador') {
+      console.log('⚠️ Parámetro created_by ignorado para usuario no administrador');
     }
     
     if (phase) {

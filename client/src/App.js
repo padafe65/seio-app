@@ -47,6 +47,7 @@ import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.j
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
 import ImprovementPlanDetailEnhanced from './pages/improvement-plans/ImprovementPlanDetailEnhanced.js';
 import TeacherCoursesManager from './pages/courses/TeacherCoursesManager';
+import AutomaticImprovementPlansManager from './components/AutomaticImprovementPlansManager.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -239,6 +240,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/planes-automaticos" className="nav-link text-white d-flex align-items-center">
+                  <Settings size={18} className="me-2" /> Sistema Automático
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/evaluacion-fase" className="nav-link text-white d-flex align-items-center">
                   <CheckSquare size={18} className="me-2" /> Evaluación de Fase
                 </Link>
@@ -303,6 +309,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/planes-automaticos" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Settings size={18} className="me-2" /> Sistema Automático
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center" onClick={handleClose}>
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
                 </Link>
@@ -351,6 +362,8 @@ function AppContent() {
             <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
             {/* Nueva ruta mejorada para planes de mejoramiento */}
             <Route path="/planes-mejoramiento/:id/detalle" element={<ImprovementPlanDetailEnhanced />} />
+            {/* Sistema automático de planes de mejoramiento */}
+            <Route path="/planes-automaticos" element={<AutomaticImprovementPlansManager />} />
             {/* Añadir la ruta dentro del componente TeacherDashboardLayout*/}
             <Route path="/mis-cursos" element={<TeacherCoursesManager />} />
 

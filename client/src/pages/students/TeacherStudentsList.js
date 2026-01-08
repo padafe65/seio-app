@@ -41,17 +41,45 @@ const TeacherStudentsList = () => {
         return;
       }
       
-      // Verificar si el docente tiene un ID válido
-      if (!user.teacher_id) {
-        console.error('❌ No se encontró el ID del docente en el objeto user:', user);
-        setError('No se pudo cargar la información del docente. Por favor, cierre sesión y vuelva a iniciar.');
-        setLoading(false);
-        return;
+      // Obtener el teacher_id si no está disponible en el objeto user
+      let teacherId = user.teacher_id;
+      
+      if (!teacherId) {
+        console.warn('⚠️ No se encontró teacher_id en el objeto user, intentando obtenerlo del backend...');
+        try {
+          const token = localStorage.getItem('authToken');
+          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          // El endpoint devuelve { success: true, data: { id: ... } }
+          if (teacherResponse.data && teacherResponse.data.success && teacherResponse.data.data && teacherResponse.data.data.id) {
+            teacherId = teacherResponse.data.data.id;
+            console.log(`✅ Teacher ID obtenido del backend: ${teacherId}`);
+          } else {
+            console.error('❌ Formato de respuesta inesperado:', teacherResponse.data);
+            throw new Error('No se pudo obtener el ID del docente');
+          }
+        } catch (error) {
+          console.error('❌ Error al obtener el ID del docente:', error);
+          if (error.response) {
+            console.error('📌 Detalles del error:', {
+              status: error.response.status,
+              data: error.response.data
+            });
+          }
+          setError('No se pudo cargar la información del docente. Por favor, cierre sesión y vuelva a iniciar.');
+          setLoading(false);
+          return;
+        }
       }
       
       console.log(`🔍 Usuario docente autenticado:`, {
         userId: user.id,
-        teacherId: user.teacher_id,
+        teacherId: teacherId,
         role: user.role
       });
       
@@ -60,8 +88,8 @@ const TeacherStudentsList = () => {
         setError(null);
         const token = localStorage.getItem('authToken');
         
-        console.log(`🔍 Solicitando estudiantes para el docente ID: ${user.teacher_id}`);
-        const response = await axios.get(`${API_URL}/api/students/teacher/${user.teacher_id}`, {
+        console.log(`🔍 Solicitando estudiantes para el docente ID: ${teacherId}`);
+        const response = await axios.get(`${API_URL}/api/students/teacher/${teacherId}`, {
           headers: { 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'

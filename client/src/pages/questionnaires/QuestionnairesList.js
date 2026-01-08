@@ -2,10 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Edit, Trash2, Search, List } from 'lucide-react';
-import axios from 'axios';
+import axios from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const QuestionnairesList = () => {
   const { user } = useAuth();
@@ -17,38 +15,69 @@ const QuestionnairesList = () => {
   const [error, setError] = useState(null);
   
   useEffect(() => {
-  const fetchQuestionnaires = async () => {
-    try {
-      setLoading(true);
-      
-      // Construir la URL con los filtros
-      let url = `${API_URL}/api/questionnaires?created_by=${user.id}`;
-      if (filterPhase !== 'all') url += `&phase=${filterPhase}`;
-      if (filterGrade !== 'all') url += `&grade=${filterGrade}`;
-      
-      const response = await axios.get(url);
-      setQuestionnaires(response.data);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error al cargar cuestionarios:', error);
-      setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
-      setQuestionnaires([]);
-      setLoading(false);
-    }
-  };
-  
-  fetchQuestionnaires();
-}, [user.id, filterPhase, filterGrade]);
+    const fetchQuestionnaires = async () => {
+      if (!user || !user.id) {
+        console.log('⏳ Esperando a que el usuario esté disponible...');
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Construir la URL con los filtros
+        // El backend filtra automáticamente según el rol:
+        // - super_administrador: ve todos los cuestionarios (no pasar created_by)
+        // - docente: solo ve los suyos (el backend filtra automáticamente)
+        const params = new URLSearchParams();
+        
+        if (filterPhase !== 'all') {
+          params.append('phase', filterPhase);
+        }
+        
+        if (filterGrade !== 'all') {
+          params.append('grade', filterGrade);
+        }
+        
+        const queryString = params.toString();
+        const url = `/questionnaires${queryString ? `?${queryString}` : ''}`;
+        
+        console.log('🔍 Cargando cuestionarios para el usuario:', user.id, 'Rol:', user.role);
+        const response = await axios.get(url);
+        
+        // El endpoint puede devolver un array directo o un objeto con data
+        let questionnairesData = [];
+        if (Array.isArray(response.data)) {
+          questionnairesData = response.data;
+        } else if (response.data && Array.isArray(response.data.data)) {
+          questionnairesData = response.data.data;
+        } else if (response.data && response.data.success && Array.isArray(response.data.data)) {
+          questionnairesData = response.data.data;
+        }
+        
+        setQuestionnaires(questionnairesData);
+        console.log(`✅ Se cargaron ${questionnairesData.length} cuestionarios ${user.role === 'super_administrador' ? '(todos)' : '(del profesor)'}`);
+        setLoading(false);
+      } catch (error) {
+        console.error('❌ Error al cargar cuestionarios:', error);
+        setError('No se pudieron cargar los cuestionarios. Por favor, intenta de nuevo.');
+        setQuestionnaires([]);
+        setLoading(false);
+      }
+    };
+    
+    fetchQuestionnaires();
+  }, [user, filterPhase, filterGrade]);
 
   
   const handleDelete = async (id) => {
     if (window.confirm('¿Estás seguro de que deseas eliminar este cuestionario? Esta acción también eliminará todas las preguntas asociadas.')) {
       try {
-        await axios.delete(`${API_URL}/api/questionnaires/${id}`);
+        await axios.delete(`/questionnaires/${id}`);
         setQuestionnaires(questionnaires.filter(q => q.id !== id));
         alert('Cuestionario eliminado correctamente');
       } catch (error) {
-        console.error('Error al eliminar cuestionario:', error);
+        console.error('❌ Error al eliminar cuestionario:', error);
         alert('Error al eliminar cuestionario: ' + (error.response?.data?.message || error.message));
       }
     }

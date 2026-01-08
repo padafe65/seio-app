@@ -1200,8 +1200,36 @@ if (indicatorData) {
       }
       
       // 2. Verificar que el usuario tenga teacher_id
-      if (!user || !user.teacher_id) {
-        throw new Error('No se pudo verificar la información del docente. Por favor, inicia sesión nuevamente.');
+      // Usar teacherId del estado en lugar de user.teacher_id
+      if (!teacherId) {
+        // Intentar obtener teacherId si no está disponible
+        if (!user || !user.id) {
+          throw new Error('No se encontró información del usuario. Por favor, inicia sesión nuevamente.');
+        }
+        
+        // Intentar obtener teacherId desde el backend
+        try {
+          const token = localStorage.getItem('authToken');
+          const teacherResponse = await axios.get(`/api/teachers/by-user/${user.id}`, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          const teacherData = teacherResponse.data.success ? teacherResponse.data.data : teacherResponse.data;
+          const fetchedTeacherId = teacherData?.id || teacherData?.teacher_id;
+          
+          if (fetchedTeacherId) {
+            setTeacherId(fetchedTeacherId);
+            // Continuar con el teacherId obtenido
+          } else {
+            throw new Error('No se pudo verificar la información del docente. Por favor, inicia sesión nuevamente.');
+          }
+        } catch (error) {
+          console.error('❌ Error al obtener teacherId:', error);
+          throw new Error('No se pudo verificar la información del docente. Por favor, inicia sesión nuevamente.');
+        }
       }
   
       // 2.1 Confirmar si se están removiendo asociaciones al actualizar
@@ -1245,9 +1273,11 @@ if (indicatorData) {
       }
 
       // 3. Preparar datos para enviar
+      // Usar teacherId del estado (que ya fue verificado arriba)
+      const finalTeacherId = teacherId;
       const payload = {
         ...formData,
-        teacher_id: user.teacher_id,
+        teacher_id: finalTeacherId,
         student_ids: Array.isArray(formData.studentids) 
           ? formData.studentids.filter(id => id !== 'all' && id !== 'none')
           : [],

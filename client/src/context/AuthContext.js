@@ -168,14 +168,16 @@ export const AuthProvider = ({ children }) => {
               }
             );
             
-            if (teacherResponse.data && teacherResponse.data.id) {
-              userToStore.teacher_id = teacherResponse.data.id;
+            // El endpoint devuelve { success: true, data: { id: ... } } o directamente { id: ... }
+            const teacherId = teacherResponse.data?.data?.id || teacherResponse.data?.id;
+            if (teacherId) {
+              userToStore.teacher_id = teacherId;
               console.log('✅ ID del docente obtenido del endpoint específico:', userToStore.teacher_id);
             } else {
               // Si no existe, intentar crearlo
               console.warn('⚠️ No se encontró el registro del docente, intentando crearlo...');
               const createResponse = await axios.post(
-                `${API_URL}/api/teachers/create-for-user/${userDataFinal.id}`,
+                `${API_URL}/api/teacher/create-for-user/${userDataFinal.id}`,
                 {},
                 { 
                   headers: { 
@@ -185,10 +187,12 @@ export const AuthProvider = ({ children }) => {
                 }
               );
               
-              if (createResponse.data && createResponse.data.teacher_id) {
+              // El endpoint devuelve { success: true, teacher_id: ... }
+              if (createResponse.data && createResponse.data.success && createResponse.data.teacher_id) {
                 userToStore.teacher_id = createResponse.data.teacher_id;
                 console.log('✅ Nuevo registro de docente creado con ID:', userToStore.teacher_id);
               } else {
+                console.error('❌ Formato de respuesta inesperado:', createResponse.data);
                 throw new Error('No se pudo crear el registro del docente');
               }
             }

@@ -33,18 +33,33 @@ export const evaluatePhaseResults = async (phase) => {
     console.log(`Encontrados ${students.length} estudiantes con calificaciones para la fase ${phase}`);
     
     // 2. Para cada estudiante con nota < 3.5, generar plan de mejoramiento
+    let plansCreated = 0;
+    let plansUpdated = 0;
+    let studentsProcessed = 0;
+    
     for (const student of students) {
+      studentsProcessed++;
       if (student.phase_score < 3.5) {
-        await generateImprovementPlan(student, phase);
+        const result = await generateImprovementPlan(student, phase);
+        if (result.created) plansCreated++;
+        if (result.updated) plansUpdated++;
       }
       
       // Si es la fase final (4) y el promedio general es < 3.0, marcar como materia perdida
       if (phase === 4 && student.overall_average < 3.0) {
-        await markFailedSubject(student);
+        const result = await markFailedSubject(student);
+        if (result && result.created) plansCreated++;
+        if (result && result.updated) plansUpdated++;
       }
     }
     
-    return { success: true, message: `Evaluación de fase ${phase} completada` };
+    return { 
+      success: true, 
+      message: `Evaluación de fase ${phase} completada. ${studentsProcessed} estudiantes procesados. ${plansCreated} planes creados, ${plansUpdated} planes actualizados.`,
+      studentsProcessed,
+      plansCreated,
+      plansUpdated
+    };
   } catch (error) {
     console.error('Error en evaluación de fase:', error);
     return { success: false, error: error.message };
@@ -131,25 +146,61 @@ ${failedQuizzes.map(q => `• ${q.title} (Nota: ${q.best_score})`).join('\n')}
     const deadline = new Date();
     deadline.setDate(deadline.getDate() + 14); // 2 semanas para completar el plan
     
-    // 7. Insertar el plan en la base de datos
-    await pool.query(`
-      INSERT INTO improvement_plans 
-      (student_id, teacher_id, title, subject, description, activities, deadline, 
-       failed_achievements, passed_achievements, completed, email_sent, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())
+    // 7. Verificar si ya existe un plan de mejoramiento para esta fase
+    const [existingPlans] = await pool.query(`
+      SELECT id FROM improvement_plans 
+      WHERE student_id = ? 
+      AND teacher_id = ? 
+      AND title LIKE ?
+      AND completed = false
     `, [
-      student.student_id, 
-      teacher.teacher_id, 
-      title, 
-      teacher.subject, 
-      description.trim(), 
-      activities.trim(), 
-      deadline.toISOString().split('T')[0],
-      failedAchievements,
-      passedAchievements,
+      student.student_id,
+      teacher.teacher_id,
+      `%Fase ${phase}%`
     ]);
     
-    console.log(`Plan de mejoramiento generado para ${student.student_name} en fase ${phase}`);
+    if (existingPlans.length > 0) {
+      // Actualizar el plan existente
+      await pool.query(`
+        UPDATE improvement_plans 
+        SET description = ?, 
+            activities = ?, 
+            failed_achievements = ?,
+            passed_achievements = ?,
+            updated_at = NOW()
+        WHERE id = ?
+      `, [
+        description.trim(),
+        activities.trim(),
+        failedAchievements,
+        passedAchievements,
+        existingPlans[0].id
+      ]);
+      
+      console.log(`Plan de mejoramiento actualizado para ${student.student_name} en fase ${phase}`);
+      return { created: false, updated: true };
+    } else {
+      // Crear nuevo plan
+      await pool.query(`
+        INSERT INTO improvement_plans 
+        (student_id, teacher_id, title, subject, description, activities, deadline, 
+         failed_achievements, passed_achievements, completed, email_sent, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())
+      `, [
+        student.student_id, 
+        teacher.teacher_id, 
+        title, 
+        teacher.subject, 
+        description.trim(), 
+        activities.trim(), 
+        deadline.toISOString().split('T')[0],
+        failedAchievements,
+        passedAchievements,
+      ]);
+      
+      console.log(`Plan de mejoramiento generado para ${student.student_name} en fase ${phase}`);
+      return { created: true, updated: false };
+    }
     
     // 8. Asignar los indicadores pendientes al estudiante si no están ya asignados
     for (const indicator of failedIndicators) {
@@ -232,25 +283,58 @@ La habilitación debe presentarse en la fecha establecida por la institución.
     const deadline = new Date();
     deadline.setDate(deadline.getDate() + 30); // 1 mes para la habilitación
     
-    // 4. Insertar el plan en la base de datos
-    await pool.query(`
-      INSERT INTO improvement_plans 
-      (student_id, teacher_id, title, subject, description, activities, deadline, 
-       failed_achievements, passed_achievements, completed, email_sent, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())
+    // 4. Verificar si ya existe un plan de habilitación
+    const [existingPlans] = await pool.query(`
+      SELECT id FROM improvement_plans 
+      WHERE student_id = ? 
+      AND teacher_id = ? 
+      AND title LIKE '%HABILITACIÓN%'
+      AND completed = false
     `, [
-      student.student_id, 
-      teacher.teacher_id, 
-      title, 
-      teacher.subject, 
-      description.trim(), 
-      activities.trim(), 
-      deadline.toISOString().split('T')[0],
-      failedAchievements,
-      '' // No hay logros alcanzados relevantes para la habilitación
+      student.student_id,
+      teacher.teacher_id
     ]);
     
-    console.log(`Plan de habilitación generado para ${student.student_name}`);
+    if (existingPlans.length > 0) {
+      // Actualizar el plan existente
+      await pool.query(`
+        UPDATE improvement_plans 
+        SET description = ?, 
+            activities = ?, 
+            failed_achievements = ?,
+            updated_at = NOW()
+        WHERE id = ?
+      `, [
+        description.trim(),
+        activities.trim(),
+        failedAchievements,
+        existingPlans[0].id
+      ]);
+      
+      console.log(`Plan de habilitación actualizado para ${student.student_name}`);
+      return { created: false, updated: true };
+    } else {
+      // Crear nuevo plan
+      await pool.query(`
+        INSERT INTO improvement_plans 
+        (student_id, teacher_id, title, subject, description, activities, deadline, 
+         failed_achievements, passed_achievements, completed, email_sent, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())
+      `, [
+        student.student_id, 
+        teacher.teacher_id, 
+        title, 
+        teacher.subject, 
+        description.trim(), 
+        activities.trim(), 
+        deadline.toISOString().split('T')[0],
+        failedAchievements,
+        '' // No hay logros alcanzados relevantes para la habilitación
+      ]);
+      
+      console.log(`Plan de habilitación generado para ${student.student_name}`);
+      return { created: true, updated: false };
+    }
     
   } catch (error) {
     console.error(`Error generando plan de habilitación:`, error);

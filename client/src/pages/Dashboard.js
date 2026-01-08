@@ -2,12 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Users, FileText } from 'lucide-react';
-import axios from 'axios';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+import axiosClient from '../api/axiosClient';
 
 const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, authToken, isAuthReady } = useAuth();
   const [loading, setLoading] = useState(true);
   const [teacherStudents, setTeacherStudents] = useState([]);
   const [studentGrades, setStudentGrades] = useState([]);
@@ -22,24 +20,39 @@ const Dashboard = () => {
   
   useEffect(() => {
     const fetchData = async () => {
+      // Esperar a que la autenticación esté lista y que haya un token disponible
+      if (!isAuthReady) {
+        return; // Aún no está lista la autenticación, esperar
+      }
+      
+      // Verificar que el token esté tanto en el estado como en localStorage
+      const tokenInStorage = localStorage.getItem('authToken');
+      if (!authToken || !tokenInStorage) {
+        setLoading(false);
+        return; // No hay token, no intentar cargar datos
+      }
+      
+      // Pequeño delay para asegurar que el token esté completamente disponible
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       if (user && user.role === 'docente') {
         try {
           // Obtener estudiantes del docente
-          const studentsResponse = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
+          const studentsResponse = await axiosClient.get(`/teacher/students/${user.id}`);
           setTeacherStudents(studentsResponse.data);
           
           // Obtener calificaciones de los estudiantes
-          const gradesResponse = await axios.get(`${API_URL}/api/teacher/student-grades/${user.id}`);
+          const gradesResponse = await axiosClient.get(`/teacher/student-grades/${user.id}`);
           setStudentGrades(gradesResponse.data);
           
           // Obtener la materia del docente
-          const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
+          const subjectResponse = await axiosClient.get(`/teacher/subject/${user.id}`);
           const subject = subjectResponse.data.subject || '';
           setTeacherSubject(subject);
           
           // Obtener cuestionarios creados por este docente
           try {
-            const questionnairesResponse = await axios.get(`${API_URL}/api/questionnaires?created_by=${user.id}`);
+            const questionnairesResponse = await axiosClient.get(`/questionnaires?created_by=${user.id}`);
             setTeacherQuestionnaires(questionnairesResponse.data.slice(0, 5)); // Mostrar solo los primeros 5
             console.log('Cuestionarios del docente:', questionnairesResponse.data);
           } catch (error) {
@@ -49,7 +62,7 @@ const Dashboard = () => {
           // Obtener preguntas relacionadas con la materia del docente o creadas por él
           try {
             // Usa la nueva ruta específica para preguntas del docente
-            const questionsResponse = await axios.get(`${API_URL}/api/teacher/questions/${user.id}`);
+            const questionsResponse = await axiosClient.get(`/teacher/questions/${user.id}`);
             setTeacherQuestions(questionsResponse.data.slice(0, 5));
           } catch (error) {
             console.error('Error al cargar preguntas del docente:', error);
@@ -63,7 +76,7 @@ const Dashboard = () => {
     };
     
     fetchData();
-  }, [user]);
+  }, [user, authToken, isAuthReady]);
   
   // Función auxiliar para formatear calificaciones
   const formatGrade = (value) => {

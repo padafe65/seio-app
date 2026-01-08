@@ -23,7 +23,7 @@ const PhaseEvaluation = () => {
   const fetchPhaseStats = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_URL}/api/phase-stats/${selectedPhase}`);
+      const response = await axios.get(`${API_URL}/api/phase-evaluation/phase-stats/${selectedPhase}`);
       setStats(response.data);
       setError(null);
     } catch (error) {
@@ -37,13 +37,13 @@ const PhaseEvaluation = () => {
   const handleEvaluatePhase = async () => {
     // Confirmar antes de iniciar la evaluación
     const result = await Swal.fire({
-      title: `¿Evaluar Fase ${selectedPhase}?`,
-      text: 'Se generarán planes de mejoramiento para los estudiantes que no hayan alcanzado la nota mínima. Esta acción no se puede deshacer.',
-      icon: 'warning',
+      title: `¿Evaluar/Actualizar Fase ${selectedPhase}?`,
+      text: 'Se generarán o actualizarán planes de mejoramiento para los estudiantes que no hayan alcanzado la nota mínima. Puedes ejecutar esta acción múltiples veces para actualizar los planes.',
+      icon: 'info',
       showCancelButton: true,
       confirmButtonColor: '#3085d6',
       cancelButtonColor: '#d33',
-      confirmButtonText: 'Sí, evaluar fase',
+      confirmButtonText: 'Sí, evaluar/actualizar fase',
       cancelButtonText: 'Cancelar'
     });
     
@@ -51,12 +51,13 @@ const PhaseEvaluation = () => {
     
     try {
       setLoading(true);
-      const response = await axios.post(`${API_URL}/api/evaluate-phase/${selectedPhase}`);
+      const response = await axios.post(`${API_URL}/api/phase-evaluation/evaluate-phase/${selectedPhase}`);
       
       Swal.fire({
         title: '¡Evaluación completada!',
-        text: response.data.message,
-        icon: 'success'
+        html: `<p>${response.data.message}</p>`,
+        icon: 'success',
+        confirmButtonText: 'Aceptar'
       });
       
       // Actualizar estadísticas
@@ -65,7 +66,7 @@ const PhaseEvaluation = () => {
       console.error('Error al evaluar fase:', error);
       Swal.fire({
         title: 'Error',
-        text: 'No se pudo completar la evaluación de la fase',
+        text: error.response?.data?.message || 'No se pudo completar la evaluación de la fase',
         icon: 'error'
       });
     } finally {
@@ -109,6 +110,7 @@ const PhaseEvaluation = () => {
                 className="btn btn-primary w-100"
                 onClick={handleEvaluatePhase}
                 disabled={loading}
+                title="Puedes ejecutar esta evaluación múltiples veces para actualizar los planes de mejoramiento"
               >
                 {loading ? (
                   <>
@@ -116,7 +118,7 @@ const PhaseEvaluation = () => {
                   </>
                 ) : (
                   <>
-                    <CheckCircle size={18} className="me-2" /> Evaluar Fase {selectedPhase}
+                    <CheckCircle size={18} className="me-2" /> Evaluar/Actualizar Fase {selectedPhase}
                   </>
                 )}
               </button>
@@ -173,8 +175,10 @@ const PhaseEvaluation = () => {
                 
                 <div className="alert alert-info mt-4">
                   <p className="mb-0">
-                    <strong>Nota:</strong> Al evaluar la fase, se generarán automáticamente planes de mejoramiento 
+                    <strong>Nota:</strong> Al evaluar la fase, se generarán o actualizarán automáticamente planes de mejoramiento 
                     para los estudiantes con nota inferior a 3.5 y se les asignarán los indicadores pendientes.
+                    <br />
+                    <strong>Puedes ejecutar esta evaluación múltiples veces</strong> para actualizar los planes existentes con la información más reciente.
                     {selectedPhase === 4 && (
                       <span className="d-block mt-2">
                         <strong>Importante:</strong> Al ser la fase final, también se generarán planes de habilitación 

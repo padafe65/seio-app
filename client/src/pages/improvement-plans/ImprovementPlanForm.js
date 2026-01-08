@@ -1,11 +1,11 @@
 // pages/improvement-plans/ImprovementPlanForm.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import axios from 'axios';
+import axiosClient from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
 import Swal from 'sweetalert2';
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+// Removed API_URL since axiosClient already has baseURL configured
 
 const ImprovementPlanForm = () => {
   const { id } = useParams();
@@ -43,34 +43,27 @@ const ImprovementPlanForm = () => {
   });
   
   useEffect(() => {
-    const fetchTeacherId = async () => {
+    const fetchTeacherData = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`);
-        if (response.data && response.data.id) {
+        const response = await axiosClient.get(`/teacher/by-user/${user.id}`);
+        if (response.data && response.data.success && response.data.data) {
+          const teacherData = response.data.data;
           setFormData(prev => ({
             ...prev,
-            teacher_id: response.data.id
+            teacher_id: teacherData.id
           }));
+          // Los estudiantes vienen incluidos en la respuesta del profesor
+          setStudents(teacherData.students || []);
         }
       } catch (error) {
-        console.error('Error al obtener ID de profesor:', error);
+        console.error('Error al obtener datos del profesor:', error);
         setError('Error al obtener datos del profesor.');
-      }
-    };
-    
-    const fetchStudents = async () => {
-      try {
-        const response = await axios.get(`${API_URL}/api/teacher/students/${user.id}`);
-        setStudents(response.data);
-      } catch (error) {
-        console.error('Error al cargar estudiantes:', error);
-        setError('Error al cargar estudiantes.');
       }
     };
     
     const fetchTemplates = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/improvement-plans/templates`);
+        const response = await axiosClient.get('/improvement-plans/templates');
         setTemplates(response.data);
       } catch (error) {
         console.error('Error al cargar plantillas:', error);
@@ -80,7 +73,7 @@ const ImprovementPlanForm = () => {
     const fetchPlanDetails = async () => {
       if (isEditing) {
         try {
-          const response = await axios.get(`${API_URL}/api/improvement-plans/${id}`);
+          const response = await axiosClient.get(`/improvement-plans/${id}`);
           const planData = response.data;
           
           setFormData({
@@ -113,8 +106,7 @@ const ImprovementPlanForm = () => {
     };
     
     if (user.role === 'docente') {
-      fetchTeacherId();
-      fetchStudents();
+      fetchTeacherData();
     }
     
     fetchTemplates();
@@ -124,14 +116,14 @@ const ImprovementPlanForm = () => {
   const fetchIndicators = async (studentId, grade, phase) => {
     try {
       // Obtener indicadores no alcanzados
-      const failedResponse = await axios.get(
-        `${API_URL}/api/improvement-plans/indicators/failed/${studentId}/${grade}/${phase}`
+      const failedResponse = await axiosClient.get(
+        `/improvement-plans/indicators/failed/${studentId}/${grade}/${phase}`
       );
       setFailedIndicators(failedResponse.data);
       
       // Obtener indicadores alcanzados
-      const passedResponse = await axios.get(
-        `${API_URL}/api/improvement-plans/indicators/passed/${studentId}/${grade}/${phase}`
+      const passedResponse = await axiosClient.get(
+        `/improvement-plans/indicators/passed/${studentId}/${grade}/${phase}`
       );
       setPassedIndicators(passedResponse.data);
     } catch (error) {
@@ -193,14 +185,14 @@ const ImprovementPlanForm = () => {
     
     try {
       if (isEditing) {
-        await axios.put(`${API_URL}/api/improvement-plans/${id}`, formData);
+        await axiosClient.put(`/improvement-plans/${id}`, formData);
         Swal.fire({
           icon: 'success',
           title: 'Plan actualizado',
           text: 'El plan de mejoramiento ha sido actualizado correctamente'
         });
       } else {
-        await axios.post(`${API_URL}/api/improvement-plans`, formData);
+        await axiosClient.post('/improvement-plans', formData);
         Swal.fire({
           icon: 'success',
           title: 'Plan creado',

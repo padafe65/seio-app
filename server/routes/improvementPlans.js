@@ -1,7 +1,9 @@
 // routes/improvementPlans.js
+console.log('🔧 Cargando rutas de improvementPlans...');
 import express from 'express';
-import db from '../config/db.js';
+import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
+import { processQuestionnaireResults, processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
 
 const router = express.Router();
 
@@ -10,10 +12,28 @@ router.get('/test', (req, res) => {
   res.json({ message: 'Rutas de improvement plans funcionando correctamente' });
 });
 
+// Ruta de prueba para verificar la conexión a la base de datos
+router.get('/test-db', async (req, res) => {
+  try {
+    const [result] = await pool.query('SELECT COUNT(*) as total FROM improvement_plans');
+    res.json({ 
+      message: 'Conexión a la base de datos exitosa',
+      total_plans: result[0].total,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error en test-db:', error);
+    res.status(500).json({ 
+      message: 'Error de conexión a la base de datos',
+      error: error.message 
+    });
+  }
+});
+
 // Obtener todos los planes de mejoramiento
 router.get('/improvement-plans', verifyToken, async (req, res) => {
   try {
-    const [plans] = await db.query(`
+    const [plans] = await pool.query(`
       SELECT ip.*, 
              s.user_id as student_user_id, 
              t.user_id as teacher_user_id,
@@ -39,7 +59,7 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
 router.get('/improvement-plans/student/:userId', async (req, res) => {
   try {
     // Primero obtenemos el student_id asociado con este user_id
-    const [students] = await db.query(
+    const [students] = await pool.query(
       'SELECT id FROM students WHERE user_id = ?',
       [req.params.userId]
     );
@@ -51,7 +71,7 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
     const studentId = students[0].id;
     
     // Ahora obtenemos los planes de mejoramiento
-    const [plans] = await db.query(`
+    const [plans] = await pool.query(`
       SELECT ip.*, 
              t.user_id as teacher_user_id,
              ut.name as teacher_name,
@@ -77,7 +97,7 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
 router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) => {
   try {
     // Primero obtenemos el teacher_id asociado con este user_id
-    const [teachers] = await db.query(
+    const [teachers] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [req.params.userId]
     );
@@ -89,7 +109,7 @@ router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) =
     const teacherId = teachers[0].id;
     
     // Ahora obtenemos los planes de mejoramiento
-    const [plans] = await db.query(`
+    const [plans] = await pool.query(`
       SELECT ip.*, 
              s.user_id as student_user_id,
              us.name as student_name,
@@ -110,10 +130,60 @@ router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) =
   }
 });
 
+// Obtener plantillas de descripción para planes de mejoramiento
+router.get('/improvement-plans/templates', verifyToken, async (req, res) => {
+  try {
+    console.log('🔍 Obteniendo plantillas de planes de mejoramiento...');
+    
+    const [templates] = await pool.query(`
+      SELECT DISTINCT 
+        title,
+        description,
+        subject,
+        activities,
+        failed_achievements,
+        passed_achievements,
+        teacher_notes
+      FROM improvement_plans 
+      WHERE description IS NOT NULL AND description != ''
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+    
+    console.log(`✅ Se encontraron ${templates.length} plantillas`);
+    
+    // Si no hay plantillas, devolver array vacío
+    if (!templates || templates.length === 0) {
+      console.log('📝 No hay plantillas disponibles, devolviendo array vacío');
+      return res.json([]);
+    }
+    
+    // Formatear las plantillas para el frontend
+    const formattedTemplates = templates.map(template => ({
+      title: template.title || 'Plan de Mejoramiento',
+      description: template.description,
+      subject: template.subject,
+      activities: template.activities,
+      failed_achievements: template.failed_achievements,
+      passed_achievements: template.passed_achievements,
+      teacher_notes: template.teacher_notes
+    }));
+    
+    res.json(formattedTemplates);
+  } catch (error) {
+    console.error('❌ Error al obtener plantillas de descripción:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener plantillas de descripción',
+      error: error.message 
+    });
+  }
+});
+
 // Obtener un plan de mejoramiento específico
 router.get('/improvement-plans/:id', async (req, res) => {
   try {
-    const [plans] = await db.query(`
+    const [plans] = await pool.query(`
       SELECT ip.*, 
              s.user_id as student_user_id, 
              t.user_id as teacher_user_id,
@@ -166,26 +236,26 @@ router.post('/improvement-plans', async (req, res) => {
     } = req.body;
     
     // Verificar que student_id existe
-    const [studentCheck] = await db.query('SELECT * FROM students WHERE id = ?', [student_id]);
+    const [studentCheck] = await pool.query('SELECT * FROM students WHERE id = ?', [student_id]);
     if (studentCheck.length === 0) {
       return res.status(400).json({ message: 'El estudiante no existe' });
     }
     
     // Verificar que teacher_id existe
-    const [teacherCheck] = await db.query('SELECT * FROM teachers WHERE id = ?', [teacher_id]);
+    const [teacherCheck] = await pool.query('SELECT * FROM teachers WHERE id = ?', [teacher_id]);
     if (teacherCheck.length === 0) {
       return res.status(400).json({ message: 'El profesor no existe' });
     }
     
     // Obtener el email del estudiante para notificación
-    const [studentData] = await db.query(
+    const [studentData] = await pool.query(
       'SELECT contact_email FROM students WHERE id = ?',
       [student_id]
     );
     const studentEmail = studentData[0]?.contact_email;
     
     // Insertar el plan de mejoramiento
-    const [result] = await db.query(
+    const [result] = await pool.query(
       `INSERT INTO improvement_plans 
        (student_id, teacher_id, title, subject, description, activities, deadline, 
         file_url, failed_achievements, passed_achievements, video_urls, resource_links,
@@ -237,13 +307,13 @@ router.put('/improvement-plans/:id', async (req, res) => {
     } = req.body;
     
     // Verificar que el plan existe
-    const [planCheck] = await db.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
+    const [planCheck] = await pool.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
     
     // Actualizar el plan
-    await db.query(
+    await pool.query(
       `UPDATE improvement_plans 
        SET title = ?, subject = ?, description = ?, activities = ?, deadline = ?, 
            file_url = ?, failed_achievements = ?, passed_achievements = ?, 
@@ -270,13 +340,13 @@ router.delete('/improvement-plans/:id', async (req, res) => {
     const { id } = req.params;
     
     // Verificar que el plan existe
-    const [planCheck] = await db.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
+    const [planCheck] = await pool.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
     
     // Eliminar el plan
-    await db.query('DELETE FROM improvement_plans WHERE id = ?', [id]);
+    await pool.query('DELETE FROM improvement_plans WHERE id = ?', [id]);
     
     res.json({ message: 'Plan de mejoramiento eliminado correctamente' });
   } catch (error) {
@@ -289,15 +359,24 @@ router.delete('/improvement-plans/:id', async (req, res) => {
 router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', async (req, res) => {
   try {
     const { studentId, grade, phase } = req.params;
+    console.log(`🔍 Buscando indicadores no alcanzados para estudiante ${studentId}, grado ${grade}, fase ${phase}`);
     
     // Obtener indicadores no alcanzados para este estudiante en esta fase
-    const [indicators] = await db.query(`
+    const [indicators] = await pool.query(`
       SELECT i.id, i.description, i.subject, i.phase, i.grade, i.achieved
       FROM indicators i
       JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
       WHERE ts.student_id = ? AND i.grade = ? AND i.phase = ? AND i.achieved = false
       ORDER BY i.subject
     `, [studentId, grade, phase]);
+    
+    console.log(`✅ Se encontraron ${indicators.length} indicadores no alcanzados`);
+    
+    // Si no hay indicadores, devolver array vacío
+    if (!indicators || indicators.length === 0) {
+      console.log('📝 No hay indicadores no alcanzados disponibles, devolviendo array vacío');
+      return res.json([]);
+    }
     
     res.json(indicators);
   } catch (error) {
@@ -312,7 +391,7 @@ router.get('/improvement-plans/indicators/passed/:studentId/:grade/:phase', asyn
     const { studentId, grade, phase } = req.params;
     
     // Obtener indicadores alcanzados para este estudiante en esta fase
-    const [indicators] = await db.query(`
+    const [indicators] = await pool.query(`
       SELECT i.id, i.description, i.subject, i.phase, i.grade, i.achieved
       FROM indicators i
       JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
@@ -327,23 +406,6 @@ router.get('/improvement-plans/indicators/passed/:studentId/:grade/:phase', asyn
   }
 });
 
-// Obtener plantillas de descripción para planes de mejoramiento
-router.get('/improvement-plans/templates', async (req, res) => {
-  try {
-    const [templates] = await db.query(`
-      SELECT DISTINCT description 
-      FROM improvement_plans 
-      WHERE description IS NOT NULL AND description != ''
-      ORDER BY created_at DESC
-      LIMIT 20
-    `);
-    
-    res.json(templates);
-  } catch (error) {
-    console.error('Error al obtener plantillas de descripción:', error);
-    res.status(500).json({ message: 'Error al obtener plantillas de descripción' });
-  }
-});
 
 // Añadir esta nueva ruta para obtener planes por student_id directamente
 router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
@@ -351,7 +413,7 @@ router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
     const { studentId } = req.params;
     
     // Obtener planes de mejoramiento usando directamente el student_id
-    const [plans] = await db.query(`
+    const [plans] = await pool.query(`
       SELECT ip.*, 
              t.user_id as teacher_user_id,
              ut.name as teacher_name,
@@ -381,7 +443,7 @@ router.get('/improvement-plans/:id/resources', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const [resources] = await db.query(`
+    const [resources] = await pool.query(`
       SELECT * FROM recovery_resources 
       WHERE improvement_plan_id = ? 
       ORDER BY order_index ASC, created_at ASC
@@ -412,12 +474,12 @@ router.post('/improvement-plans/:id/resources', async (req, res) => {
     } = req.body;
     
     // Verificar que el plan existe
-    const [planCheck] = await db.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
+    const [planCheck] = await pool.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
     
-    const [result] = await db.query(`
+    const [result] = await pool.query(`
       INSERT INTO recovery_resources 
       (improvement_plan_id, resource_type, title, description, url, file_path, 
        thumbnail_url, duration_minutes, difficulty_level, order_index, is_required)
@@ -452,7 +514,7 @@ router.put('/resources/:resourceId', async (req, res) => {
       is_required
     } = req.body;
     
-    await db.query(`
+    await pool.query(`
       UPDATE recovery_resources 
       SET resource_type = ?, title = ?, description = ?, url = ?, file_path = ?,
           thumbnail_url = ?, duration_minutes = ?, difficulty_level = ?, 
@@ -473,7 +535,7 @@ router.delete('/resources/:resourceId', async (req, res) => {
   try {
     const { resourceId } = req.params;
     
-    await db.query('DELETE FROM recovery_resources WHERE id = ?', [resourceId]);
+    await pool.query('DELETE FROM recovery_resources WHERE id = ?', [resourceId]);
     
     res.json({ message: 'Recurso eliminado correctamente' });
   } catch (error) {
@@ -488,14 +550,14 @@ router.post('/resources/:resourceId/viewed', async (req, res) => {
     const { resourceId } = req.params;
     const { student_id, completion_percentage } = req.body;
     
-    await db.query(`
+    await pool.query(`
       UPDATE recovery_resources 
       SET viewed = 1, viewed_at = NOW(), completion_percentage = ?
       WHERE id = ?
     `, [completion_percentage || 100, resourceId]);
     
     // Registrar en el progreso
-    await db.query(`
+    await pool.query(`
       INSERT INTO recovery_progress 
       (improvement_plan_id, student_id, resource_id, progress_type, progress_data, score)
       VALUES (
@@ -520,7 +582,7 @@ router.get('/improvement-plans/:id/activities', async (req, res) => {
   try {
     const { id } = req.params;
     
-    const [activities] = await db.query(`
+    const [activities] = await pool.query(`
       SELECT ra.*, 
              i.description as indicator_description,
              q.title as questionnaire_title
@@ -556,12 +618,12 @@ router.post('/improvement-plans/:id/activities', async (req, res) => {
     } = req.body;
     
     // Verificar que el plan existe
-    const [planCheck] = await db.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
+    const [planCheck] = await pool.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
     
-    const [result] = await db.query(`
+    const [result] = await pool.query(`
       INSERT INTO recovery_activities 
       (improvement_plan_id, indicator_id, questionnaire_id, activity_type, title, 
        description, instructions, due_date, max_attempts, passing_score, weight)
@@ -602,7 +664,7 @@ router.put('/activities/:activityId', async (req, res) => {
       student_notes
     } = req.body;
     
-    await db.query(`
+    await pool.query(`
       UPDATE recovery_activities 
       SET indicator_id = ?, questionnaire_id = ?, activity_type = ?, title = ?, 
           description = ?, instructions = ?, due_date = ?, max_attempts = ?, 
@@ -626,7 +688,7 @@ router.delete('/activities/:activityId', async (req, res) => {
   try {
     const { activityId } = req.params;
     
-    await db.query('DELETE FROM recovery_activities WHERE id = ?', [activityId]);
+    await pool.query('DELETE FROM recovery_activities WHERE id = ?', [activityId]);
     
     res.json({ message: 'Actividad eliminada correctamente' });
   } catch (error) {
@@ -642,7 +704,7 @@ router.post('/activities/:activityId/complete', async (req, res) => {
     const { student_id, score, student_notes } = req.body;
     
     // Obtener información de la actividad
-    const [activity] = await db.query(`
+    const [activity] = await pool.query(`
       SELECT ra.*, ip.student_id as plan_student_id
       FROM recovery_activities ra
       JOIN improvement_plans ip ON ra.improvement_plan_id = ip.id
@@ -665,7 +727,7 @@ router.post('/activities/:activityId/complete', async (req, res) => {
     const newStatus = score >= passingScore ? 'completed' : 'failed';
     
     // Actualizar la actividad
-    await db.query(`
+    await pool.query(`
       UPDATE recovery_activities 
       SET status = ?, student_score = ?, attempts_count = attempts_count + 1,
           completed_at = NOW(), student_notes = ?
@@ -673,7 +735,7 @@ router.post('/activities/:activityId/complete', async (req, res) => {
     `, [newStatus, score, student_notes, activityId]);
     
     // Registrar en el progreso
-    await db.query(`
+    await pool.query(`
       INSERT INTO recovery_progress 
       (improvement_plan_id, student_id, activity_id, progress_type, progress_data, score)
       VALUES (?, ?, ?, 'activity_completed', 
@@ -700,7 +762,7 @@ router.get('/improvement-plans/:id/progress/:studentId', async (req, res) => {
   try {
     const { id, studentId } = req.params;
     
-    const [progress] = await db.query(`
+    const [progress] = await pool.query(`
       SELECT rp.*, 
              rr.title as resource_title,
              rr.resource_type,
@@ -714,7 +776,7 @@ router.get('/improvement-plans/:id/progress/:studentId', async (req, res) => {
     `, [id, studentId]);
     
     // Calcular estadísticas
-    const [stats] = await db.query(`
+    const [stats] = await pool.query(`
       SELECT 
         COUNT(DISTINCT rr.id) as total_resources,
         COUNT(DISTINCT CASE WHEN rr.viewed = 1 THEN rr.id END) as viewed_resources,
@@ -734,6 +796,334 @@ router.get('/improvement-plans/:id/progress/:studentId', async (req, res) => {
   } catch (error) {
     console.error('Error al obtener progreso:', error);
     res.status(500).json({ message: 'Error al obtener progreso' });
+  }
+});
+
+// Procesar planes de mejoramiento automáticamente para un estudiante específico
+router.post('/improvement-plans/process-student/:studentId/:questionnaireId', verifyToken, async (req, res) => {
+  try {
+    const { studentId, questionnaireId } = req.params;
+    
+    console.log(`🔄 Procesando planes automáticos para estudiante ${studentId}, cuestionario ${questionnaireId}`);
+    
+    const result = await processAutomaticImprovementPlans(parseInt(studentId), parseInt(questionnaireId));
+    
+    res.json({
+      success: true,
+      message: 'Planes de mejoramiento procesados automáticamente',
+      data: result
+    });
+  } catch (error) {
+    console.error('❌ Error procesando planes automáticos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando planes automáticos',
+      error: error.message
+    });
+  }
+});
+
+// Procesar todos los estudiantes de un cuestionario
+router.post('/improvement-plans/process-questionnaire/:questionnaireId', verifyToken, async (req, res) => {
+  try {
+    const { questionnaireId } = req.params;
+    
+    console.log(`🔄 Procesando todos los estudiantes del cuestionario ${questionnaireId}`);
+    
+    const result = await processQuestionnaireResults(parseInt(questionnaireId));
+    
+    res.json({
+      success: true,
+      message: 'Cuestionario procesado automáticamente',
+      data: result
+    });
+  } catch (error) {
+    console.error('❌ Error procesando cuestionario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando cuestionario',
+      error: error.message
+    });
+  }
+});
+
+// Obtener indicadores automáticamente basados en resultados de evaluación
+router.get('/improvement-plans/auto-indicators/:studentId/:questionnaireId', verifyToken, async (req, res) => {
+  try {
+    const { studentId, questionnaireId } = req.params;
+    
+    console.log(`🔍 Obteniendo indicadores automáticos para estudiante ${studentId}, cuestionario ${questionnaireId}`);
+    
+    // Obtener resultado de evaluación
+    const [evaluationResults] = await pool.query(`
+      SELECT er.*, q.title as questionnaire_title, q.subject, q.grade
+      FROM evaluation_results er
+      JOIN questionnaires q ON er.questionnaire_id = q.id
+      WHERE er.student_id = ? AND er.questionnaire_id = ?
+      ORDER BY er.recorded_at DESC
+      LIMIT 1
+    `, [studentId, questionnaireId]);
+
+    if (!evaluationResults || evaluationResults.length === 0) {
+      return res.json({
+        success: false,
+        message: 'No se encontraron resultados de evaluación',
+        data: { failedIndicators: [], passedIndicators: [] }
+      });
+    }
+
+    const evaluation = evaluationResults[0];
+    const minimumScore = 3.5;
+    const needsImprovement = evaluation.best_score < minimumScore;
+
+    // Obtener indicadores del cuestionario
+    const [indicators] = await pool.query(`
+      SELECT qi.*, i.description, i.subject, i.grade, i.phase
+      FROM questionnaire_indicators qi
+      JOIN indicators i ON qi.indicator_id = i.id
+      WHERE qi.questionnaire_id = ?
+    `, [questionnaireId]);
+
+    // Separar indicadores
+    const failedIndicators = needsImprovement ? indicators : [];
+    const passedIndicators = !needsImprovement ? indicators : [];
+
+    res.json({
+      success: true,
+      message: 'Indicadores obtenidos automáticamente',
+      data: {
+        evaluation: evaluation,
+        needsImprovement: needsImprovement,
+        failedIndicators: failedIndicators,
+        passedIndicators: passedIndicators
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo indicadores automáticos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo indicadores automáticos',
+      error: error.message
+    });
+  }
+});
+
+// =====================================================
+// RUTAS DEL SISTEMA AUTOMÁTICO DE PLANES DE MEJORAMIENTO
+// =====================================================
+
+// Procesar automáticamente todos los resultados de un cuestionario
+router.post('/improvement-plans/process-questionnaire/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const { questionnaireId } = req.params;
+    
+    console.log(`🔄 Procesando automáticamente cuestionario ${questionnaireId}`);
+    
+    const result = await processQuestionnaireResults(parseInt(questionnaireId));
+    
+    res.json({
+      success: true,
+      message: 'Procesamiento automático completado',
+      data: result
+    });
+    
+  } catch (error) {
+    console.error('❌ Error procesando cuestionario automáticamente:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando cuestionario automáticamente',
+      error: error.message
+    });
+  }
+});
+
+// Procesar automáticamente un estudiante específico para un cuestionario
+router.post('/improvement-plans/process-student/:studentId/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const { studentId, questionnaireId } = req.params;
+    
+    console.log(`🔄 Procesando automáticamente estudiante ${studentId} para cuestionario ${questionnaireId}`);
+    
+    const result = await processStudentImprovementPlan(parseInt(studentId), parseInt(questionnaireId));
+    
+    res.json({
+      success: true,
+      message: 'Procesamiento automático del estudiante completado',
+      data: result
+    });
+    
+  } catch (error) {
+    console.error('❌ Error procesando estudiante automáticamente:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error procesando estudiante automáticamente',
+      error: error.message
+    });
+  }
+});
+
+// Obtener estadísticas de planes automáticos
+router.get('/improvement-plans/auto-stats', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    console.log('📊 Obteniendo estadísticas de planes automáticos');
+    
+    // Estadísticas generales
+    const [totalStats] = await pool.query(`
+      SELECT 
+        COUNT(*) as total_plans,
+        COUNT(CASE WHEN activity_status = 'pending' THEN 1 END) as pending_plans,
+        COUNT(CASE WHEN activity_status = 'in_progress' THEN 1 END) as in_progress_plans,
+        COUNT(CASE WHEN activity_status = 'completed' THEN 1 END) as completed_plans,
+        COUNT(CASE WHEN activity_status = 'failed' THEN 1 END) as failed_plans,
+        COUNT(CASE WHEN teacher_notes LIKE '%generado automáticamente%' THEN 1 END) as auto_generated_plans
+      FROM improvement_plans
+    `);
+    
+    // Estadísticas por materia
+    const [subjectStats] = await pool.query(`
+      SELECT 
+        subject,
+        COUNT(*) as total_plans,
+        COUNT(CASE WHEN activity_status = 'completed' THEN 1 END) as completed_plans,
+        AVG(CASE WHEN activity_status = 'completed' THEN 1 ELSE 0 END) * 100 as completion_rate
+      FROM improvement_plans
+      WHERE teacher_notes LIKE '%generado automáticamente%'
+      GROUP BY subject
+      ORDER BY total_plans DESC
+    `);
+    
+    // Estadísticas por grado
+    const [gradeStats] = await pool.query(`
+      SELECT 
+        s.grade,
+        COUNT(*) as total_plans,
+        COUNT(CASE WHEN ip.activity_status = 'completed' THEN 1 END) as completed_plans,
+        AVG(CASE WHEN ip.activity_status = 'completed' THEN 1 ELSE 0 END) * 100 as completion_rate
+      FROM improvement_plans ip
+      JOIN students s ON ip.student_id = s.id
+      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
+      GROUP BY s.grade
+      ORDER BY s.grade
+    `);
+    
+    // Planes recientes
+    const [recentPlans] = await pool.query(`
+      SELECT 
+        ip.id,
+        ip.title,
+        ip.subject,
+        ip.activity_status,
+        ip.created_at,
+        us.name as student_name,
+        s.grade,
+        ut.name as teacher_name
+      FROM improvement_plans ip
+      JOIN students s ON ip.student_id = s.id
+      JOIN users us ON s.user_id = us.id
+      JOIN teachers t ON ip.teacher_id = t.id
+      JOIN users ut ON t.user_id = ut.id
+      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
+      ORDER BY ip.created_at DESC
+      LIMIT 10
+    `);
+    
+    res.json({
+      success: true,
+      message: 'Estadísticas obtenidas correctamente',
+      data: {
+        general: totalStats[0],
+        by_subject: subjectStats,
+        by_grade: gradeStats,
+        recent_plans: recentPlans
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estadísticas',
+      error: error.message
+    });
+  }
+});
+
+// Obtener vista de planes automáticos
+router.get('/improvement-plans/auto-view', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    console.log('👁️ Obteniendo vista de planes automáticos');
+    
+    const [autoPlans] = await pool.query(`
+      SELECT 
+        ip.id as plan_id,
+        ip.title,
+        ip.subject,
+        ip.activity_status,
+        ip.created_at,
+        ip.deadline,
+        us.name as student_name,
+        s.grade,
+        s.contact_email,
+        ut.name as teacher_name,
+        q.title as questionnaire_title,
+        q.id as questionnaire_id,
+        er.best_score as student_score,
+        CASE 
+          WHEN ip.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 'RECIENTE'
+          WHEN ip.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 'ACTIVO'
+          ELSE 'ANTIGUO'
+        END as plan_age,
+        DATEDIFF(ip.deadline, NOW()) as days_remaining
+      FROM improvement_plans ip
+      JOIN students s ON ip.student_id = s.id
+      JOIN users us ON s.user_id = us.id
+      JOIN teachers t ON ip.teacher_id = t.id
+      JOIN users ut ON t.user_id = ut.id
+      LEFT JOIN questionnaires q ON ip.title LIKE CONCAT('%', q.title, '%')
+      LEFT JOIN evaluation_results er ON er.student_id = s.id AND er.questionnaire_id = q.id
+      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
+      ORDER BY ip.created_at DESC
+    `);
+    
+    res.json({
+      success: true,
+      message: 'Vista de planes automáticos obtenida',
+      data: autoPlans
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo vista de planes automáticos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo vista de planes automáticos',
+      error: error.message
+    });
+  }
+});
+
+// Ejecutar procedimiento almacenado para procesar cuestionario
+router.post('/improvement-plans/execute-procedure/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const { questionnaireId } = req.params;
+    
+    console.log(`⚙️ Ejecutando procedimiento almacenado para cuestionario ${questionnaireId}`);
+    
+    const [result] = await pool.query('CALL sp_process_questionnaire_improvement_plans(?)', [questionnaireId]);
+    
+    res.json({
+      success: true,
+      message: 'Procedimiento ejecutado correctamente',
+      data: result[0]
+    });
+    
+  } catch (error) {
+    console.error('❌ Error ejecutando procedimiento:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error ejecutando procedimiento almacenado',
+      error: error.message
+    });
   }
 });
 

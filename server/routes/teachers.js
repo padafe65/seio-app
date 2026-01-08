@@ -300,4 +300,105 @@ router.get('/list/all', async (req, res) => {
   }
 });
 
+// Obtener información de un profesor por su user_id
+router.get('/by-user/:userId', verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el ID de usuario'
+      });
+    }
+
+    console.log(`🔍 Buscando profesor con user_id: ${userId}`);
+    
+    // Buscar el profesor por user_id incluyendo la información del usuario
+    const [teachers] = await pool.query(
+      `SELECT t.*, u.name, u.email, u.phone, u.role 
+       FROM teachers t 
+       JOIN users u ON t.user_id = u.id 
+       WHERE t.user_id = ?`,
+      [userId]
+    );
+
+    if (!teachers || teachers.length === 0) {
+      console.log(`❌ No se encontró profesor con user_id: ${userId}`);
+      return res.status(404).json({
+        success: false,
+        message: 'No se encontró el profesor con el ID de usuario proporcionado'
+      });
+    }
+
+    const teacher = teachers[0];
+    console.log(`✅ Profesor encontrado:`, { id: teacher.id, name: teacher.name });
+
+    // Obtener los cursos asignados al profesor
+    const [courses] = await pool.query(
+      `SELECT c.* 
+       FROM teacher_courses tc
+       JOIN courses c ON tc.course_id = c.id
+       WHERE tc.teacher_id = ?`,
+      [teacher.id]
+    );
+
+    // Obtener los estudiantes asignados al profesor
+    const [students] = await pool.query(
+      `SELECT s.*, u.name, u.email, u.phone, c.name as course_name
+       FROM teacher_students ts
+       JOIN students s ON ts.student_id = s.id
+       JOIN users u ON s.user_id = u.id
+       LEFT JOIN courses c ON s.course_id = c.id
+       WHERE ts.teacher_id = ?`,
+      [teacher.id]
+    );
+
+    // Obtener los cuestionarios creados por el profesor
+    const [questionnaires] = await pool.query(
+      `SELECT * FROM questionnaires WHERE created_by = ?`,
+      [teacher.id]
+    );
+
+    // Obtener los indicadores creados por el profesor
+    const [indicators] = await pool.query(
+      `SELECT * FROM indicators WHERE teacher_id = ?`,
+      [teacher.id]
+    );
+
+    // Estructurar la respuesta
+    const teacherData = {
+      id: teacher.id,
+      user_id: teacher.user_id,
+      subject: teacher.subject,
+      institution: teacher.institution,
+      user: {
+        id: teacher.user_id,
+        name: teacher.name,
+        email: teacher.email,
+        phone: teacher.phone,
+        role: teacher.role
+      },
+      courses: courses || [],
+      students: students || [],
+      questionnaires: questionnaires || [],
+      indicators: indicators || []
+    };
+
+    // Asegurarse de que la respuesta tenga el formato esperado
+    res.status(200).json({
+      success: true,
+      data: teacherData
+    });
+
+  } catch (error) {
+    console.error('❌ Error en getTeacherByUserId:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error del servidor al obtener información del profesor',
+      error: error.message
+    });
+  }
+});
+
 export default router;
