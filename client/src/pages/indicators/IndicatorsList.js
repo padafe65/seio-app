@@ -159,14 +159,22 @@ const IndicatorsList = () => {
             data: response.data ? `Recibidos ${Array.isArray(response.data) ? response.data.length : 'datos'}` : 'Sin datos'
           });
           
-          if (!Array.isArray(response.data)) {
-            console.error('❌ La respuesta no es un array:', response.data);
+          // El backend puede devolver un array directamente o un objeto {success: true, count: N, data: Array}
+          let indicatorsArray = [];
+          if (Array.isArray(response.data)) {
+            indicatorsArray = response.data;
+          } else if (response.data?.success && Array.isArray(response.data.data)) {
+            indicatorsArray = response.data.data;
+          } else if (response.data?.data && Array.isArray(response.data.data)) {
+            indicatorsArray = response.data.data;
+          } else {
+            console.error('❌ La respuesta no tiene el formato esperado:', response.data);
             throw new Error('Formato de respuesta inesperado');
           }
           
-          console.log(`📊 Total de indicadores cargados: ${response.data.length}`);
-          setIndicators(response.data);
-          setFilteredIndicators(response.data);
+          console.log(`📊 Total de indicadores cargados: ${indicatorsArray.length}`);
+          setIndicators(indicatorsArray);
+          setFilteredIndicators(indicatorsArray);
         }
         
       } catch (error) {

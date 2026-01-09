@@ -977,36 +977,61 @@ router.get('/:id/students', verifyToken, async (req, res) => {
     const userId = req.user.id; // ID del usuario autenticado
 
     console.log(`🔍 Obteniendo estudiantes para el indicador ${indicatorId}`);
+    console.log(`👤 Usuario: ${userId}, Rol: ${req.user.role}`);
 
-    // 1. Obtener el ID del profesor
-    const [teacher] = await connection.query(
-      'SELECT id FROM teachers WHERE user_id = ?',
-      [userId]
-    );
-
-    if (teacher.length === 0) {
-      return res.status(403).json({
-        success: false,
-        message: 'Acceso denegado: no eres un profesor'
-      });
-    }
-
-    const teacherId = teacher[0].id;
-
-    // 2. Verificar que el indicador pertenece al profesor
-    const [indicator] = await connection.query(
-      'SELECT id, teacher_id FROM indicators WHERE id = ?',
+    // 1. Obtener el indicador para verificar su teacher_id
+    const [indicatorRows] = await connection.query(
+      'SELECT id, teacher_id, grade FROM indicators WHERE id = ?',
       [indicatorId]
     );
 
-    if (indicator.length === 0) {
+    if (indicatorRows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Indicador no encontrado'
       });
     }
 
-    if (indicator[0].teacher_id !== teacherId && req.user.role !== 'super_administrador') {
+    const indicatorTeacherId = indicatorRows[0].teacher_id;
+    const indicatorGrade = indicatorRows[0].grade;
+
+    // 2. Verificar permisos
+    let hasPermission = false;
+    let finalTeacherId = indicatorTeacherId;
+
+    if (req.user.role === 'super_administrador') {
+      // Super administrador puede ver cualquier indicador
+      hasPermission = true;
+      console.log('👑 Super administrador: usando teacher_id del indicador:', indicatorTeacherId);
+      finalTeacherId = indicatorTeacherId;
+    } else {
+      // Para otros usuarios, verificar que sean el propietario
+      const [teacher] = await connection.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+
+      if (teacher.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Acceso denegado: no eres un profesor'
+        });
+      }
+
+      const userTeacherId = teacher[0].id;
+
+      if (indicatorTeacherId === userTeacherId) {
+        hasPermission = true;
+        finalTeacherId = userTeacherId;
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para ver este indicador'
+        });
+      }
+    }
+
+    if (!hasPermission) {
       return res.status(403).json({
         success: false,
         message: 'No tienes permiso para ver este indicador'
@@ -1015,33 +1040,68 @@ router.get('/:id/students', verifyToken, async (req, res) => {
 
     // 3. Obtener estudiantes con información detallada del indicador
     console.log('🔍 Obteniendo estudiantes para el indicador:', indicatorId);
-    console.log('👨‍🏫 ID del profesor:', teacherId);
+    console.log('👨‍🏫 ID del profesor:', finalTeacherId);
     
-    const [students] = await connection.query(`
-      SELECT 
-        s.id,
-        s.user_id,
-        u.name as name,
-        s.grade,
-        u.email,
-        si.achieved,
-        si.assigned_at,
-        si.indicator_id,
-        si.assigned_at as indicator_created_at,
-        CASE WHEN si.id IS NOT NULL THEN 1 ELSE 0 END as has_indicator
-      FROM students s
-      INNER JOIN users u ON s.user_id = u.id
-      INNER JOIN teacher_students ts ON s.id = ts.student_id
-      LEFT JOIN (
-        SELECT si.* 
-        FROM student_indicators si
-        INNER JOIN indicators i ON si.indicator_id = i.id
-        WHERE si.indicator_id = ? AND i.teacher_id = ?
-      ) si ON s.id = si.student_id
-      WHERE ts.teacher_id = ? 
-        AND u.estado = 'activo'
-      ORDER BY u.name
-    `, [indicatorId, teacherId, teacherId]);
+    // Para super_administrador, obtener todos los estudiantes del grado del indicador
+    // Para docentes, obtener solo sus estudiantes
+    let students;
+    
+    if (req.user.role === 'super_administrador') {
+      // Super administrador: obtener TODOS los estudiantes del grado (activos e inactivos) para ver su estado
+      console.log('👑 Super administrador: obteniendo todos los estudiantes del grado', indicatorGrade, '(incluyendo inactivos)');
+      [students] = await connection.query(`
+        SELECT DISTINCT
+          s.id,
+          s.user_id,
+          u.name as name,
+          s.grade,
+          u.email,
+          u.estado as user_estado,
+          MAX(si.achieved) as achieved,
+          MAX(si.assigned_at) as assigned_at,
+          MAX(si.indicator_id) as indicator_id,
+          MAX(si.assigned_at) as indicator_created_at,
+          CASE WHEN MAX(si.id) IS NOT NULL THEN 1 ELSE 0 END as has_indicator
+        FROM students s
+        INNER JOIN users u ON s.user_id = u.id
+        LEFT JOIN (
+          SELECT si.* 
+          FROM student_indicators si
+          WHERE si.indicator_id = ?
+        ) si ON s.id = si.student_id
+        WHERE s.grade = ?
+        GROUP BY s.id, s.user_id, u.name, s.grade, u.email, u.estado
+        ORDER BY u.name
+      `, [indicatorId, indicatorGrade]);
+    } else {
+      // Docente: obtener solo sus estudiantes del grado del indicador
+      [students] = await connection.query(`
+        SELECT DISTINCT
+          s.id,
+          s.user_id,
+          u.name as name,
+          s.grade,
+          u.email,
+          MAX(si.achieved) as achieved,
+          MAX(si.assigned_at) as assigned_at,
+          MAX(si.indicator_id) as indicator_id,
+          MAX(si.assigned_at) as indicator_created_at,
+          CASE WHEN MAX(si.id) IS NOT NULL THEN 1 ELSE 0 END as has_indicator
+        FROM students s
+        INNER JOIN users u ON s.user_id = u.id
+        INNER JOIN teacher_students ts ON s.id = ts.student_id
+        LEFT JOIN (
+          SELECT si.* 
+          FROM student_indicators si
+          WHERE si.indicator_id = ?
+        ) si ON s.id = si.student_id
+        WHERE ts.teacher_id = ? 
+          AND s.grade = ?
+          AND (u.estado = 'activo' OR u.estado = 1)
+        GROUP BY s.id, s.user_id, u.name, s.grade, u.email
+        ORDER BY u.name
+      `, [indicatorId, finalTeacherId, indicatorGrade]);
+    }
     
     console.log('📊 Estudiantes encontrados:', students.length);
     if (students.length > 0) {

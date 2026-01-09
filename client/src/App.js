@@ -8,10 +8,13 @@ import Login from './pages/Login.js';
 import Registro from './pages/Registro.js';
 import Admin from './pages/Admin.js';
 import './styles/styles.css';
+import './styles/responsive.css';
+import { useWindowSize } from './hooks/useWindowSize';
 import ResetPassword from './pages/ResetPassword.js';
 import CompleteStudent from './components/CompleteStudent.js';
 import CompleteTeacher from './components/CompleteTeacher.js';
 import Dashboard from './pages/Dashboard.js';
+import SuperAdminDashboard from './pages/SuperAdminDashboard.js';
 import CreateQuestionPage from './pages/CreateQuestionPage.js';
 import StudentDashboardPage from './pages/StudentDashboardPage.js';
 import TakeQuizPage from './pages/TakeQuizPage.js';
@@ -26,7 +29,8 @@ import Swal from 'sweetalert2';
 // Importar iconos de Lucide React
 import { 
   Home, Users, FileText, BarChart2, 
-  PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen 
+  PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen,
+  Shield, UserPlus, Database, Activity
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -48,6 +52,8 @@ import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDeta
 import ImprovementPlanDetailEnhanced from './pages/improvement-plans/ImprovementPlanDetailEnhanced.js';
 import TeacherCoursesManager from './pages/courses/TeacherCoursesManager';
 import AutomaticImprovementPlansManager from './components/AutomaticImprovementPlansManager.js';
+import UsersManagement from './pages/users/UsersManagement.js';
+import UserForm from './pages/users/UserForm.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -187,20 +193,27 @@ function AppContent() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
     const handleShow = () => setShow(true);
+    const windowSize = useWindowSize();
+    
+    // Cerrar offcanvas cuando cambia a desktop
+    useEffect(() => {
+      if (windowSize.width >= 768 && show) {
+        setShow(false);
+      }
+    }, [windowSize.width, show]);
     
     return (
       <div>
         {/* Botón para mostrar sidebar en móviles */}
         <button 
-          className="btn btn-dark d-md-none position-fixed" 
-          style={{ top: '70px', left: '10px', zIndex: 1030 }} 
+          className="btn btn-dark d-md-none menu-mobile-button" 
           onClick={handleShow}
         >
           <Menu size={20} />
         </button>
         
         {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
+        <div className="d-none d-md-block sidebar sidebar-fixed bg-dark text-white">
           <div className="p-3">
             <h5 className="mb-3">Panel de Control</h5>
             <ul className="nav flex-column">
@@ -323,12 +336,7 @@ function AppContent() {
         </Offcanvas>
         
         {/* Contenido principal */}
-        <div style={{ 
-          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
-          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
-          padding: '20px', 
-          marginTop: '56px' 
-        }}>
+        <div className="main-content-responsive">
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
@@ -383,25 +391,244 @@ function AppContent() {
     );
   }
 
-  // Componente Layout para rutas de estudiante
-  function StudentDashboardLayout() {
+  // Componente Layout para rutas de super_administrador
+  function SuperAdminDashboardLayout() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
     const handleShow = () => setShow(true);
+    const windowSize = useWindowSize();
+    
+    // Cerrar offcanvas cuando cambia a desktop
+    useEffect(() => {
+      if (windowSize.width >= 768 && show) {
+        setShow(false);
+      }
+    }, [windowSize.width, show]);
     
     return (
       <div>
         {/* Botón para mostrar sidebar en móviles */}
         <button 
-          className="btn btn-dark d-md-none position-fixed" 
-          style={{ top: '70px', left: '10px', zIndex: 1030 }} 
+          className="btn btn-dark d-md-none menu-mobile-button" 
           onClick={handleShow}
         >
           <Menu size={20} />
         </button>
         
         {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
+        <div className="d-none d-md-block sidebar sidebar-fixed bg-dark text-white">
+          <div className="p-3">
+            <h5 className="mb-3">👑 Panel Super Admin</h5>
+            <ul className="nav flex-column">
+              <li className="nav-item mb-2">
+                <Link to="/dashboard" className="nav-link text-white d-flex align-items-center">
+                  <Home size={18} className="me-2" /> Dashboard
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/admin/users" className="nav-link text-warning d-flex align-items-center">
+                  <Shield size={18} className="me-2" /> Usuarios
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/estudiantes" className="nav-link text-white d-flex align-items-center">
+                  <Users size={18} className="me-2" /> Estudiantes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/cuestionarios" className="nav-link text-white d-flex align-items-center">
+                  <FileText size={18} className="me-2" /> Cuestionarios
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/indicadores" className="nav-link text-white d-flex align-items-center">
+                  <CheckSquare size={18} className="me-2" /> Indicadores
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/resultados" className="nav-link text-white d-flex align-items-center">
+                  <BarChart2 size={18} className="me-2" /> Resultados
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center">
+                  <Award size={18} className="me-2" /> Planes de Mejoramiento
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/planes-automaticos" className="nav-link text-white d-flex align-items-center">
+                  <Settings size={18} className="me-2" /> Sistema Automático
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/evaluacion-fase" className="nav-link text-white d-flex align-items-center">
+                  <CheckSquare size={18} className="me-2" /> Evaluación de Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center">
+                  <BookOpen size={18} className="me-2" /> Cursos
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
+                  <PlusCircle size={18} className="me-2" /> Crear Pregunta
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/materias-categorias" className="nav-link bg-success text-white d-flex align-items-center">
+                  <Database size={18} className="me-2" /> Materias/Categorías
+                </Link>
+              </li>
+            </ul>
+          </div>
+        </div>
+        
+        {/* Offcanvas para móviles */}
+        <Offcanvas show={show} onHide={handleClose} className="bg-dark text-white">
+          <Offcanvas.Header closeButton className="border-bottom">
+            <Offcanvas.Title>👑 Panel Super Admin</Offcanvas.Title>
+          </Offcanvas.Header>
+          <Offcanvas.Body>
+            <ul className="nav flex-column">
+              <li className="nav-item mb-2">
+                <Link to="/dashboard" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Home size={18} className="me-2" /> Dashboard
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/admin/users" className="nav-link text-warning d-flex align-items-center" onClick={handleClose}>
+                  <Shield size={18} className="me-2" /> Usuarios
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/estudiantes" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Users size={18} className="me-2" /> Estudiantes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/cuestionarios" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <FileText size={18} className="me-2" /> Cuestionarios
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/indicadores" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <CheckSquare size={18} className="me-2" /> Indicadores
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <BarChart2 size={18} className="me-2" /> Resultados
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Award size={18} className="me-2" /> Planes de Mejoramiento
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/planes-automaticos" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Settings size={18} className="me-2" /> Sistema Automático
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/evaluacion-fase" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <CheckSquare size={18} className="me-2" /> Evaluación de Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <BookOpen size={18} className="me-2" /> Cursos
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center" onClick={handleClose}>
+                  <PlusCircle size={18} className="me-2" /> Crear Pregunta
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/materias-categorias" className="nav-link bg-success text-white d-flex align-items-center" onClick={handleClose}>
+                  <Database size={18} className="me-2" /> Materias/Categorías
+                </Link>
+              </li>
+            </ul>
+          </Offcanvas.Body>
+        </Offcanvas>
+        
+        {/* Contenido principal */}
+        <div className="main-content-responsive">
+          <Routes>
+            <Route path="/dashboard" element={<SuperAdminDashboard />} />
+            <Route path="/admin/users" element={<UsersManagement />} />
+            <Route path="/admin/users/new" element={<UserForm />} />
+            <Route path="/admin/users/:id/edit" element={<UserForm />} />
+            <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
+            <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
+            <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
+            
+            {/* Rutas para estudiantes - Orden importante: más específicas primero */}
+            <Route path="/estudiantes" element={<StudentsList />} />
+            <Route path="/estudiantes/nuevo" element={<StudentForm />} />
+            <Route path="/estudiantes/:id/editar" element={<StudentForm />} />
+            <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
+            <Route path="/estudiantes/:id" element={<StudentDetail />} />
+            
+            {/* Rutas para indicadores */}
+            <Route path="/indicadores" element={<IndicatorsList />} />
+            <Route path="/indicadores/nuevo" element={<IndicatorForm />} />
+            <Route path="/indicadores/:id/editar" element={<IndicatorForm />} />
+            
+            {/* Rutas para resultados */}
+            <Route path="/resultados" element={<ResultsList />} />
+            <Route path="/resultados/:id" element={<ResultDetail />} />
+            
+            {/* Rutas para planes de mejoramiento */}
+            <Route path="/planes-mejoramiento" element={<ImprovementPlansList />} />
+            <Route path="/planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
+            <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
+            <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
+            <Route path="/planes-mejoramiento/:id/detalle" element={<ImprovementPlanDetailEnhanced />} />
+            <Route path="/planes-automaticos" element={<AutomaticImprovementPlansManager />} />
+            <Route path="/mis-cursos" element={<TeacherCoursesManager />} />
+            <Route path="/evaluacion-fase" element={<PhaseEvaluation />} />
+            
+            {/* Rutas para cuestionarios */}
+            <Route path="/cuestionarios" element={<QuestionnairesList />} />
+            <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
+            <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
+            <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
+          </Routes>
+        </div>
+      </div>
+    );
+  }
+
+  // Componente Layout para rutas de estudiante
+  function StudentDashboardLayout() {
+    const [show, setShow] = useState(false);
+    const handleClose = () => setShow(false);
+    const handleShow = () => setShow(true);
+    const windowSize = useWindowSize();
+    
+    // Cerrar offcanvas cuando cambia a desktop
+    useEffect(() => {
+      if (windowSize.width >= 768 && show) {
+        setShow(false);
+      }
+    }, [windowSize.width, show]);
+    
+    return (
+      <div>
+        {/* Botón para mostrar sidebar en móviles */}
+        <button 
+          className="btn btn-dark d-md-none menu-mobile-button" 
+          onClick={handleShow}
+        >
+          <Menu size={20} />
+        </button>
+        
+        {/* Sidebar para pantallas medianas y grandes */}
+        <div className="d-none d-md-block sidebar sidebar-fixed bg-dark text-white">
           <div className="p-3">
             <h5 className="mb-3">Panel de Estudiante</h5>
             <ul className="nav flex-column">
@@ -471,12 +698,7 @@ function AppContent() {
         </Offcanvas>
         
         {/* Contenido principal */}
-        <div style={{ 
-          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
-          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
-          padding: '20px', 
-          marginTop: '56px' 
-        }}>
+        <div className="main-content-responsive">
           <Routes>
             <Route path="/dashboard" element={<StudentDashboardPage />} />
             <Route path="/take-quiz" element={<TakeQuizPage />} />
@@ -504,10 +726,11 @@ function AppContent() {
         {/* Rutas de admin */}
         <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         
-        {/* Rutas de docente con sidebar */}
+        {/* Rutas de super_administrador con sidebar */}
         <Route path="/*" element={
           <ProtectedRoute>
-            {user && user.role === 'docente' ? <TeacherDashboardLayout /> : null}
+            {user && user.role === 'super_administrador' ? <SuperAdminDashboardLayout /> : 
+             user && user.role === 'docente' ? <TeacherDashboardLayout /> : null}
           </ProtectedRoute>
         } />
         

@@ -120,7 +120,7 @@ const MisEstudiantes = () => {
                           <Link to={`/estudiantes/${student.id}`} className="btn btn-sm btn-outline-info">
                             <Eye size={16} />
                           </Link>
-                          <Link to={`/estudiantes/editar/${student.id}`} className="btn btn-sm btn-outline-primary">
+                          <Link to={`/estudiantes/${student.id}/editar`} className="btn btn-sm btn-outline-primary">
                             <Edit size={16} />
                           </Link>
                           <button 

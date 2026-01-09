@@ -2,13 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
-import api from '../../config/axios';
+import axiosClient from '../../api/axiosClient';
 import StudentGradesEditor from '../../components/StudentGradesEditor';
 
 const StudentForm = ({ isViewMode = false }) => {
+  console.log('🚀 [StudentForm] Componente montado/actualizado');
   const { id } = useParams();
+  console.log('📝 [StudentForm] Parámetro id de la URL:', id);
   const navigate = useNavigate();
-  const { user } = useAuth(); // Se mantiene por si se necesita en el futuro
+  const { user, isAuthReady } = useAuth();
+  console.log('👤 [StudentForm] Estado de autenticación:', { 
+    user: user ? { id: user.id, role: user.role } : null, 
+    isAuthReady 
+  });
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState([]);
   const [teachers, setTeachers] = useState([]);
@@ -25,21 +31,44 @@ const StudentForm = ({ isViewMode = false }) => {
     teacher_id: ''
   });
 
-  // Configuración para las peticiones HTTP
-  const getAuthConfig = () => {
-    const token = localStorage.getItem('authToken');
-    return {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    };
-  };
-
   useEffect(() => {
+    console.log('🔄 [StudentForm] useEffect ejecutado', { isAuthReady, user: user?.role, id });
+    
+    // Si isAuthReady es false por más de 5 segundos, mostrar un mensaje
+    const authTimeout = setTimeout(() => {
+      if (!isAuthReady) {
+        console.error('❌ [StudentForm] Timeout esperando autenticación');
+        setLoading(false);
+      }
+    }, 5000);
+    
+    // Esperar a que la autenticación esté lista
+    if (!isAuthReady) {
+      console.log('⏳ [StudentForm] Esperando autenticación...');
+      return () => clearTimeout(authTimeout);
+    }
+    
+    clearTimeout(authTimeout);
+    
+    // Si no hay usuario después de que la autenticación esté lista, redirigir
+    if (!user) {
+      console.log('❌ [StudentForm] No hay usuario, redirigiendo...');
+      navigate('/');
+      return;
+    }
+    
+    // Verificar permisos: solo admin, super_administrador o docente pueden acceder
+    if (!['admin', 'super_administrador', 'docente'].includes(user.role)) {
+      console.log('❌ [StudentForm] Usuario sin permisos, redirigiendo...', user.role);
+      navigate('/dashboard');
+      return;
+    }
+    
+    console.log('✅ [StudentForm] Permisos verificados, iniciando carga de datos...');
+
     const fetchCourses = async () => {
       try {
-        const response = await api.get('/api/courses', getAuthConfig());
+        const response = await axiosClient.get('/courses');
         setCourses(Array.isArray(response.data) ? response.data : []);
       } catch (error) {
         console.error('Error al cargar cursos:', error);
@@ -55,24 +84,13 @@ const StudentForm = ({ isViewMode = false }) => {
       console.log('🔍 Iniciando fetchTeachers...');
       
       try {
-        // Verificar el token
-        const token = localStorage.getItem('authToken');
-        if (!token) {
-          const error = new Error('No se encontró el token de autenticación. Por favor, inicie sesión nuevamente.');
-          error.code = 'MISSING_TOKEN';
-          throw error;
-        }
-        
-        // Obtener la configuración de autenticación
-        const config = getAuthConfig();
-        
         // Realizar la petición para obtener la lista de docentes
-        console.log('🌐 Solicitando lista de docentes a /api/teachers');
+        console.log('🌐 Solicitando lista de docentes a /teachers');
         
         let response;
         try {
-          response = await api.get('/api/teachers', config);
-          console.log('✅ Petición a /api/teachers exitosa');
+          response = await axiosClient.get('/teachers');
+          console.log('✅ Petición a /teachers exitosa');
         } catch (error) {
           // Manejar errores de red o de la API
           console.error('❌ Error en la petición a /api/teachers:', {
@@ -139,7 +157,7 @@ const StudentForm = ({ isViewMode = false }) => {
           if (!currentTeacher) {
             console.log('Docente no encontrado en la lista, buscando individualmente...');
             try {
-              const teacherResponse = await api.get(`/api/teachers/${currentTeacherId}`, getAuthConfig());
+              const teacherResponse = await axiosClient.get(`/teachers/${currentTeacherId}`);
               currentTeacher = teacherResponse.data?.data || teacherResponse.data;
               
               if (currentTeacher) {
@@ -204,18 +222,22 @@ const StudentForm = ({ isViewMode = false }) => {
     };
 
     const fetchStudentData = async () => {
-      if (!id) return;
+      if (!id) {
+        console.log('⚠️ [StudentForm] No hay ID de estudiante');
+        return;
+      }
       
       try {
-        console.log('🔍 Obteniendo datos del estudiante con ID:', id);
+        console.log('🔍 [fetchStudentData] Obteniendo datos del estudiante con ID:', id);
         
         // 1. Obtener los datos del estudiante
         let studentData;
         try {
-          console.log(`🌐 Solicitando datos del estudiante con ID: ${id}`);
-          const studentResponse = await api.get(`/api/students/${id}`, getAuthConfig());
+          console.log(`🌐 [fetchStudentData] Solicitando datos del estudiante con ID: ${id}`);
+          const studentResponse = await axiosClient.get(`/students/${id}`);
+          console.log('📦 [fetchStudentData] Respuesta recibida:', studentResponse);
           studentData = studentResponse.data?.data || studentResponse.data;
-          console.log('✅ Datos del estudiante obtenidos:', studentData);
+          console.log('✅ [fetchStudentData] Datos del estudiante obtenidos:', studentData);
           
           if (!studentData) {
             throw new Error('No se encontraron datos del estudiante');
@@ -308,33 +330,39 @@ const StudentForm = ({ isViewMode = false }) => {
 
     const loadData = async () => {
       try {
+        console.log('🔄 [StudentForm] Iniciando carga de datos...', { id });
         setLoading(true);
         
         // 1. Cargar cursos
+        console.log('📚 [StudentForm] Cargando cursos...');
         await fetchCourses();
         
         // 2. Si hay un ID, cargar datos del estudiante
         if (id) {
+          console.log('👤 [StudentForm] Cargando datos del estudiante ID:', id);
           await fetchStudentData();
         } else {
+          console.log('➕ [StudentForm] Nuevo estudiante, cargando docentes...');
           // Si es un nuevo estudiante, solo cargar la lista de docentes
           await fetchTeachers();
         }
         
+        console.log('✅ [StudentForm] Datos cargados correctamente');
       } catch (error) {
-        console.error('Error al cargar datos:', error);
+        console.error('❌ [StudentForm] Error al cargar datos:', error);
         Swal.fire({
           icon: 'error',
           title: 'Error',
           text: error.message || 'No se pudieron cargar los datos. Por favor, intente nuevamente.'
         });
       } finally {
+        console.log('🏁 [StudentForm] Finalizando carga, estableciendo loading = false');
         setLoading(false);
       }
     };
 
     loadData();
-  }, [id]);
+  }, [id, user, isAuthReady, navigate]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -375,7 +403,7 @@ const StudentForm = ({ isViewMode = false }) => {
 
       if (!id) {
         // CREAR: Enviar todos los datos a la ruta de creación de estudiantes
-        const response = await api.post('/api/students', studentData, getAuthConfig());
+        const response = await axiosClient.post('/students', studentData);
         console.log("Respuesta de creación:", response.data);
 
         Swal.fire({
@@ -389,7 +417,7 @@ const StudentForm = ({ isViewMode = false }) => {
         navigate('/estudiantes');
       } else {
         // ACTUALIZAR: Usar PATCH para enviar solo los campos modificados
-        const response = await api.patch(`/api/students/${id}`, studentData, getAuthConfig());
+        const response = await axiosClient.patch(`/students/${id}`, studentData);
         console.log("Respuesta de actualización:", response.data);
 
         Swal.fire({
@@ -399,9 +427,13 @@ const StudentForm = ({ isViewMode = false }) => {
           showConfirmButton: false,
           timer: 1500
         }).then(() => {
-          // Redirigir a 'mis-estudiantes' si el usuario es un docente
-          // o a 'estudiantes' si es administrador
-          const redirectPath = user?.role === 'docente' ? '/mis-estudiantes' : '/estudiantes';
+          // Redirigir según el rol del usuario
+          let redirectPath = '/estudiantes';
+          if (user?.role === 'docente') {
+            redirectPath = '/mis-estudiantes';
+          } else if (user?.role === 'super_administrador' || user?.role === 'admin') {
+            redirectPath = '/estudiantes';
+          }
           navigate(redirectPath);
         });
       }
@@ -444,17 +476,27 @@ const StudentForm = ({ isViewMode = false }) => {
     }
   };
 
-
+  console.log('🎨 [StudentForm] Renderizando componente', { 
+    loading, 
+    hasFormData: !!formData.name,
+    id,
+    user: user ? { id: user.id, role: user.role } : null,
+    isAuthReady 
+  });
 
   if (loading) {
+    console.log('⏳ [StudentForm] Mostrando spinner de carga...');
     return (
-      <div className="d-flex justify-content-center my-5">
+      <div className="d-flex flex-column justify-content-center align-items-center my-5">
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Cargando...</span>
         </div>
+        <p className="mt-3 text-muted">Cargando datos del estudiante...</p>
       </div>
     );
   }
+
+  console.log('✅ [StudentForm] Renderizando formulario completo');
 
   return (
     <div className="container my-4">
@@ -683,7 +725,7 @@ const StudentForm = ({ isViewMode = false }) => {
                 <button 
                   type="button" 
                   className="btn btn-primary"
-                  onClick={() => navigate(`/estudiantes/editar/${id}`)}
+                  onClick={() => navigate(`/estudiantes/${id}/editar`)}
                 >
                   Editar
                 </button>

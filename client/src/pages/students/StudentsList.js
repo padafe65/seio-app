@@ -35,10 +35,10 @@ import {
   Snackbar
 } from '@mui/material';
 import { useAuth } from '../../context/AuthContext';
-import api from '../../config/axios';
+import axiosClient from '../../api/axiosClient';
 
 const StudentsList = () => {
-  const { user } = useAuth();
+  const { user, isAuthReady } = useAuth();
   const navigate = useNavigate();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -53,35 +53,52 @@ const StudentsList = () => {
   const fetchStudents = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/api/students');
-      setStudents(response.data);
+      setError(null);
+      const response = await axiosClient.get('/students');
+      // El endpoint puede devolver {success: true, data: [...]} o directamente un array
+      const studentsData = response.data?.data || response.data || [];
+      setStudents(Array.isArray(studentsData) ? studentsData : []);
     } catch (error) {
       console.error('Error al cargar estudiantes:', error);
-      setError('No se pudieron cargar los estudiantes. Por favor, intente de nuevo.');
-      showSnackbar('Error al cargar estudiantes', 'error');
+      const errorMessage = error.response?.data?.message || 'No se pudieron cargar los estudiantes. Por favor, intente de nuevo.';
+      setError(errorMessage);
+      showSnackbar(errorMessage, 'error');
     } finally {
       setLoading(false);
     }
   };
   
   useEffect(() => {
-    if (user?.role === 'admin') {
+    // Esperar a que la autenticación esté lista
+    if (!isAuthReady) {
+      return;
+    }
+    
+    // Si no hay usuario, redirigir al login
+    if (!user) {
+      navigate('/');
+      return;
+    }
+    
+    // Verificar rol y cargar estudiantes o redirigir
+    if (user.role === 'admin' || user.role === 'super_administrador') {
       fetchStudents();
     } else {
-      // Redirigir si no es administrador
+      // Redirigir si no es administrador o super administrador
       navigate('/dashboard');
     }
-  }, [user, navigate]);
+  }, [user, isAuthReady, navigate]);
   
   const handleDelete = async (id) => {
     if (window.confirm('¿Está seguro de que desea eliminar este estudiante? Esta acción no se puede deshacer.')) {
       try {
-        await api.delete(`/api/students/${id}`);
+        await axiosClient.delete(`/students/${id}`);
         setStudents(students.filter(student => student.id !== id));
         showSnackbar('Estudiante eliminado correctamente', 'success');
       } catch (error) {
         console.error('Error al eliminar estudiante:', error);
-        showSnackbar('Error al eliminar el estudiante', 'error');
+        const errorMessage = error.response?.data?.message || 'Error al eliminar el estudiante';
+        showSnackbar(errorMessage, 'error');
       }
     }
   };
@@ -103,6 +120,9 @@ const StudentsList = () => {
     return (
       (student.user_name || '').toLowerCase().includes(searchLower) ||
       (student.user_email || '').toLowerCase().includes(searchLower) ||
+      (student.user_phone || '').toString().includes(searchLower) ||
+      (student.contact_phone || '').toString().includes(searchLower) ||
+      (student.contact_email || '').toLowerCase().includes(searchLower) ||
       (student.grade || '').toString().includes(searchLower) ||
       (student.course_name || '').toLowerCase().includes(searchLower)
     );
@@ -165,6 +185,8 @@ const StudentsList = () => {
               <TableRow>
                 <TableCell>Nombre</TableCell>
                 <TableCell>Email</TableCell>
+                <TableCell>Teléfono</TableCell>
+                <TableCell>Contacto</TableCell>
                 <TableCell>Grado</TableCell>
                 <TableCell>Curso</TableCell>
                 <TableCell>Estado</TableCell>
@@ -189,6 +211,22 @@ const StudentsList = () => {
                     </TableCell>
                     <TableCell>
                       <Box display="flex" alignItems="center">
+                        <PhoneIcon color="action" sx={{ mr: 1, fontSize: 20 }} />
+                        {student.user_phone || '-'}
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ fontSize: '0.875rem' }}>
+                        <Box sx={{ fontWeight: 500, mb: 0.5 }}>
+                          {student.contact_phone || 'Sin teléfono'}
+                        </Box>
+                        <Box sx={{ color: 'text.secondary' }}>
+                          {student.contact_email || 'Sin email'}
+                        </Box>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Box display="flex" alignItems="center">
                         <SchoolIcon color="action" sx={{ mr: 1, fontSize: 20 }} />
                         {student.grade}°
                       </Box>
@@ -198,15 +236,15 @@ const StudentsList = () => {
                     </TableCell>
                     <TableCell>
                       <Chip 
-                        label={student.user_estado === 'activo' ? 'Activo' : 'Inactivo'}
-                        color={student.user_estado === 'activo' ? 'success' : 'default'}
+                        label={student.user_estado === 'activo' || student.user_estado === 1 || student.user_estado === '1' ? 'Activo' : 'Inactivo'}
+                        color={student.user_estado === 'activo' || student.user_estado === 1 || student.user_estado === '1' ? 'success' : 'default'}
                         size="small"
                       />
                     </TableCell>
                     <TableCell align="right">
                       <IconButton 
                         component={Link} 
-                        to={`/estudiantes/editar/${student.id}`}
+                        to={`/estudiantes/${student.id}/editar`}
                         color="primary"
                         size="small"
                         sx={{ mr: 1 }}

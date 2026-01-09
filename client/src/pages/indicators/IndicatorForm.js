@@ -71,47 +71,75 @@ const IndicatorForm = () => {
   const [categories, setCategories] = useState([]);
   const [isUpdating, setIsUpdating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('name'); // 'name', 'grade', 'email', 'status'
+  const [sortOrder, setSortOrder] = useState('asc'); // 'asc', 'desc'
  
   // Función auxiliar para cargar cuestionarios
-  const loadQuestionnaires = useCallback(async (userId, editing = false) => {
+  const loadQuestionnaires = useCallback(async (userId, editing = false, indicatorTeacherId = null) => {
     if (!userId) return [];
     
     try {
       setLoading(true);
-      console.log('🔍 Obteniendo cuestionarios para el usuario:', userId);
+      console.log('🔍 Obteniendo cuestionarios para el usuario:', userId, 'Rol:', user?.role);
       
-      const response = await axios.get(
-        `/api/indicators/questionnaires/teacher/${userId}`, 
-        {
-          headers: { 
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache'
+      let response;
+      
+      // Para super_administrador, cargar TODOS los cuestionarios
+      if (user?.role === 'super_administrador') {
+        console.log('👑 Super administrador: cargando todos los cuestionarios');
+        response = await axios.get(
+          '/api/questionnaires', 
+          {
+            headers: { 
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-cache'
+            }
           }
-        }
-      );
+        );
+      } else {
+        // Para docentes, cargar solo sus cuestionarios
+        response = await axios.get(
+          `/api/indicators/questionnaires/teacher/${userId}`, 
+          {
+            headers: { 
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+              'Content-Type': 'application/json',
+              'Cache-Control': 'no-cache'
+            }
+          }
+        );
+      }
       
       console.log('📋 Respuesta de la API de cuestionarios:', response.data);
       
-      if (response.data?.success) {
-        const questionnairesData = response.data.data || [];
-        console.log(`📊 Se encontraron ${questionnairesData.length} cuestionarios`);
-        
-        setQuestionnaires(questionnairesData);
-        
-        // Siempre establecer manualEntry como false si hay cuestionarios disponibles
-        if (questionnairesData.length > 0) {
-          setManualEntry(false);
-          
-          // Ya no seleccionamos automáticamente el primer cuestionario
-          // El usuario deberá seleccionar uno manualmente
-          console.log(`📊 Se cargaron ${questionnairesData.length} cuestionarios`);
-        }
-        
-        return questionnairesData;
+      let questionnairesData = [];
+      
+      // Manejar diferentes formatos de respuesta
+      if (response.data?.success && response.data?.data) {
+        questionnairesData = Array.isArray(response.data.data) ? response.data.data : [];
+      } else if (Array.isArray(response.data)) {
+        questionnairesData = response.data;
+      } else if (response.data?.data && Array.isArray(response.data.data)) {
+        questionnairesData = response.data.data;
       }
       
-      throw new Error(response.data?.message || 'No se pudieron cargar los cuestionarios');
+      // Normalizar IDs a string para consistencia con el combo
+      questionnairesData = questionnairesData.map(q => ({
+        ...q,
+        id: String(q.id)
+      }));
+      
+      console.log(`📊 Se encontraron ${questionnairesData.length} cuestionarios`);
+      setQuestionnaires(questionnairesData);
+      
+      // Siempre establecer manualEntry como false si hay cuestionarios disponibles
+      if (questionnairesData.length > 0) {
+        setManualEntry(false);
+        console.log(`📊 Se cargaron ${questionnairesData.length} cuestionarios`);
+      }
+      
+      return questionnairesData;
       
     } catch (error) {
       console.error('❌ Error al cargar cuestionarios:', error);
@@ -121,7 +149,7 @@ const IndicatorForm = () => {
     } finally {
       setLoading(false);
     }
-  }, [teacherSubject]);
+  }, [teacherSubject, user?.role]);
 
   // Cargar cuestionarios del docente
   const fetchQuestionnaires = useCallback(() => {
@@ -617,32 +645,83 @@ const IndicatorForm = () => {
           if (indicatorData.grade) {
             console.log(`🔄 Cargando estudiantes para el grado ${indicatorData.grade}...`);
             
-            // Cargar estudiantes del grado
-            await fetchStudents(indicatorData.teacher_id, indicatorData.grade)
-              .then(() => {
-                console.log('✅ Estudiantes cargados correctamente');
+            // Para super_administrador, usar el endpoint /api/indicators/:id/students que obtiene todos los estudiantes del grado
+            // Para docentes, usar fetchStudents normal
+            if (user?.role === 'super_administrador') {
+              console.log('👑 Super administrador: usando endpoint especial para obtener estudiantes');
+              
+              // Usar el endpoint especial que obtiene todos los estudiantes del grado del indicador
+              const indicatorStudentsResponse = await axios.get(`/api/indicators/${id}/students`, {
+                headers: { 
+                  'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+                  'Content-Type': 'application/json'
+                },
+                withCredentials: true
+              });
+              
+              if (indicatorStudentsResponse.data?.success && Array.isArray(indicatorStudentsResponse.data.data)) {
+                const allStudents = indicatorStudentsResponse.data.data;
                 
-                // Marcar los estudiantes que ya tienen el indicador asignado
-                console.log('🏷️ Marcando estudiantes con indicador asignado...');
-                setStudents(prevStudents => 
-                  prevStudents.map(student => ({
-                    ...student,
-                    hasIndicator: assignedStudentIds.includes('all') || 
-                                assignedStudentIds.includes(String(student.id)) || 
-                                false
-                  }))
-                );
+                // Procesar estudiantes con su estado de indicador y estado de usuario
+                const processedStudents = allStudents.map(student => ({
+                  id: String(student.id),
+                  name: student.name || `Estudiante ${student.id}`,
+                  grade: student.grade || indicatorData.grade,
+                  email: student.email || '',
+                  hasIndicator: student.has_indicator === 1,
+                  has_indicator: student.has_indicator || 0,
+                  achieved: student.achieved || false,
+                  user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+                }));
                 
-                // Sincronizar siempre studentids con lo que viene del backend
+                // Agregar opciones por defecto
+                const defaultOptions = [
+                  { id: 'none', name: 'No aplicar aún', grade: indicatorData.grade, hasIndicator: false },
+                  { id: 'all', name: 'Todos los estudiantes del curso', grade: indicatorData.grade, hasIndicator: false }
+                ];
+                
+                setStudents([...defaultOptions, ...processedStudents]);
+                
+                // Sincronizar studentids con los que tienen indicador asignado
+                const studentsWithIndicator = processedStudents
+                  .filter(s => s.hasIndicator)
+                  .map(s => s.id);
+                
                 setFormData(prev => ({
                   ...prev,
-                  studentids: assignedStudentIds
+                  studentids: assignedStudentIds.length > 0 ? assignedStudentIds : studentsWithIndicator
                 }));
-              })
-              .catch(error => {
-                console.error('❌ Error al cargar estudiantes:', error);
-                setError('No se pudieron cargar los estudiantes. Por favor, intente nuevamente.');
-              });
+                
+                console.log('✅ Estudiantes cargados correctamente (super_administrador):', processedStudents.length);
+              }
+            } else {
+              // Para docentes, usar fetchStudents normal
+              await fetchStudents(indicatorData.teacher_id, indicatorData.grade)
+                .then(() => {
+                  console.log('✅ Estudiantes cargados correctamente');
+                  
+                  // Marcar los estudiantes que ya tienen el indicador asignado
+                  console.log('🏷️ Marcando estudiantes con indicador asignado...');
+                  setStudents(prevStudents => 
+                    prevStudents.map(student => ({
+                      ...student,
+                      hasIndicator: assignedStudentIds.includes('all') || 
+                                  assignedStudentIds.includes(String(student.id)) || 
+                                  false
+                    }))
+                  );
+                  
+                  // Sincronizar siempre studentids con lo que viene del backend
+                  setFormData(prev => ({
+                    ...prev,
+                    studentids: assignedStudentIds
+                  }));
+                })
+                .catch(error => {
+                  console.error('❌ Error al cargar estudiantes:', error);
+                  setError('No se pudieron cargar los estudiantes. Por favor, intente nuevamente.');
+                });
+            }
           }
         }
       }
@@ -652,7 +731,7 @@ const IndicatorForm = () => {
     } finally {
       setLoading(false);
     }
-  }, [id, teacherId, fetchStudents]);
+  }, [id, teacherId, fetchStudents, user?.role]);
 
   // Cargar información del docente
   useEffect(() => {
@@ -722,15 +801,10 @@ const IndicatorForm = () => {
       
       console.log('🔄 [loadInitialData] Iniciando carga de datos iniciales...');
       
-      // Cargar cuestionarios
-      try {
-        await loadQuestionnaires(user.id, isEditing);
-      } catch (error) {
-        console.error('❌ [loadInitialData] Error al cargar cuestionarios:', error);
-        setError('No se pudieron cargar los cuestionarios. Por favor, intente nuevamente.');
-      }
+      // Si estamos editando, cargar los datos del indicador PRIMERO para obtener el teacher_id y questionnaire_id
+      let indicatorTeacherId = null;
+      let associatedQuestionnaireId = null;
       
-      // Si estamos editando, cargar los datos del indicador
       if (id) {
         try {
           setLoading(true);
@@ -758,47 +832,55 @@ const IndicatorForm = () => {
           
           console.log('📋 Datos del indicador procesados:', indicatorData);
           
-// Cargar datos iniciales del indicador
-if (indicatorData) {
-  const formDataUpdate = {
-    description: indicatorData.description || '',
-    subject: indicatorData.subject || '',
-    category: indicatorData.category || '',
-    phase: indicatorData.phase?.toString() || '1',
-    grade: indicatorData.grade?.toString() || '',
-    questionnaire_id: indicatorData.questionnaire_id || '',
-    students: indicatorData.students || []
-  };
+          // Guardar el teacher_id y questionnaire_id del indicador
+          indicatorTeacherId = indicatorData.teacher_id;
+          associatedQuestionnaireId = indicatorData.questionnaire_id;
+          
+          // Cargar datos iniciales del indicador
+          if (indicatorData) {
+            // Normalizar questionnaire_id a string
+            const questionnaireIdStr = associatedQuestionnaireId ? String(associatedQuestionnaireId) : '';
+            
+            const formDataUpdate = {
+              description: indicatorData.description || '',
+              subject: indicatorData.subject || '',
+              category: indicatorData.category || '',
+              phase: indicatorData.phase?.toString() || '1',
+              grade: indicatorData.grade?.toString() || '',
+              questionnaire_id: questionnaireIdStr,
+              students: indicatorData.students || []
+            };
 
-  setFormData(formDataUpdate);
-  console.log('📝 Formulario actualizado:', formDataUpdate);
+            setFormData(formDataUpdate);
+            console.log('📝 Formulario actualizado:', formDataUpdate);
+            console.log('📋 Questionnaire ID establecido:', questionnaireIdStr);
 
-  if (indicatorData.teacher_id) {
-    setTeacherId(indicatorData.teacher_id);
-    console.log('👨‍🏫 ID del docente actualizado:', indicatorData.teacher_id);
-  }
+            if (indicatorData.teacher_id) {
+              setTeacherId(indicatorData.teacher_id);
+              console.log('👨‍🏫 ID del docente actualizado:', indicatorData.teacher_id);
+            }
 
-  // Detectar estudiantes asignados sin duplicados para seleccionar en el formulario
-  if (indicatorData.students && indicatorData.students.length > 0) {
-    const uniqueStudents = [];
-    const seen = new Set();
+            // Detectar estudiantes asignados sin duplicados para seleccionar en el formulario
+            if (indicatorData.students && indicatorData.students.length > 0) {
+              const uniqueStudents = [];
+              const seen = new Set();
 
-    for (const student of indicatorData.students) {
-      const studentId = student.id || student.student_id;
-      if (!seen.has(studentId)) {
-        seen.add(studentId);
-        uniqueStudents.push(String(studentId));  // IDs como string
-      }
-    }
+              for (const student of indicatorData.students) {
+                const studentId = student.id || student.student_id;
+                if (!seen.has(studentId)) {
+                  seen.add(studentId);
+                  uniqueStudents.push(String(studentId));  // IDs como string
+                }
+              }
 
-    setFormData(prev => ({
-      ...prev,
-      studentids: uniqueStudents
-    }));
-    console.log('👥 Estudiantes asignados cargados:', uniqueStudents);
-  }
-}
-} catch (error) {
+              setFormData(prev => ({
+                ...prev,
+                studentids: uniqueStudents
+              }));
+              console.log('👥 Estudiantes asignados cargados:', uniqueStudents);
+            }
+          }
+        } catch (error) {
           console.error('❌ Error al cargar los datos del indicador:', {
             error: error.message,
             response: error.response?.data,
@@ -810,6 +892,72 @@ if (indicatorData) {
         } finally {
           setLoading(false);
         }
+      }
+      
+      // Cargar cuestionarios DESPUÉS de obtener el teacher_id del indicador
+      // Esto asegura que para super_administrador se carguen todos los cuestionarios,
+      // y que el cuestionario asociado esté en la lista
+      try {
+        const loadedQuestionnaires = await loadQuestionnaires(user.id, isEditing, indicatorTeacherId);
+        
+        // Si hay un cuestionario asociado, verificar que esté en la lista y seleccionarlo
+        if (associatedQuestionnaireId) {
+          const questionnaireIdStr = String(associatedQuestionnaireId);
+          
+          // Verificar si el cuestionario asociado está en la lista cargada
+          const questionnaireExists = loadedQuestionnaires && loadedQuestionnaires.length > 0 && 
+                                     loadedQuestionnaires.some(q => String(q.id) === questionnaireIdStr);
+          
+          if (!questionnaireExists) {
+            console.log('⚠️ El cuestionario asociado no está en la lista, cargándolo individualmente...');
+            try {
+              const token = localStorage.getItem('authToken');
+              const questionnaireResponse = await axios.get(`/api/questionnaires/${associatedQuestionnaireId}`, {
+                headers: { 
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              
+              let additionalQuestionnaire = null;
+              if (questionnaireResponse.data?.success && questionnaireResponse.data?.data) {
+                additionalQuestionnaire = Array.isArray(questionnaireResponse.data.data) 
+                  ? questionnaireResponse.data.data[0] 
+                  : questionnaireResponse.data.data;
+              } else if (questionnaireResponse.data?.id) {
+                additionalQuestionnaire = questionnaireResponse.data;
+              }
+              
+              if (additionalQuestionnaire) {
+                console.log('✅ Cuestionario asociado cargado individualmente:', additionalQuestionnaire);
+                // Normalizar ID a string y agregar a la lista
+                const normalized = {
+                  ...additionalQuestionnaire,
+                  id: String(additionalQuestionnaire.id)
+                };
+                setQuestionnaires(prev => {
+                  // Evitar duplicados
+                  const exists = prev.some(q => String(q.id) === normalized.id);
+                  return exists ? prev : [normalized, ...prev];
+                });
+              }
+            } catch (err) {
+              console.warn('⚠️ No se pudo cargar el cuestionario asociado:', err);
+            }
+          }
+          
+          // Establecer el cuestionario asociado en el combo (usar setTimeout para asegurar que el estado se actualice)
+          setTimeout(() => {
+            setFormData(prev => ({
+              ...prev,
+              questionnaire_id: questionnaireIdStr
+            }));
+            console.log('✅ Cuestionario asociado establecido en el combo:', associatedQuestionnaireId);
+          }, 200);
+        }
+      } catch (error) {
+        console.error('❌ [loadInitialData] Error al cargar cuestionarios:', error);
+        setError('No se pudieron cargar los cuestionarios. Por favor, intente nuevamente.');
       }
       
       try {
@@ -855,13 +1003,13 @@ if (indicatorData) {
     }));
   };
 
-  const handleQuestionnaireChange = (e) => {
+  const handleQuestionnaireChange = async (e) => {
     const selectedQuestionnaireId = e.target.value;
-    const selectedQuestionnaire = questionnaires.find(q => q.id === selectedQuestionnaireId);
+    const selectedQuestionnaire = questionnaires.find(q => String(q.id) === String(selectedQuestionnaireId));
     
     setFormData(prev => ({
       ...prev,
-      questionnaire_id: selectedQuestionnaireId === 'none' ? null : selectedQuestionnaireId,
+      questionnaire_id: selectedQuestionnaireId === 'none' || !selectedQuestionnaireId ? null : selectedQuestionnaireId,
       ...(selectedQuestionnaire ? {
         description: selectedQuestionnaire.title || '',
         subject: selectedQuestionnaire.subject || teacherSubject || '',
@@ -883,7 +1031,62 @@ if (indicatorData) {
       })
     }));
     
-    setManualEntry(selectedQuestionnaireId === 'none');
+    setManualEntry(selectedQuestionnaireId === 'none' || !selectedQuestionnaireId);
+    
+    // Para super_administrador, si hay un cuestionario seleccionado, recargar estudiantes basándose en el cuestionario
+    if (user?.role === 'super_administrador' && selectedQuestionnaire && selectedQuestionnaire.grade) {
+      console.log('👑 Super administrador: cuestionario seleccionado, recargando estudiantes...');
+      
+      // Si estamos editando, recargar estudiantes usando fetchStudentsWithIndicator
+      if (id) {
+        // Esperar un momento para que el estado se actualice con el nuevo questionnaire_id
+        setTimeout(() => {
+          fetchStudentsWithIndicator();
+        }, 300);
+      } else {
+        // Si estamos creando, cargar estudiantes del docente del cuestionario
+        if (selectedQuestionnaire.created_by) {
+          try {
+            const token = localStorage.getItem('authToken');
+            const studentsResponse = await axios.get(`/api/teachers/${selectedQuestionnaire.created_by}/students/by-grade/${selectedQuestionnaire.grade}`, {
+              headers: { 
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              },
+              withCredentials: true,
+              timeout: 10000
+            });
+
+            if (studentsResponse.data?.success || Array.isArray(studentsResponse.data)) {
+              const allStudents = Array.isArray(studentsResponse.data?.data) ? 
+                studentsResponse.data.data : 
+                (Array.isArray(studentsResponse.data) ? studentsResponse.data : []);
+              
+              const processedStudents = allStudents.map(student => ({
+                id: String(student.id || student.user_id),
+                name: student.name || student.full_name || `Estudiante ${student.id}`,
+                grade: student.grade || selectedQuestionnaire.grade,
+                email: student.email || '',
+                hasIndicator: false,
+                has_indicator: 0,
+                achieved: false,
+                user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo) si está disponible
+              }));
+              
+              setStudents([
+                { id: 'none', name: 'No aplicar aún', grade: selectedQuestionnaire.grade, hasIndicator: false },
+                { id: 'all', name: 'Todos los estudiantes del curso', grade: selectedQuestionnaire.grade, hasIndicator: false },
+                ...processedStudents
+              ]);
+              
+              console.log(`✅ Estudiantes cargados del cuestionario: ${processedStudents.length}`);
+            }
+          } catch (error) {
+            console.error('❌ Error al cargar estudiantes del cuestionario:', error);
+          }
+        }
+      }
+    }
   };
 
   // Cargar categorías por materia seleccionada
@@ -954,15 +1157,24 @@ if (indicatorData) {
     console.log('✅ Estado actualizado con estudiantes:', formData.studentids);
   };
   
-  // Obtener la lista de estudiantes reales (excluyendo opciones especiales)
+  // Obtener la lista de estudiantes reales (excluyendo opciones especiales y deduplicando)
   const realStudents = React.useMemo(() => {
     // Filtrar estudiantes válidos (excluyendo 'all' y 'none' y entradas nulas)
     const validStudents = students.filter(s => 
       s && s.id && s.id !== 'all' && s.id !== 'none' && s.id !== 'null' && s.id !== 'undefined'
     );
     
+    // DEDUPLICAR: Usar un Map para asegurar que cada estudiante aparezca solo una vez
+    const studentsMap = new Map();
+    validStudents.forEach(student => {
+      const studentId = String(student.id);
+      if (!studentsMap.has(studentId)) {
+        studentsMap.set(studentId, student);
+      }
+    });
+    
     // Ordenar estudiantes por nombre
-    return [...validStudents].sort((a, b) => {
+    return Array.from(studentsMap.values()).sort((a, b) => {
       const nameA = a.name?.toLowerCase() || '';
       const nameB = b.name?.toLowerCase() || '';
       return nameA.localeCompare(nameB);
@@ -1013,7 +1225,7 @@ if (indicatorData) {
 
   // Función para cargar estudiantes con su estado de indicador
   const fetchStudentsWithIndicator = useCallback(async () => {
-    if (!id || !teacherId || !formData.grade) return [];
+    if (!id || !formData.grade) return [];
     
     try {
       setStudentsLoading(true);
@@ -1024,19 +1236,114 @@ if (indicatorData) {
         throw new Error('No se encontró el token de autenticación');
       }
       
-      console.log(`🔍 Solicitando estudiantes para el indicador ${id} del docente ${teacherId}, grado ${formData.grade}`);
+      console.log(`🔍 Solicitando estudiantes para el indicador ${id}, grado ${formData.grade}`);
       
-      // Obtener todos los estudiantes del docente por grado
-      const studentsResponse = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${formData.grade}`, {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        withCredentials: true,
-        timeout: 10000
-      });
+      // Para super_administrador, verificar si hay un cuestionario asociado
+      // Si hay cuestionario, usar su created_by (teacher_id) y grade para filtrar estudiantes
+      let targetTeacherId = teacherId;
+      let targetGrade = formData.grade;
+      
+      if (user?.role === 'super_administrador' && formData.questionnaire_id) {
+        console.log('👑 Super administrador: verificando cuestionario asociado...');
+        
+        // Obtener información del cuestionario para obtener su teacher_id y grade
+        try {
+          const questionnaireResponse = await axios.get(`/api/questionnaires/${formData.questionnaire_id}`, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            withCredentials: true,
+            timeout: 10000
+          });
+          
+          if (questionnaireResponse.data?.success && questionnaireResponse.data.data) {
+            const questionnaireData = questionnaireResponse.data.data;
+            // Buscar created_by en el cuestionario (puede estar como created_by o en teacher info)
+            const questionnaireTeacherId = questionnaireData.created_by;
+            const questionnaireGrade = questionnaireData.grade || formData.grade;
+            
+            if (questionnaireTeacherId) {
+              targetTeacherId = questionnaireTeacherId;
+              targetGrade = questionnaireGrade;
+              console.log(`✅ Cuestionario encontrado: Teacher ID ${targetTeacherId}, Grade ${targetGrade}`);
+              console.log('📋 Filtrando estudiantes por docente y grado del cuestionario');
+            }
+          }
+        } catch (error) {
+          console.warn('⚠️ No se pudo obtener información del cuestionario, usando valores por defecto:', error.message);
+        }
+      }
+      
+      // Para super_administrador, obtener estudiantes basándose en el cuestionario si existe
+      // Para docentes, usar el endpoint que obtiene solo sus estudiantes
+      let allStudents = [];
+      
+      if (user?.role === 'super_administrador') {
+        // Si hay un cuestionario y teacher_id, obtener estudiantes de ese docente específico
+        if (targetTeacherId && formData.questionnaire_id) {
+          console.log(`👑 Super administrador: obteniendo estudiantes del docente ${targetTeacherId} del cuestionario`);
+          const studentsResponse = await axios.get(`/api/teachers/${targetTeacherId}/students/by-grade/${targetGrade}`, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            withCredentials: true,
+            timeout: 10000
+          });
 
-      // Obtener estudiantes con este indicador específico
+          if (studentsResponse.data?.success || Array.isArray(studentsResponse.data)) {
+            allStudents = Array.isArray(studentsResponse.data?.data) ? 
+              studentsResponse.data.data : 
+              (Array.isArray(studentsResponse.data) ? studentsResponse.data : []);
+            console.log(`📊 Total estudiantes del docente ${targetTeacherId}, grado ${targetGrade}: ${allStudents.length}`);
+          }
+        } else {
+          // Si no hay cuestionario, obtener todos los estudiantes del grado usando el endpoint del indicador
+          console.log('👑 Super administrador: obteniendo todos los estudiantes del grado usando endpoint especial');
+          const indicatorStudentsResponse = await axios.get(`/api/indicators/${id}/students`, {
+            headers: { 
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            withCredentials: true,
+            timeout: 10000
+          });
+          
+          if (indicatorStudentsResponse.data?.success && Array.isArray(indicatorStudentsResponse.data.data)) {
+            allStudents = indicatorStudentsResponse.data.data;
+            console.log(`📊 Total estudiantes del grado obtenidos: ${allStudents.length}`);
+          } else {
+            console.warn('⚠️ No se pudieron obtener estudiantes del indicador para super_administrador');
+            allStudents = [];
+          }
+        }
+      } else {
+        // Docente: obtener estudiantes del docente específico
+        if (!teacherId) {
+          console.warn('⚠️ No hay teacherId disponible para obtener estudiantes');
+          return [];
+        }
+        
+        console.log(`👨‍🏫 Docente: obteniendo estudiantes del docente ${teacherId}`);
+        const studentsResponse = await axios.get(`/api/teachers/${teacherId}/students/by-grade/${formData.grade}`, {
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          withCredentials: true,
+          timeout: 10000
+        });
+
+        // Procesar la respuesta de estudiantes
+        if (studentsResponse.data?.success || Array.isArray(studentsResponse.data)) {
+          allStudents = Array.isArray(studentsResponse.data?.data) ? 
+            studentsResponse.data.data : 
+            (Array.isArray(studentsResponse.data) ? studentsResponse.data : []);
+        }
+      }
+
+      // Obtener estudiantes con este indicador específico para marcar cuáles tienen el indicador
       const indicatorStudentsResponse = await axios.get(`/api/indicators/${id}/students`, {
         headers: { 
           'Authorization': `Bearer ${token}`,
@@ -1045,73 +1352,77 @@ if (indicatorData) {
         withCredentials: true,
         timeout: 10000
       });
-
-      // Procesar la respuesta de estudiantes
-      let allStudents = [];
-      if (studentsResponse.data?.success || Array.isArray(studentsResponse.data)) {
-        allStudents = Array.isArray(studentsResponse.data?.data) ? 
-          studentsResponse.data.data : 
-          (Array.isArray(studentsResponse.data) ? studentsResponse.data : []);
+      
+      console.log('📊 Todos los estudiantes del grado:', allStudents.length);
+      
+      // Procesar la respuesta de estudiantes con indicador para marcar cuáles ya lo tienen
+      let indicatorStudentsMap = new Map();
+      if (indicatorStudentsResponse.data?.success && Array.isArray(indicatorStudentsResponse.data.data)) {
+        indicatorStudentsResponse.data.data.forEach(student => {
+          const studentId = String(student.id || student.user_id || student.student_id);
+          if (studentId) {
+            indicatorStudentsMap.set(studentId, {
+              hasIndicator: student.has_indicator === 1,
+              achieved: student.achieved || false,
+              assigned_at: student.assigned_at || null
+            });
+          }
+        });
       }
       
-      console.log('📊 Todos los estudiantes del grado:', allStudents);
+      console.log(`📊 Estudiantes con indicador asignado: ${indicatorStudentsMap.size}`);
       
-      // Procesar la respuesta de estudiantes con indicador
-      let indicatorStudents = [];
-      if (indicatorStudentsResponse.data?.success || Array.isArray(indicatorStudentsResponse.data)) {
-        indicatorStudents = Array.isArray(indicatorStudentsResponse.data?.data) ? 
-          indicatorStudentsResponse.data.data : 
-          (Array.isArray(indicatorStudentsResponse.data) ? indicatorStudentsResponse.data : []);
-      }
+      // Combinar los datos de los estudiantes con su estado de indicador
+      // DEDUPLICAR: Usar un Map para asegurar que cada estudiante aparezca solo una vez
+      const studentsMap = new Map();
       
-      console.log('📊 Estudiantes con indicador:', indicatorStudents);
-      
-      // Crear un mapa de estudiantes con indicador para búsqueda rápida
-      const indicatorMap = new Map();
-      
-      // Procesar los estudiantes con indicador
-      indicatorStudents.forEach(student => {
-        const studentId = String(student.id || student.user_id || student.student_id);
-        if (studentId) {
-          indicatorMap.set(studentId, {
+      allStudents.forEach(student => {
+        const studentId = String(student.id || student.user_id);
+        if (!studentId || studentId === 'undefined' || studentId === 'null') return;
+        
+        // Si ya existe, mantener el que tiene indicador o el más reciente
+        if (studentsMap.has(studentId)) {
+          const existing = studentsMap.get(studentId);
+          const indicatorData = indicatorStudentsMap.get(studentId);
+          const hasIndicator = indicatorData ? indicatorData.hasIndicator : (student.has_indicator === 1);
+          
+          // Si el nuevo tiene indicador y el existente no, reemplazar
+          if (hasIndicator && !existing.hasIndicator) {
+            studentsMap.set(studentId, {
+              ...student,
+              id: studentId,
+              name: student.name || student.full_name || `Estudiante ${studentId}`,
+              grade: student.grade || formData.grade,
+              email: student.email || '',
+              hasIndicator: hasIndicator,
+              has_indicator: hasIndicator ? 1 : 0,
+              achieved: indicatorData ? indicatorData.achieved : (student.achieved || false),
+              assigned_at: indicatorData ? indicatorData.assigned_at : (student.assigned_at || null),
+              user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+            });
+          }
+        } else {
+          // Nuevo estudiante, agregarlo
+          const indicatorData = indicatorStudentsMap.get(studentId);
+          studentsMap.set(studentId, {
             ...student,
             id: studentId,
-            hasIndicator: true,
-            has_indicator: 1,
-            achieved: student.achieved || false,
-            assigned_at: student.assigned_at || student.assignedAt || null,
-            name: student.name || student.full_name || `Estudiante ${studentId}`
+            name: student.name || student.full_name || `Estudiante ${studentId}`,
+            grade: student.grade || formData.grade,
+            email: student.email || '',
+            hasIndicator: indicatorData ? indicatorData.hasIndicator : (student.has_indicator === 1),
+            has_indicator: indicatorData ? (indicatorData.hasIndicator ? 1 : 0) : (student.has_indicator || 0),
+            achieved: indicatorData ? indicatorData.achieved : (student.achieved || false),
+            assigned_at: indicatorData ? indicatorData.assigned_at : (student.assigned_at || null),
+            user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
           });
         }
       });
       
-      // Combinar los datos de los estudiantes
-      const processedStudents = allStudents.map(student => {
-        const studentId = String(student.id || student.user_id);
-        const indicatorData = indicatorMap.get(studentId);
-        
-        if (indicatorData) {
-          return {
-            ...student,
-            ...indicatorData,
-            id: studentId,
-            name: student.name || student.full_name || `Estudiante ${studentId}`,
-            hasIndicator: true
-          };
-        }
-        
-        return {
-          ...student,
-          id: studentId,
-          name: student.name || student.full_name || `Estudiante ${studentId}`,
-          hasIndicator: false,
-          has_indicator: 0,
-          achieved: false,
-          assigned_at: null
-        };
-      });
+      // Convertir Map a Array
+      const processedStudents = Array.from(studentsMap.values());
       
-      console.log('👥 Estudiantes procesados:', processedStudents);
+      console.log('👥 Estudiantes procesados (deduplicados):', processedStudents.length);
       
       // Actualizar el estado
       setStudents(prev => [
@@ -1128,16 +1439,17 @@ if (indicatorData) {
           grade: formData.grade,
           hasIndicator: false
         },
-        // Estudiantes reales
+        // Estudiantes reales (ya deduplicados)
         ...processedStudents
       ]);
       
-      // Actualizar los estudiantes seleccionados
+      // Actualizar los estudiantes seleccionados (deduplicar también)
       const studentsWithIndicator = processedStudents.filter(s => s.hasIndicator);
       if (studentsWithIndicator.length > 0) {
+        const uniqueStudentIds = [...new Set(studentsWithIndicator.map(s => s.id))];
         setFormData(prev => ({
           ...prev,
-          studentids: studentsWithIndicator.map(s => s.id)
+          studentids: uniqueStudentIds
         }));
       }
       
@@ -1154,7 +1466,7 @@ if (indicatorData) {
     } finally {
       setStudentsLoading(false);
     }
-  }, [id, teacherId, formData.grade]);
+  }, [id, teacherId, formData.grade, formData.questionnaire_id, user?.role]);
 
   const isStudentSelected = (studentId) => {
     if (!Array.isArray(formData.studentids)) return false;
@@ -1252,40 +1564,75 @@ if (indicatorData) {
         const removed = [...currentlyAssigned].filter(id => !selectedNow.has(id));
 
         if (removed.length > 0) {
-          const { isConfirmed } = await Swal.fire({
+          const studentNames = removed.map(id => {
+            const student = students.find(s => String(s.id) === String(id));
+            return student?.name || `Estudiante ${id}`;
+          }).join(', ');
+
+          const result = await Swal.fire({
             icon: 'warning',
-            title: 'Confirmar actualización',
-            html: `Se eliminará la asociación del indicador con <b>${removed.length}</b> estudiante(s).<br/>¿Deseas continuar?`,
+            title: 'Confirmar desvinculación',
+            html: `Se eliminará la asociación del indicador con <b>${removed.length}</b> estudiante(s):<br/><b>${studentNames}</b><br/><br/>¿Deseas continuar?`,
             showCancelButton: true,
-            confirmButtonText: 'Sí, continuar',
-            cancelButtonText: 'Cancelar'
+            confirmButtonText: 'Sí, desvincular',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc3545',
+            allowOutsideClick: false,
+            allowEscapeKey: true
           });
-          if (!isConfirmed) {
+          
+          console.log('🔍 Resultado del diálogo de confirmación:', result);
+          
+          if (!result.isConfirmed) {
+            console.log('❌ Usuario canceló la desvinculación');
             // Restaurar selección anterior basada en el estado del backend
             setFormData(prev => ({
               ...prev,
-              studentids: [...currentlyAssigned]
+              studentids: [...currentlyAssigned].map(String)
             }));
             setLoading(false);
             return; // Cancelar envío
           }
+          
+          console.log('✅ Usuario confirmó la desvinculación de estudiantes:', removed);
+        } else {
+          console.log('ℹ️ No hay estudiantes para remover, continuando con la actualización');
         }
       }
 
       // 3. Preparar datos para enviar
+      // Procesar student_ids: normalizar a enteros, filtrar valores inválidos y DEDUPLICAR
+      let processedStudentIds = [];
+      if (Array.isArray(formData.studentids) && formData.studentids.length > 0) {
+        // Primero deduplicar y normalizar
+        const uniqueIds = [...new Set(formData.studentids.map(id => String(id)))];
+        processedStudentIds = uniqueIds
+          .filter(id => id !== null && id !== undefined && id !== 'all' && id !== 'none' && id !== '')
+          .map(id => {
+            const parsed = parseInt(String(id), 10);
+            return isNaN(parsed) ? null : parsed;
+          })
+          .filter(id => id !== null);
+        
+        // Deduplicar nuevamente después de convertir a enteros
+        processedStudentIds = [...new Set(processedStudentIds)];
+      }
+      
       // Usar teacherId del estado (que ya fue verificado arriba)
       const finalTeacherId = teacherId;
       const payload = {
         ...formData,
         teacher_id: finalTeacherId,
-        student_ids: Array.isArray(formData.studentids) 
-          ? formData.studentids.filter(id => id !== 'all' && id !== 'none')
-          : [],
+        student_ids: processedStudentIds,
         questionnaire_id: formData.questionnaire_id || null,
         category: formData.category || null
       };
   
-      console.log('📝 Datos a enviar:', payload);
+      console.log('📝 Datos a enviar:', {
+        ...payload,
+        student_ids_count: processedStudentIds.length,
+        student_ids_original: formData.studentids
+      });
       
       // 4. Configurar headers con el token
       const config = {
@@ -1314,35 +1661,148 @@ if (indicatorData) {
       
       console.log(`✅ Indicador ${id ? 'actualizado' : 'creado'} correctamente:`, response.data);
       
-      // 6. Si es una creación, redirigir al listado
+      // 6. Mostrar SweetAlert de éxito
+      await Swal.fire({
+        icon: 'success',
+        title: id ? '¡Actualización exitosa!' : '¡Indicador creado!',
+        text: id 
+          ? `El indicador ha sido actualizado correctamente. ${processedStudentIds.length} estudiante(s) asociado(s).`
+          : 'El indicador ha sido creado exitosamente.',
+        confirmButtonText: 'Aceptar',
+        confirmButtonColor: '#2563eb',
+        timer: 3000,
+        timerProgressBar: true,
+        showClass: {
+          popup: 'animate__animated animate__fadeInDown'
+        },
+        hideClass: {
+          popup: 'animate__animated animate__fadeOutUp'
+        }
+      });
+      
+      // 7. Si es una creación, redirigir al listado
       if (!id) {
-        // Mostrar mensaje de éxito
-        setSuccess('¡Indicador creado exitosamente!');
-        
-        // Redirigir después de un breve retraso para que el usuario vea el mensaje
-        setTimeout(() => {
-          // Limpiar el estado antes de redirigir
-          setSuccess('');
-          // Redirigir al listado de indicadores (usar /indicadores en lugar de /indicators)
-          navigate('/indicadores', { replace: true });
-        }, 1500);
-        
-        // No hacer return aquí para evitar interrumpir el flujo
+        // Redirigir al listado de indicadores
+        navigate('/indicadores', { replace: true });
         return;
       }
       
-      // 7. Si es una actualización, forzar recarga de datos
-      await fetchIndicator();
-      
-      // 8. Actualizar manualmente la lista de estudiantes
-      if (formData.grade && teacherId) {
-        await fetchStudents(teacherId, formData.grade);
+      // 8. Si es una actualización, recargar datos pero preservar los studentids enviados
+      if (id) {
+        console.log('🔄 Recargando datos después de actualizar...');
+        
+        // Guardar los student_ids que se enviaron exitosamente
+        const sentStudentIds = processedStudentIds.map(String);
+        console.log('💾 Student IDs enviados exitosamente:', sentStudentIds);
+        
+        // Esperar un momento para asegurar que la base de datos se actualizó
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Recargar el indicador para sincronizar otros datos
+        await fetchIndicator();
+        
+        // IMPORTANTE: Preservar los studentids enviados exitosamente, no los que vienen del fetchIndicator
+        setFormData(prev => ({
+          ...prev,
+          studentids: sentStudentIds
+        }));
+        
+        // Actualizar manualmente la lista de estudiantes con el estado correcto
+        // Para super_administrador, usar el endpoint especial que obtiene todos los estudiantes del grado
+        // Para docentes, usar fetchStudents normal
+        if (formData.grade) {
+          if (user?.role === 'super_administrador' && id) {
+            console.log('👑 Super administrador: recargando estudiantes usando endpoint especial');
+            
+            // Usar el endpoint especial que obtiene todos los estudiantes del grado del indicador
+            const token = localStorage.getItem('authToken');
+            const indicatorStudentsResponse = await axios.get(`/api/indicators/${id}/students`, {
+              headers: { 
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              },
+              withCredentials: true
+            });
+            
+            if (indicatorStudentsResponse.data?.success && Array.isArray(indicatorStudentsResponse.data.data)) {
+              const allStudents = indicatorStudentsResponse.data.data;
+              console.log(`📊 Total estudiantes del grado obtenidos: ${allStudents.length}`);
+              
+              // Procesar estudiantes con su estado de indicador y estado de usuario
+              const processedStudents = allStudents.map(student => ({
+                id: String(student.id),
+                name: student.name || `Estudiante ${student.id}`,
+                grade: student.grade || formData.grade,
+                email: student.email || '',
+                hasIndicator: student.has_indicator === 1,
+                has_indicator: student.has_indicator || 0,
+                achieved: student.achieved || false,
+                user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+              }));
+              
+              console.log('👥 Estudiantes procesados (con estado de indicador):', processedStudents.map(s => ({
+                id: s.id,
+                name: s.name,
+                hasIndicator: s.hasIndicator
+              })));
+              
+              // Actualizar el estado visual basándose en los IDs enviados exitosamente
+              // Esto asegura que los checkboxes reflejen el estado correcto después de la actualización
+              const updatedStudents = processedStudents.map(student => {
+                const studentId = String(student.id);
+                // Usar sentStudentIds para determinar si tiene indicador (estado después de la actualización)
+                const hasIndicator = sentStudentIds.includes(studentId);
+                return {
+                  ...student,
+                  hasIndicator: hasIndicator,
+                  has_indicator: hasIndicator ? 1 : 0
+                };
+              });
+              
+              // Agregar opciones por defecto
+              const defaultOptions = [
+                { id: 'none', name: 'No aplicar aún', grade: formData.grade, hasIndicator: false },
+                { id: 'all', name: 'Todos los estudiantes del curso', grade: formData.grade, hasIndicator: false }
+              ];
+              
+              setStudents([...defaultOptions, ...updatedStudents]);
+              
+              // Actualizar formData.studentids con los IDs enviados (que ya reflejan el estado correcto)
+              setFormData(prev => ({
+                ...prev,
+                studentids: sentStudentIds
+              }));
+              
+              console.log('✅ Estudiantes recargados correctamente (super_administrador):', {
+                total: updatedStudents.length,
+                conIndicador: updatedStudents.filter(s => s.hasIndicator).length,
+                sentStudentIds: sentStudentIds
+              });
+            } else {
+              console.error('❌ Error: La respuesta no tiene el formato esperado:', indicatorStudentsResponse.data);
+            }
+          } else if (teacherId) {
+            // Para docentes, usar fetchStudents normal
+            await fetchStudents(teacherId, formData.grade);
+            
+            // Después de cargar estudiantes, actualizar el estado visual con los IDs enviados
+            setStudents(prevStudents => 
+              prevStudents.map(student => {
+                const studentId = String(student.id);
+                const hasIndicator = sentStudentIds.includes(studentId);
+                return {
+                  ...student,
+                  hasIndicator: hasIndicator,
+                  has_indicator: hasIndicator ? 1 : 0
+                };
+              })
+            );
+          }
+        }
       }
 
-      // 8. Mostrar mensaje de éxito
+      // 8. Indicador actualizado correctamente (el SweetAlert ya se mostró arriba)
       console.log('🎉 Indicador actualizado correctamente');
-      setSuccess('Los cambios se guardaron correctamente');
-      setTimeout(() => setSuccess(''), 3000);
     } catch (error) {
       console.error('❌ Error al guardar los cambios:', error);
       
@@ -1368,6 +1828,18 @@ if (indicatorData) {
       } else {
         errorMessage = error.message || 'Error desconocido al guardar los cambios';
       }
+      
+      // Mostrar SweetAlert de error
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error al guardar',
+        text: errorMessage,
+        confirmButtonText: 'Aceptar',
+        confirmButtonColor: '#dc2626',
+        showClass: {
+          popup: 'animate__animated animate__shakeX'
+        }
+      });
       
       setError(errorMessage);
     } finally {
@@ -1402,21 +1874,28 @@ if (indicatorData) {
   // Función para manejar el cambio de estado de un estudiante
   const handleStudentToggle = (studentId) => {
     setFormData(prev => {
-      // Siempre asegura array
+      // Siempre asegura array y deduplica
       const currentStudentIds = Array.isArray(prev.studentids) ? prev.studentids : [];
-      const index = currentStudentIds.indexOf(studentId);
+      // Normalizar a string y deduplicar
+      const normalizedIds = [...new Set(currentStudentIds.map(id => String(id)))];
+      const studentIdStr = String(studentId);
+      const index = normalizedIds.indexOf(studentIdStr);
       let updatedStudentIds;
   
       if (index === -1) {
-        updatedStudentIds = [...currentStudentIds, studentId];
+        // Agregar el estudiante (ya deduplicado)
+        updatedStudentIds = [...normalizedIds, studentIdStr];
       } else {
-        updatedStudentIds = [...currentStudentIds];
-        updatedStudentIds.splice(index, 1);
+        // Quitar el estudiante
+        updatedStudentIds = normalizedIds.filter(id => id !== studentIdStr);
       }
+  
+      // Asegurar que no hay duplicados
+      const finalStudentIds = [...new Set(updatedStudentIds)];
   
       return {
         ...prev,
-        studentids: updatedStudentIds
+        studentids: finalStudentIds
       };
     });
   };
@@ -1556,82 +2035,304 @@ if (indicatorData) {
       );
     }
   
-    // Filtrar estudiantes por término de búsqueda
-    const filteredStudents = realStudents.filter(student => {
-      if (!searchTerm.trim()) return true;
-      const term = searchTerm.toLowerCase();
-      const nameMatch = student.name?.toLowerCase().includes(term);
-      const emailMatch = student.email?.toLowerCase().includes(term);
-      const idMatch = String(student.id).toLowerCase().includes(term);
-      return nameMatch || emailMatch || idMatch;
+    // Filtrar y ordenar estudiantes (solo por búsqueda)
+    let filteredStudents = realStudents.filter(student => {
+      // Filtrar solo por búsqueda (nombre, email o ID)
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase();
+        const nameMatch = student.name?.toLowerCase().includes(term);
+        const emailMatch = student.email?.toLowerCase().includes(term);
+        const idMatch = String(student.id).toLowerCase().includes(term);
+        if (!nameMatch && !emailMatch && !idMatch) return false;
+      }
+      
+      return true;
+    });
+    
+    // Ordenar estudiantes
+    filteredStudents.sort((a, b) => {
+      let aVal, bVal;
+      
+      switch (sortBy) {
+        case 'name':
+          aVal = (a.name || '').toLowerCase();
+          bVal = (b.name || '').toLowerCase();
+          break;
+        case 'grade':
+          aVal = a.grade || '';
+          bVal = b.grade || '';
+          break;
+        case 'email':
+          aVal = (a.email || '').toLowerCase();
+          bVal = (b.email || '').toLowerCase();
+          break;
+        case 'status':
+          const aSelected = Array.isArray(formData.studentids) && formData.studentids.includes(String(a.id));
+          const bSelected = Array.isArray(formData.studentids) && formData.studentids.includes(String(b.id));
+          const aHasIndicator = a.hasIndicator === true || a.has_indicator === 1;
+          const bHasIndicator = b.hasIndicator === true || b.has_indicator === 1;
+          aVal = aSelected ? 2 : (aHasIndicator ? 1 : 0);
+          bVal = bSelected ? 2 : (bHasIndicator ? 1 : 0);
+          break;
+        default:
+          aVal = (a.name || '').toLowerCase();
+          bVal = (b.name || '').toLowerCase();
+      }
+      
+      if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
+      return 0;
     });
   
-    if (filteredStudents.length === 0) {
-      return (
-        <div className="text-center py-8">
-          {/* ... contenido ... */}
-        </div>
-      );
-    }
+    // No retornar aquí, mantener los filtros visibles incluso sin resultados
+    
+    // Ya no necesitamos uniqueGrades porque eliminamos el filtro de grado
+    
+    // Función para cambiar el orden de clasificación
+    const handleSort = (column) => {
+      if (sortBy === column) {
+        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      } else {
+        setSortBy(column);
+        setSortOrder('asc');
+      }
+    };
   
     return (
       <div className="space-y-4">
-        {/* Barra de búsqueda */}
-        <div className="input-group mb-3">
-          {/* ... contenido ... */}
+        {/* Controles de filtro - Una sola fila */}
+        <div className="bg-gradient-to-r from-blue-50 to-gray-50 p-4 rounded-lg border-2 border-gray-300 shadow-md">
+          <div className="flex flex-wrap items-end gap-4">
+            {/* Búsqueda */}
+            <div className="flex-1 min-w-[520px]">
+              <label className="block text-sm font-bold text-gray-800 mb-3 mx-2 my-2">
+                🔍 Buscar estudiante:
+              </label>
+              <input
+                type="text"
+                placeholder="Nombre, email o ID del estudiante..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2.5 border-2 border-gray-400 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-600 transition-all bg-white text-gray-900 font-medium"
+              />
+            </div>
+            
+            {/* Botones de selección */}
+            <div className="d-flex gap-2 ml-auto">
+              <button
+                type="button"
+                onClick={toggleSelectAllStudents}
+                className="btn btn-primary btn-sm"
+                disabled={realStudents.length === 0}
+              >
+                Seleccionar todo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFormData(prev => ({
+                    ...prev,
+                    studentids: []
+                  }));
+                }}
+                className="btn btn-secondary btn-sm"
+                disabled={realStudents.length === 0}
+              >
+                Deseleccionar
+              </button>
+            </div>
+            
+            {/* Botón limpiar búsqueda */}
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="btn btn-outline-secondary btn-sm"
+              >
+                Limpiar búsqueda
+              </button>
+            )}
+          </div>
+          
+          {/* Contador de resultados */}
+          <div className="mt-3 pt-3 border-t-2 border-gray-300">
+            <div className="text-sm font-semibold text-gray-700">
+              Mostrando <span className="text-blue-700 font-bold">{filteredStudents.length}</span> de <span className="text-gray-900 font-bold">{realStudents.length}</span> estudiantes
+            </div>
+          </div>
         </div>
         
-        {/* Lista de estudiantes */}
-        <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-          {filteredStudents.map(student => {
-            const hasIndicator = student.hasIndicator === true || student.has_indicator === 1;
-            // Protección aquí
-            const isSelected = Array.isArray(formData.studentids) && formData.studentids.includes(String(student.id));
-            
-            return (
-              <div key={student.id} className={`flex items-center p-3 transition-colors ${
-                isSelected 
-                  ? 'bg-blue-50 border-l-4 border-l-blue-500' 
-                  : hasIndicator 
-                    ? 'bg-green-50 border-l-4 border-l-green-500' 
-                    : 'hover:bg-gray-50 border-l-4 border-l-transparent'
-              }`}>
-                <div className="flex items-center w-full">
-                  <div className="relative flex items-center">
+        {/* Tabla de estudiantes */}
+        {filteredStudents.length === 0 ? (
+          <div className="bg-white border border-gray-200 rounded-lg p-6 text-center">
+            <div className="mb-3">
+              <svg className="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+              </svg>
+            </div>
+            <p className="text-gray-700 font-medium text-base mb-1">No se encontraron estudiantes</p>
+            <p className="text-gray-500 text-sm mb-4">
+              No hay estudiantes que coincidan con los filtros aplicados. Prueba ajustando los filtros.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+              }}
+              className="inline-flex items-center px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 text-sm font-medium shadow-sm transition-colors duration-200"
+            >
+              Limpiar búsqueda
+            </button>
+          </div>
+        ) : (
+          <div className="table-responsive table-responsive-wrapper">
+            <table className="table table-bordered table-hover table-striped">
+              <thead className="table-dark">
+                <tr>
+                  <th scope="col" className="text-center" style={{ width: '50px' }}>
                     <input
                       type="checkbox"
-                      checked={isSelected}
-                      onChange={() => handleStudentToggle(student.id)}
-                      className={`w-5 h-5 rounded border ${
-                        isSelected
-                          ? 'bg-blue-100 border-blue-600 text-blue-600 focus:ring-blue-200'
-                          : 'border-gray-300 hover:border-blue-500 bg-white hover:bg-gray-50 focus:ring-blue-200'
-                      } cursor-pointer transition-colors focus:ring-2 focus:ring-offset-1`}
-                      disabled={isUpdating}
-                      title={isSelected ? 'Deseleccionar estudiante' : 'Seleccionar estudiante'}
-                    />
-                  </div>
-                  <label className="ml-3 flex-1 flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900">
-                        {student.name || `Estudiante ${student.id}`}
-                        {student.grade && ` - Grado ${student.grade}`}
-                      </p>
-                      {student.email && (
-                        <p className="text-sm text-gray-500">{student.email}</p>
+                      checked={realStudents.length > 0 && realStudents.filter(s => !['none', 'all'].includes(String(s.id))).every(s => 
+                        Array.isArray(formData.studentids) && formData.studentids.includes(String(s.id))
                       )}
-                    </div>
-                    {hasIndicator && !isSelected && (
-                      <span className="ml-2 px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
-                        Ya tiene indicador
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          toggleSelectAllStudents();
+                        } else {
+                          setFormData(prev => ({
+                            ...prev,
+                            studentids: []
+                          }));
+                        }
+                      }}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      disabled={filteredStudents.length === 0}
+                    />
+                  </th>
+                  <th 
+                    scope="col" 
+                    className="cursor-pointer"
+                    onClick={() => handleSort('name')}
+                  >
+                    Nombre
+                    {sortBy === 'name' && (
+                      <span className="ms-2">
+                        {sortOrder === 'asc' ? '↑' : '↓'}
                       </span>
                     )}
-                  </label>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                  </th>
+                  <th 
+                    scope="col" 
+                    className="cursor-pointer"
+                    onClick={() => handleSort('grade')}
+                  >
+                    Grado
+                    {sortBy === 'grade' && (
+                      <span className="ms-2">
+                        {sortOrder === 'asc' ? '↑' : '↓'}
+                      </span>
+                    )}
+                  </th>
+                  <th 
+                    scope="col" 
+                    className="cursor-pointer"
+                    onClick={() => handleSort('email')}
+                  >
+                    Email
+                    {sortBy === 'email' && (
+                      <span className="ms-2">
+                        {sortOrder === 'asc' ? '↑' : '↓'}
+                      </span>
+                    )}
+                  </th>
+                  {user?.role === 'super_administrador' && (
+                    <th scope="col">
+                      Estado Usuario
+                    </th>
+                  )}
+                  <th 
+                    scope="col" 
+                    className="cursor-pointer"
+                    onClick={() => handleSort('status')}
+                  >
+                    Estado Indicador
+                    {sortBy === 'status' && (
+                      <span className="ms-2">
+                        {sortOrder === 'asc' ? '↑' : '↓'}
+                      </span>
+                    )}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredStudents.map((student, index) => {
+                  const hasIndicator = student.hasIndicator === true || student.has_indicator === 1;
+                  const isSelected = Array.isArray(formData.studentids) && formData.studentids.includes(String(student.id));
+                  
+                  // Usar una clave única combinando id e index para evitar duplicados
+                  const uniqueKey = `student-${String(student.id)}-${index}`;
+                  
+                  // Determinar el estado del usuario
+                  const userEstado = student.user_estado || student.estado;
+                  const isUserActive = userEstado === 'activo' || userEstado === 1 || userEstado === '1';
+                  
+                  return (
+                    <tr 
+                      key={uniqueKey}
+                      className={isSelected ? 'table-primary' : hasIndicator ? 'table-success' : ''}
+                    >
+                      <td className="text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleStudentToggle(student.id)}
+                          className="form-check-input"
+                          disabled={isUpdating || ['none', 'all'].includes(String(student.id))}
+                          title={isSelected ? 'Deseleccionar estudiante' : 'Seleccionar estudiante'}
+                        />
+                      </td>
+                      <td className="fw-bold">
+                        {student.name || `Estudiante ${student.id}`}
+                      </td>
+                      <td>
+                        {student.grade || 'N/A'}
+                      </td>
+                      <td>
+                        <span className="text-truncate d-inline-block" style={{ maxWidth: '200px' }} title={student.email || 'N/A'}>
+                          {student.email || 'N/A'}
+                        </span>
+                      </td>
+                      {user?.role === 'super_administrador' && (
+                        <td>
+                          <span className={`badge ${isUserActive ? 'bg-success' : 'bg-danger'}`}>
+                            {isUserActive ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </td>
+                      )}
+                      <td>
+                        {isSelected && (
+                          <span className="badge bg-primary">
+                            ✓ Seleccionado
+                          </span>
+                        )}
+                        {hasIndicator && !isSelected && (
+                          <span className="badge bg-success">
+                            ✓ Con indicador
+                          </span>
+                        )}
+                        {!isSelected && !hasIndicator && (
+                          <span className="badge bg-secondary">
+                            Sin indicador
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   };
@@ -1819,20 +2520,23 @@ if (indicatorData) {
         <div className="mb-4 p-4 border rounded-lg bg-white">
           <h3 className="text-lg font-medium text-gray-900 mb-3">Aplicar indicador a estudiantes</h3>
           {realStudents.length > 0 && (
-            <div className="d-flex gap-2 mb-3">
+            <div className="flex flex-wrap gap-2 mb-3">
               <button
                 type="button"
-                className="btn btn-outline-primary btn-sm"
+                className="btn btn-primary btn-sm m-3"
                 onClick={() => toggleSelectAllStudents(true)}
-                disabled={loading}
+                disabled={loading || realStudents.length === 0}
               >
                 Seleccionar todo el curso
               </button>
               <button
                 type="button"
-                className="btn btn-outline-secondary btn-sm"
+                // Cambiamos btn-secondary por btn-success (verde) 
+                // Añadimos ms-2 (margin start/izquierdo) y p-2 (padding general)
+                className="btn btn-success btn-sm ms-2 p-2" 
+                style={{ backgroundColor: '#90ee90', borderColor: '#90ee90', color: '#000' }} // Verde claro manual
                 onClick={() => toggleSelectAllStudents(false)}
-                disabled={loading}
+                disabled={loading || realStudents.length === 0}
               >
                 Deseleccionar todo
               </button>
@@ -1875,13 +2579,25 @@ if (indicatorData) {
           <label className="form-check-label" htmlFor="achieved">Logrado</label>
         </div>
         
-        <div className="d-flex gap-2">
-          <button type="submit" className="btn btn-primary">
-            {isEditing ? 'Actualizar' : 'Crear'} Indicador
+        <div className="d-flex gap-2 mt-4">
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="btn btn-primary"
+            style={{ backgroundColor: '#0d6efd', borderColor: '#0d6efd', color: '#fff' }}
+          >
+            {loading ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                {isEditing ? 'Actualizando...' : 'Creando...'}
+              </>
+            ) : (
+              <>{isEditing ? 'Actualizar' : 'Crear'} Indicador</>
+            )}
           </button>
           <button 
             type="button" 
-            className="btn btn-secondary" 
+            className="btn btn-secondary"
             onClick={() => navigate('/indicadores')}
           >
             Cancelar

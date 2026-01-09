@@ -25,7 +25,7 @@ export const getStudents = async (req, res) => {
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN courses c ON s.course_id = c.id
-      ORDER BY s.name
+      ORDER BY u.name
     `;
 
     const [students] = await pool.query(query);
@@ -56,8 +56,13 @@ export const getStudentById = async (req, res) => {
       student_id: req.user.student_id 
     });
 
+    // Si es admin o super_administrador, permitir acceso sin restricciones
+    if (userRole === 'admin' || userRole === 'super_administrador') {
+      console.log('Acceso permitido para administrador/super_administrador');
+      // Continuar con la obtención de datos sin restricciones
+    }
     // Si es docente, verificar que el estudiante esté asignado a él
-    if (userRole === 'docente') {
+    else if (userRole === 'docente') {
       console.log('Verificando permisos para docente...');
       
       // 1. Primero, obtener el ID del profesor
@@ -224,7 +229,12 @@ export const updateStudent = async (req, res) => {
 
   try {
     // 1. Verificar permisos
-    if (userRole === 'docente') {
+    // Si es admin o super_administrador, permitir acceso sin restricciones
+    if (userRole === 'admin' || userRole === 'super_administrador') {
+      console.log('Acceso permitido para administrador/super_administrador a actualizar estudiante');
+      // Continuar con la actualización sin restricciones
+    }
+    else if (userRole === 'docente') {
       // Verificar que el estudiante esté asignado a este docente
       const [teacher] = await connection.query(
         'SELECT id FROM teachers WHERE user_id = ?', 
