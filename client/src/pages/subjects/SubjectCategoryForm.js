@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import axios from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
+import { Edit, Trash2, Plus, X } from 'lucide-react';
 
 const MySwal = withReactContent(Swal);
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const SubjectCategoryForm = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   
+  const [allCategories, setAllCategories] = useState([]); // Todas las materias y categorías
   const [subjects, setSubjects] = useState([]);
   const [categories, setCategories] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
@@ -26,28 +27,23 @@ const SubjectCategoryForm = () => {
   const [newCategory, setNewCategory] = useState('');
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   
-  // Cargar materias y categorías iniciales
+  // Estados para editar
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [editSubject, setEditSubject] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  
+  // Cargar todas las materias y categorías
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchAllData = async () => {
       setLoading(true);
       try {
-        // Cargar materias
-        const subjectsResponse = await axios.get(`${API_URL}/api/subjects`);
-        setSubjects(subjectsResponse.data);
+        // Cargar todas las materias y categorías
+        const allResponse = await axios.get('/subject-categories-all');
+        setAllCategories(Array.isArray(allResponse.data) ? allResponse.data : []);
         
-        // Si el docente ya tiene una materia asignada, cargarla por defecto
-        if (user?.id) {
-          const teacherResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
-          if (teacherResponse.data.subject) {
-            setSelectedSubject(teacherResponse.data.subject);
-            
-            // Cargar categorías de esa materia
-            const categoriesResponse = await axios.get(
-              `${API_URL}/api/subject-categories/${teacherResponse.data.subject}`
-            );
-            setCategories(categoriesResponse.data);
-          }
-        }
+        // Cargar materias únicas
+        const subjectsResponse = await axios.get('/subjects');
+        setSubjects(Array.isArray(subjectsResponse.data) ? subjectsResponse.data : []);
         
         setLoading(false);
       } catch (err) {
@@ -57,17 +53,20 @@ const SubjectCategoryForm = () => {
       }
     };
     
-    fetchData();
-  }, [user]);
+    fetchAllData();
+  }, []);
   
   // Cargar categorías cuando cambia la materia seleccionada
   useEffect(() => {
     const fetchCategories = async () => {
-      if (!selectedSubject) return;
+      if (!selectedSubject) {
+        setCategories([]);
+        return;
+      }
       
       try {
-        const response = await axios.get(`${API_URL}/api/subject-categories/${selectedSubject}`);
-        setCategories(response.data);
+        const response = await axios.get(`/subject-categories/${selectedSubject}`);
+        setCategories(Array.isArray(response.data) ? response.data : []);
       } catch (err) {
         console.error('Error al cargar categorías:', err);
         setError('Error al cargar las categorías');
@@ -75,11 +74,25 @@ const SubjectCategoryForm = () => {
     };
     
     fetchCategories();
-  }, [selectedSubject]);
+  }, [selectedSubject, allCategories]);
+  
+  // Función para refrescar datos
+  const refreshData = async () => {
+    try {
+      const allResponse = await axios.get('/subject-categories-all');
+      setAllCategories(Array.isArray(allResponse.data) ? allResponse.data : []);
+      
+      const subjectsResponse = await axios.get('/subjects');
+      setSubjects(Array.isArray(subjectsResponse.data) ? subjectsResponse.data : []);
+    } catch (err) {
+      console.error('Error al refrescar datos:', err);
+    }
+  };
   
   // Manejar cambio de materia seleccionada
   const handleSubjectChange = (e) => {
     setSelectedSubject(e.target.value);
+    setEditingCategory(null);
   };
   
   // Crear nueva materia
@@ -96,18 +109,9 @@ const SubjectCategoryForm = () => {
     }
     
     try {
-      // Crear nueva materia en la base de datos
-      // Nota: Necesitarás implementar esta ruta en el servidor
-      await axios.post(`${API_URL}/api/subjects`, { subject: newSubject });
-      
-      // Actualizar lista de materias
-      const response = await axios.get(`${API_URL}/api/subjects`);
-      setSubjects(response.data);
-      
-      // Seleccionar la nueva materia
+      await axios.post('/subjects', { subject: newSubject });
+      await refreshData();
       setSelectedSubject(newSubject);
-      
-      // Limpiar y cerrar el formulario
       setNewSubject('');
       setShowSubjectForm(false);
       
@@ -121,7 +125,7 @@ const SubjectCategoryForm = () => {
       MySwal.fire({
         icon: 'error',
         title: 'Error',
-        text: 'No se pudo crear la materia'
+        text: err.response?.data?.message || 'No se pudo crear la materia'
       });
     }
   };
@@ -149,18 +153,12 @@ const SubjectCategoryForm = () => {
     }
     
     try {
-      // Crear nueva categoría en la base de datos
       const fullCategoryName = `${selectedSubject}_${newCategory}`;
-      await axios.post(`${API_URL}/api/subject-categories`, {
+      await axios.post('/subject-categories', {
         subject: selectedSubject,
         category: fullCategoryName
       });
-      
-      // Actualizar lista de categorías
-      const response = await axios.get(`${API_URL}/api/subject-categories/${selectedSubject}`);
-      setCategories(response.data);
-      
-      // Limpiar y cerrar el formulario
+      await refreshData();
       setNewCategory('');
       setShowCategoryForm(false);
       
@@ -174,8 +172,92 @@ const SubjectCategoryForm = () => {
       MySwal.fire({
         icon: 'error',
         title: 'Error',
-        text: 'No se pudo crear la categoría'
+        text: err.response?.data?.message || 'No se pudo crear la categoría'
       });
+    }
+  };
+  
+  // Iniciar edición de categoría
+  const handleEditCategory = (category) => {
+    setEditingCategory(category.id);
+    setEditSubject(category.subject);
+    const categoryName = category.category.split('_').slice(1).join('_');
+    setEditCategory(categoryName);
+  };
+  
+  // Cancelar edición
+  const handleCancelEdit = () => {
+    setEditingCategory(null);
+    setEditSubject('');
+    setEditCategory('');
+  };
+  
+  // Guardar edición de categoría
+  const handleUpdateCategory = async (id) => {
+    if (!editSubject.trim() || !editCategory.trim()) {
+      MySwal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: 'Por favor complete todos los campos'
+      });
+      return;
+    }
+    
+    try {
+      const fullCategoryName = `${editSubject}_${editCategory}`;
+      await axios.put(`/subject-categories/${id}`, {
+        subject: editSubject,
+        category: fullCategoryName
+      });
+      await refreshData();
+      handleCancelEdit();
+      
+      MySwal.fire({
+        icon: 'success',
+        title: 'Categoría actualizada',
+        text: 'La categoría ha sido actualizada exitosamente'
+      });
+    } catch (err) {
+      console.error('Error al actualizar categoría:', err);
+      MySwal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.response?.data?.message || 'No se pudo actualizar la categoría'
+      });
+    }
+  };
+  
+  // Eliminar categoría
+  const handleDeleteCategory = async (id, categoryName) => {
+    const result = await MySwal.fire({
+      icon: 'warning',
+      title: '¿Eliminar categoría?',
+      html: `¿Estás seguro de que deseas eliminar la categoría <b>${categoryName}</b>?<br/><br/>Esta acción no se puede deshacer.`,
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    
+    if (result.isConfirmed) {
+      try {
+        await axios.delete(`/subject-categories/${id}`);
+        await refreshData();
+        
+        MySwal.fire({
+          icon: 'success',
+          title: 'Categoría eliminada',
+          text: 'La categoría ha sido eliminada exitosamente'
+        });
+      } catch (err) {
+        console.error('Error al eliminar categoría:', err);
+        MySwal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: err.response?.data?.message || 'No se pudo eliminar la categoría'
+        });
+      }
     }
   };
   
@@ -212,11 +294,11 @@ const SubjectCategoryForm = () => {
           </button>
         </div>
         <div className="card-body">
+          {/* Sección de creación rápida */}
           <div className="row mb-4">
             <div className="col-md-6">
               <h6 className="mb-3">Materias</h6>
               
-              {/* Selector de materias */}
               <div className="d-flex mb-2">
                 <select
                   className="form-select"
@@ -235,11 +317,10 @@ const SubjectCategoryForm = () => {
                   className="btn btn-outline-primary ms-2"
                   onClick={() => setShowSubjectForm(!showSubjectForm)}
                 >
-                  {showSubjectForm ? 'Cancelar' : 'Nueva'}
+                  {showSubjectForm ? <X size={18} /> : <Plus size={18} />}
                 </button>
               </div>
               
-              {/* Formulario para nueva materia */}
               {showSubjectForm && (
                 <form onSubmit={handleCreateSubject} className="mt-3">
                   <div className="input-group">
@@ -250,10 +331,7 @@ const SubjectCategoryForm = () => {
                       value={newSubject}
                       onChange={(e) => setNewSubject(e.target.value)}
                     />
-                    <button 
-                      type="submit" 
-                      className="btn btn-success"
-                    >
+                    <button type="submit" className="btn btn-success">
                       Guardar
                     </button>
                   </div>
@@ -264,42 +342,18 @@ const SubjectCategoryForm = () => {
             <div className="col-md-6">
               <h6 className="mb-3">Categorías</h6>
               
-              {/* Lista de categorías */}
-              <div className="mb-2">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <span>Categorías de {selectedSubject || 'la materia seleccionada'}</span>
-                  <button 
-                    type="button" 
-                    className="btn btn-outline-primary btn-sm"
-                    onClick={() => setShowCategoryForm(!showCategoryForm)}
-                    disabled={!selectedSubject}
-                  >
-                    {showCategoryForm ? 'Cancelar' : 'Nueva Categoría'}
-                  </button>
-                </div>
-                
-                {selectedSubject ? (
-                  categories.length > 0 ? (
-                    <ul className="list-group">
-                      {categories.map((cat, index) => (
-                        <li key={index} className="list-group-item">
-                          {cat.category.split('_')[1] || cat.category}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="alert alert-info">
-                      No hay categorías para esta materia
-                    </div>
-                  )
-                ) : (
-                  <div className="alert alert-warning">
-                    Seleccione una materia para ver sus categorías
-                  </div>
-                )}
+              <div className="d-flex justify-content-between align-items-center mb-2">
+                <span>Categorías de {selectedSubject || 'la materia seleccionada'}</span>
+                <button 
+                  type="button" 
+                  className="btn btn-outline-primary btn-sm"
+                  onClick={() => setShowCategoryForm(!showCategoryForm)}
+                  disabled={!selectedSubject}
+                >
+                  {showCategoryForm ? <X size={18} /> : <Plus size={18} />}
+                </button>
               </div>
               
-              {/* Formulario para nueva categoría */}
               {showCategoryForm && selectedSubject && (
                 <form onSubmit={handleCreateCategory} className="mt-3">
                   <div className="input-group">
@@ -310,15 +364,114 @@ const SubjectCategoryForm = () => {
                       value={newCategory}
                       onChange={(e) => setNewCategory(e.target.value)}
                     />
-                    <button 
-                      type="submit" 
-                      className="btn btn-success"
-                    >
+                    <button type="submit" className="btn btn-success">
                       Guardar
                     </button>
                   </div>
                 </form>
               )}
+            </div>
+          </div>
+          
+          {/* Tabla completa de todas las materias y categorías */}
+          <div className="mt-4">
+            <h6 className="mb-3">Todas las Materias y Categorías</h6>
+            <div className="table-responsive">
+              <table className="table table-striped table-hover">
+                <thead className="table-dark">
+                  <tr>
+                    <th>ID</th>
+                    <th>Materia</th>
+                    <th>Categoría</th>
+                    <th className="text-end">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {allCategories.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="text-center py-3">
+                        No hay materias o categorías registradas
+                      </td>
+                    </tr>
+                  ) : (
+                    allCategories.map((item) => {
+                      const isEditing = editingCategory === item.id;
+                      const categoryName = item.category.split('_').slice(1).join('_') || item.category;
+                      
+                      return (
+                        <tr key={item.id}>
+                          <td>{item.id}</td>
+                          <td>
+                            {isEditing ? (
+                              <select
+                                className="form-select form-select-sm"
+                                value={editSubject}
+                                onChange={(e) => setEditSubject(e.target.value)}
+                              >
+                                {subjects.map((s, idx) => (
+                                  <option key={idx} value={s}>{s}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              item.subject
+                            )}
+                          </td>
+                          <td>
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                value={editCategory}
+                                onChange={(e) => setEditCategory(e.target.value)}
+                                placeholder="Nombre de categoría"
+                              />
+                            ) : (
+                              categoryName
+                            )}
+                          </td>
+                          <td className="text-end">
+                            {isEditing ? (
+                              <div className="btn-group btn-group-sm">
+                                <button
+                                  className="btn btn-success"
+                                  onClick={() => handleUpdateCategory(item.id)}
+                                  title="Guardar"
+                                >
+                                  <Plus size={16} />
+                                </button>
+                                <button
+                                  className="btn btn-secondary"
+                                  onClick={handleCancelEdit}
+                                  title="Cancelar"
+                                >
+                                  <X size={16} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="btn-group btn-group-sm">
+                                <button
+                                  className="btn btn-warning"
+                                  onClick={() => handleEditCategory(item)}
+                                  title="Editar"
+                                >
+                                  <Edit size={16} />
+                                </button>
+                                <button
+                                  className="btn btn-danger"
+                                  onClick={() => handleDeleteCategory(item.id, categoryName)}
+                                  title="Eliminar"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

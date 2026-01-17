@@ -17,10 +17,27 @@ router.get('/', verifyToken, async (req, res) => {
     
     let params = [];
     let conditions = [];
+    // Verificar si el campo institution existe en users
+    let hasInstitution = false;
+    try {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    const institutionField = hasInstitution ? ', u.institution' : '';
+    
     let query = `
       SELECT 
         q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
-        u.name as created_by_name,
+        u.name as created_by_name${institutionField},
         c.name as course_name,
         (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
       FROM questionnaires q

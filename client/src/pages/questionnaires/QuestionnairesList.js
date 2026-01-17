@@ -12,6 +12,8 @@ const QuestionnairesList = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterPhase, setFilterPhase] = useState('all');
   const [filterGrade, setFilterGrade] = useState('all');
+  const [filterTeacher, setFilterTeacher] = useState('');  // ✨ AGREGADO: filtro por docente
+  const [filterInstitution, setFilterInstitution] = useState('');  // ✨ AGREGADO: filtro por institución
   const [error, setError] = useState(null);
   
   useEffect(() => {
@@ -88,7 +90,9 @@ const QuestionnairesList = () => {
     const matchesSearch = 
       q.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       q.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.course_name?.toLowerCase().includes(searchTerm.toLowerCase());
+      q.course_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      q.created_by_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||  // ✨ AGREGADO: buscar en nombre del docente
+      (q.institution || '').toLowerCase().includes(searchTerm.toLowerCase());  // ✨ AGREGADO: buscar en institución
     
     // Filtro por fase
     const matchesPhase = filterPhase === 'all' || q.phase === parseInt(filterPhase);
@@ -96,7 +100,15 @@ const QuestionnairesList = () => {
     // Filtro por grado
     const matchesGrade = filterGrade === 'all' || q.grade === parseInt(filterGrade);
     
-    return matchesSearch && matchesPhase && matchesGrade;
+    // ✨ AGREGADO: Filtro por docente (nombre del creador)
+    const matchesTeacher = !filterTeacher || 
+      (q.created_by_name || '').toLowerCase().includes(filterTeacher.toLowerCase());
+    
+    // ✨ AGREGADO: Filtro por institución
+    const matchesInstitution = !filterInstitution || 
+      (q.institution || '').toLowerCase().includes(filterInstitution.toLowerCase());
+    
+    return matchesSearch && matchesPhase && matchesGrade && matchesTeacher && matchesInstitution;
   });
   
   return (
@@ -118,7 +130,7 @@ const QuestionnairesList = () => {
       <div className="card mb-4">
         <div className="card-body">
           <div className="row mb-3">
-            <div className="col-md-4">
+            <div className="col-md-3">
               <div className="input-group">
                 <span className="input-group-text">
                   <Search size={18} />
@@ -132,7 +144,7 @@ const QuestionnairesList = () => {
                 />
               </div>
             </div>
-            <div className="col-md-4">
+            <div className="col-md-3">
               <select 
                 className="form-select"
                 value={filterPhase}
@@ -145,7 +157,7 @@ const QuestionnairesList = () => {
                 <option value="4">Fase 4</option>
               </select>
             </div>
-            <div className="col-md-4">
+            <div className="col-md-3">
               <select 
                 className="form-select"
                 value={filterGrade}
@@ -159,7 +171,33 @@ const QuestionnairesList = () => {
                 <option value="11">11°</option>
               </select>
             </div>
+            {user?.role === 'super_administrador' && (
+              <>
+                <div className="col-md-3">
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Filtrar por docente..."
+                    value={filterTeacher}
+                    onChange={(e) => setFilterTeacher(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
           </div>
+          {user?.role === 'super_administrador' && (
+            <div className="row mb-3">
+              <div className="col-md-3">
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Filtrar por institución..."
+                  value={filterInstitution}
+                  onChange={(e) => setFilterInstitution(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
           
           {loading ? (
             <div className="text-center py-4">

@@ -14,6 +14,12 @@ const TeacherStudentsList = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({
+    name: '',
+    email: '',
+    course: '',
+    grade: ''
+  });
   
   useEffect(() => {
     const fetchStudents = async () => {
@@ -145,12 +151,33 @@ const TeacherStudentsList = () => {
     fetchStudents();
   }, [user, isAuthReady, navigate]);
   
-  const filteredStudents = students.filter(student => 
-    student.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.grade?.toString().includes(searchTerm) ||
-    student.course_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredStudents = students.filter(student => {
+    // Filtro general (búsqueda rápida)
+    const searchLower = searchTerm.toLowerCase();
+    const matchesSearch = !searchTerm || (
+      (student.name || '').toLowerCase().includes(searchLower) ||
+      (student.email || '').toLowerCase().includes(searchLower) ||
+      (student.grade || '').toString().includes(searchTerm) ||
+      (student.course_name || '').toLowerCase().includes(searchLower)
+    );
+
+    // Filtros específicos
+    const matchesName = !filters.name || (student.name || '').toLowerCase().includes(filters.name.toLowerCase());
+    const matchesEmail = !filters.email || (student.email || '').toLowerCase().includes(filters.email.toLowerCase());
+    const matchesCourse = !filters.course || (student.course_name || '').toLowerCase().includes(filters.course.toLowerCase());
+    const matchesGrade = !filters.grade || (student.grade || '').toString() === filters.grade || (student.grade || '').toString().includes(filters.grade);
+
+    return matchesSearch && matchesName && matchesEmail && matchesCourse && matchesGrade;
+  });
+
+  const handleFilterChange = (field, value) => {
+    setFilters(prev => ({ ...prev, [field]: value }));
+  };
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setFilters({ name: '', email: '', course: '', grade: '' });
+  };
   
   // Mostrar estado de carga
   if (loading) {
@@ -193,22 +220,76 @@ const TeacherStudentsList = () => {
       
       <div className="card shadow-sm mb-4">
         <div className="card-body">
-          <div className="row mb-4">
-            <div className="col-md-6">
-              <div className="input-group">
+          <div className="row mb-3">
+            <div className="col-12">
+              <div className="input-group mb-3">
                 <span className="input-group-text bg-white">
                   <Search size={18} className="text-muted" />
                 </span>
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="Buscar por nombre, email o grado..."
+                  placeholder="Búsqueda rápida (nombre, email, curso, grado)..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
             </div>
           </div>
+          
+          <div className="row g-3 mb-3">
+            <div className="col-md-3">
+              <label className="form-label small text-muted">Filtrar por Nombre</label>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Nombre del estudiante"
+                value={filters.name}
+                onChange={(e) => handleFilterChange('name', e.target.value)}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">Filtrar por Email</label>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Email del estudiante"
+                value={filters.email}
+                onChange={(e) => handleFilterChange('email', e.target.value)}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">Filtrar por Curso</label>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Nombre del curso"
+                value={filters.course}
+                onChange={(e) => handleFilterChange('course', e.target.value)}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label small text-muted">Filtrar por Grado</label>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Ej: 1, 2, 3..."
+                value={filters.grade}
+                onChange={(e) => handleFilterChange('grade', e.target.value)}
+              />
+            </div>
+          </div>
+          
+          {(searchTerm || Object.values(filters).some(f => f)) && (
+            <div className="mb-3">
+              <button
+                className="btn btn-sm btn-outline-secondary"
+                onClick={clearFilters}
+              >
+                Limpiar Filtros
+              </button>
+            </div>
+          )}
           
           <div className="table-responsive">
             <table className="table table-hover align-middle">

@@ -16,7 +16,9 @@ const IndicatorsList = () => {
     phase: '',
     grade: '',
     questionnaire: '',
-    achieved: ''
+    achieved: '',
+    teacher: '',  // ✨ AGREGADO: filtro por docente
+    institution: ''  // ✨ AGREGADO: filtro por institución
   });
   const { user } = useAuth();
   
@@ -319,7 +321,9 @@ const IndicatorsList = () => {
       phase: '',
       grade: '',
       questionnaire: '',
-      achieved: ''
+      achieved: '',
+      teacher: '',  // ✨ AGREGADO
+      institution: ''  // ✨ AGREGADO
     });
   };
   
@@ -448,6 +452,36 @@ const IndicatorsList = () => {
                     </select>
                   </div>
                 </th>
+                {user?.role === 'super_administrador' && (
+                  <>
+                    <th>
+                      <div className="d-flex flex-column">
+                        <span>Docente</span>
+                        <input
+                          type="text"
+                          name="teacher"
+                          value={filters.teacher}
+                          onChange={handleFilterChange}
+                          className="form-control form-control-sm mt-1"
+                          placeholder="Filtrar..."
+                        />
+                      </div>
+                    </th>
+                    <th>
+                      <div className="d-flex flex-column">
+                        <span>Institución</span>
+                        <input
+                          type="text"
+                          name="institution"
+                          value={filters.institution}
+                          onChange={handleFilterChange}
+                          className="form-control form-control-sm mt-1"
+                          placeholder="Filtrar..."
+                        />
+                      </div>
+                    </th>
+                  </>
+                )}
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -479,6 +513,12 @@ const IndicatorsList = () => {
                       {indicator.achieved ? 'Sí' : 'No'}
                     </span>
                   </td>
+                  {user?.role === 'super_administrador' && (
+                    <>
+                      <td>{indicator.teacher_name || <span className="text-muted">-</span>}</td>
+                      <td>{indicator.institution || <span className="text-muted">-</span>}</td>
+                    </>
+                  )}
                   <td>
                     <div className="btn-group btn-group-sm">
                       <Link to={`/indicadores/${indicator.id}/editar`} className="btn btn-warning">

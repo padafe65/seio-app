@@ -298,6 +298,7 @@ router.get('/:id', verifyToken, async (req, res) => {
         u.email as email,
         u.phone as phone,
         u.role,
+        u.institution as user_institution,
         c.name as course_name
       FROM students s
       JOIN users u ON s.user_id = u.id

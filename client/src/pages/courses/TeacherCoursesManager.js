@@ -1,11 +1,9 @@
 // pages/courses/TeacherCoursesManager.js
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import axios from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
-import { Trash2, PlusCircle, Edit3, Calendar, RefreshCw } from 'lucide-react';
+import { Trash2, PlusCircle, Edit3, Calendar, RefreshCw, Award, Building2, User } from 'lucide-react';
 import Swal from 'sweetalert2';
-
-const API_URL = process.env.REACT_APP_API_URL || '';
 
 const TeacherCoursesManager = () => {
   const { user } = useAuth();
@@ -13,46 +11,78 @@ const TeacherCoursesManager = () => {
   const [courses, setCourses] = useState([]);
   const [assignedCourses, setAssignedCourses] = useState([]);
   const [selectedCourse, setSelectedCourse] = useState('');
+  const [selectedTeacher, setSelectedTeacher] = useState('');
+  const [selectedRole, setSelectedRole] = useState('co-docente');
   const [teacherId, setTeacherId] = useState(null);
+  const [teachers, setTeachers] = useState([]);
   const [editingCourse, setEditingCourse] = useState(null);
   const [editSelectedCourse, setEditSelectedCourse] = useState('');
+  const [editSelectedTeacher, setEditSelectedTeacher] = useState('');
+  const [editSelectedRole, setEditSelectedRole] = useState('');
+  
+  const isSuperAdminOrAdmin = user?.role === 'super_administrador' || user?.role === 'administrador';
   
   useEffect(() => {
     const fetchTeacherId = async () => {
       try {
-        if (user) {
-          const response = await axios.get(`${API_URL}/api/teacher-courses/teacher-id/${user.id}`);
+        if (user && !isSuperAdminOrAdmin) {
+          // Si es docente, obtener su teacher_id
+          const response = await axios.get(`/teacher-courses/teacher-id/${user.id}`);
           setTeacherId(response.data.teacherId);
+          setSelectedTeacher(response.data.teacherId.toString());
           fetchAssignedCourses(response.data.teacherId);
+        } else if (isSuperAdminOrAdmin && selectedTeacher) {
+          // Si es super admin/admin y hay un docente seleccionado
+          fetchAssignedCourses(parseInt(selectedTeacher));
+        } else if (isSuperAdminOrAdmin && teachers.length > 0 && !selectedTeacher) {
+          // Si es super admin/admin y hay docentes pero no se ha seleccionado ninguno
+          // No cargar cursos hasta que se seleccione un docente
+          setLoading(false);
         }
       } catch (error) {
         console.error('Error al obtener ID del profesor:', error);
-        Swal.fire({
-          icon: 'error',
-          title: 'Error',
-          text: 'No se pudo obtener la información del profesor'
-        });
+        if (!isSuperAdminOrAdmin) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Error',
+            text: 'No se pudo obtener la información del profesor'
+          });
+        }
       }
     };
     
     const fetchCourses = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/courses`);
-        setCourses(response.data);
+        const response = await axios.get('/courses');
+        setCourses(Array.isArray(response.data) ? response.data : []);
       } catch (error) {
         console.error('Error al obtener cursos:', error);
       }
     };
     
-    fetchTeacherId();
+    const fetchTeachers = async () => {
+      if (isSuperAdminOrAdmin) {
+        try {
+          const response = await axios.get('/teachers/list/all');
+          setTeachers(Array.isArray(response.data) ? response.data : []);
+        } catch (error) {
+          console.error('Error al obtener docentes:', error);
+        }
+      }
+    };
+    
     fetchCourses();
-  }, [user]);
+    fetchTeachers();
+    fetchTeacherId();
+  }, [user, selectedTeacher, isSuperAdminOrAdmin]);
   
   const fetchAssignedCourses = async (id) => {
+    if (!id) return;
+    
     try {
       setLoading(true);
-      const response = await axios.get(`${API_URL}/api/teacher-courses/teacher/${id}`);
-      setAssignedCourses(response.data);
+      const response = await axios.get(`/teacher-courses/teacher/${id}`);
+      setAssignedCourses(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Error al obtener cursos asignados:', error);
       setAssignedCourses([]);
@@ -73,6 +103,28 @@ const TeacherCoursesManager = () => {
     });
   };
   
+  const getRoleLabel = (role) => {
+    if (!role) return 'Co-docente';
+    const labels = {
+      'principal': 'Principal / Director de Grupo',
+      'tutor': 'Tutor',
+      'co-docente': 'Co-docente',
+      'reemplazo': 'Reemplazo'
+    };
+    return labels[role] || role;
+  };
+  
+  const getRoleBadgeColor = (role) => {
+    if (!role) return 'secondary';
+    const colors = {
+      'principal': 'primary',
+      'tutor': 'info',
+      'co-docente': 'secondary',
+      'reemplazo': 'warning'
+    };
+    return colors[role] || 'secondary';
+  };
+  
   const handleAssignCourse = async () => {
     if (!selectedCourse) {
       Swal.fire({
@@ -83,20 +135,41 @@ const TeacherCoursesManager = () => {
       return;
     }
     
-    try {
-      await axios.post(`${API_URL}/api/teacher-courses`, {
-        teacher_id: teacherId,
-        course_id: parseInt(selectedCourse)
+    const targetTeacherId = isSuperAdminOrAdmin ? parseInt(selectedTeacher) : teacherId;
+    
+    if (!targetTeacherId) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Selecciona un docente',
+        text: 'Debes seleccionar un docente para asignar el curso'
       });
+      return;
+    }
+    
+    try {
+      const payload = {
+        teacher_id: targetTeacherId,
+        course_id: parseInt(selectedCourse)
+      };
+      
+      // Agregar role si es super admin y se seleccionó
+      if (isSuperAdminOrAdmin && selectedRole) {
+        payload.role = selectedRole;
+      }
+      
+      await axios.post('/teacher-courses', payload);
       
       Swal.fire({
         icon: 'success',
         title: 'Curso asignado',
-        text: 'El curso ha sido asignado correctamente'
+        text: `El curso ha sido asignado ${isSuperAdminOrAdmin ? 'al docente seleccionado' : ''} correctamente`
       });
       
-      fetchAssignedCourses(teacherId);
+      fetchAssignedCourses(targetTeacherId);
       setSelectedCourse('');
+      if (isSuperAdminOrAdmin) {
+        setSelectedRole('co-docente');
+      }
     } catch (error) {
       Swal.fire({
         icon: 'error',
@@ -108,23 +181,33 @@ const TeacherCoursesManager = () => {
   
   const handleEditCourse = (course) => {
     setEditingCourse(course);
-    setEditSelectedCourse(course.course_id);
+    setEditSelectedCourse(course.course_id.toString());
+    setEditSelectedTeacher(course.teacher_id.toString());
+    setEditSelectedRole(course.role || 'co-docente');
   };
   
   const handleUpdateCourse = async () => {
-    if (!editSelectedCourse) {
+    if (!editSelectedCourse || !editSelectedTeacher) {
       Swal.fire({
         icon: 'warning',
-        title: 'Selecciona un curso',
-        text: 'Debes seleccionar un curso'
+        title: 'Campos incompletos',
+        text: 'Debes seleccionar un curso y un docente'
       });
       return;
     }
     
     try {
-      await axios.put(`${API_URL}/api/teacher-courses/${editingCourse.id}`, {
-        course_id: parseInt(editSelectedCourse)
-      });
+      const payload = {
+        course_id: parseInt(editSelectedCourse),
+        teacher_id: parseInt(editSelectedTeacher)
+      };
+      
+      // Agregar role si existe y se seleccionó
+      if (editSelectedRole) {
+        payload.role = editSelectedRole;
+      }
+      
+      await axios.put(`/teacher-courses/${editingCourse.id}`, payload);
       
       Swal.fire({
         icon: 'success',
@@ -132,9 +215,11 @@ const TeacherCoursesManager = () => {
         text: 'El curso ha sido actualizado correctamente'
       });
       
-      fetchAssignedCourses(teacherId);
+      fetchAssignedCourses(parseInt(editSelectedTeacher));
       setEditingCourse(null);
       setEditSelectedCourse('');
+      setEditSelectedTeacher('');
+      setEditSelectedRole('');
     } catch (error) {
       Swal.fire({
         icon: 'error',
@@ -147,6 +232,8 @@ const TeacherCoursesManager = () => {
   const handleCancelEdit = () => {
     setEditingCourse(null);
     setEditSelectedCourse('');
+    setEditSelectedTeacher('');
+    setEditSelectedRole('');
   };
   
   const handleRemoveCourse = async (id) => {
@@ -161,7 +248,7 @@ const TeacherCoursesManager = () => {
     
     if (result.isConfirmed) {
       try {
-        await axios.delete(`${API_URL}/api/teacher-courses/${id}`);
+        await axios.delete(`/teacher-courses/${id}`);
         
         Swal.fire({
           icon: 'success',
@@ -169,7 +256,10 @@ const TeacherCoursesManager = () => {
           text: 'La asignación ha sido eliminada'
         });
         
-        fetchAssignedCourses(teacherId);
+        const targetTeacherId = isSuperAdminOrAdmin ? parseInt(selectedTeacher) : teacherId;
+        if (targetTeacherId) {
+          fetchAssignedCourses(targetTeacherId);
+        }
       } catch (error) {
         Swal.fire({
           icon: 'error',
@@ -182,7 +272,7 @@ const TeacherCoursesManager = () => {
   
   const handleFixDates = async () => {
     try {
-      await axios.patch(`${API_URL}/api/teacher-courses/fix-dates`);
+      await axios.patch('/teacher-courses/fix-dates');
       
       Swal.fire({
         icon: 'success',
@@ -190,7 +280,10 @@ const TeacherCoursesManager = () => {
         text: 'Las fechas NULL han sido actualizadas'
       });
       
-      fetchAssignedCourses(teacherId);
+      const targetTeacherId = isSuperAdminOrAdmin ? parseInt(selectedTeacher) : teacherId;
+      if (targetTeacherId) {
+        fetchAssignedCourses(targetTeacherId);
+      }
     } catch (error) {
       Swal.fire({
         icon: 'error',
@@ -203,7 +296,9 @@ const TeacherCoursesManager = () => {
   return (
     <div className="container py-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="mb-0">Gestión de Cursos Asignados</h2>
+        <h2 className="mb-0">
+          {isSuperAdminOrAdmin ? 'Gestión de Cursos Asignados a Docentes' : 'Gestión de Mis Cursos Asignados'}
+        </h2>
         <button 
           className="btn btn-outline-secondary btn-sm"
           onClick={handleFixDates}
@@ -214,14 +309,77 @@ const TeacherCoursesManager = () => {
         </button>
       </div>
       
+      {/* Selector de docente para Super Admin/Admin */}
+      {isSuperAdminOrAdmin && (
+        <div className="card mb-4">
+          <div className="card-header bg-secondary text-white">
+            <h5 className="mb-0">
+              <User size={18} className="me-2" />
+              Seleccionar Docente
+            </h5>
+          </div>
+          <div className="card-body">
+            <div className="row">
+              <div className="col-md-6">
+                <label htmlFor="teacherSelect" className="form-label">Docente</label>
+                <select 
+                  id="teacherSelect" 
+                  className="form-select"
+                  value={selectedTeacher}
+                  onChange={(e) => {
+                    setSelectedTeacher(e.target.value);
+                    if (e.target.value) {
+                      fetchAssignedCourses(parseInt(e.target.value));
+                    } else {
+                      setAssignedCourses([]);
+                    }
+                  }}
+                >
+                  <option value="">Seleccionar docente...</option>
+                  {teachers.map(teacher => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.name} - {teacher.subject || 'Sin materia'}
+                    </option>
+                  ))}
+                </select>
+                <small className="text-muted">
+                  Selecciona un docente para ver y gestionar sus cursos asignados
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <div className="card mb-4">
         <div className="card-header bg-primary text-white">
-          <h5 className="mb-0">Asignar Nuevo Curso</h5>
+          <h5 className="mb-0">
+            <PlusCircle size={18} className="me-2" />
+            Asignar Nuevo Curso
+          </h5>
         </div>
         <div className="card-body">
           <div className="row g-3 align-items-end">
-            <div className="col-md-8">
-              <label htmlFor="courseSelect" className="form-label">Seleccionar Curso</label>
+            {isSuperAdminOrAdmin && (
+              <div className="col-md-4">
+                <label htmlFor="teacherSelectAssign" className="form-label">Docente</label>
+                <select 
+                  id="teacherSelectAssign" 
+                  className="form-select"
+                  value={selectedTeacher}
+                  onChange={(e) => setSelectedTeacher(e.target.value)}
+                >
+                  <option value="">Seleccionar docente...</option>
+                  {teachers.map(teacher => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.name} - {teacher.subject || 'Sin materia'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className={isSuperAdminOrAdmin ? "col-md-5" : "col-md-8"}>
+              <label htmlFor="courseSelect" className="form-label">Curso</label>
               <select 
                 id="courseSelect" 
                 className="form-select"
@@ -231,18 +389,35 @@ const TeacherCoursesManager = () => {
                 <option value="">Seleccionar curso...</option>
                 {courses.map(course => (
                   <option key={course.id} value={course.id}>
-                    {course.name} - Grado {course.grade}
+                    {course.name} - Grado {course.grade} {course.institution ? `(${course.institution})` : ''}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="col-md-4">
+            {isSuperAdminOrAdmin && (
+              <div className="col-md-2">
+                <label htmlFor="roleSelect" className="form-label">Rol</label>
+                <select 
+                  id="roleSelect" 
+                  className="form-select"
+                  value={selectedRole}
+                  onChange={(e) => setSelectedRole(e.target.value)}
+                >
+                  <option value="co-docente">Co-docente</option>
+                  <option value="principal">Principal</option>
+                  <option value="tutor">Tutor</option>
+                  <option value="reemplazo">Reemplazo</option>
+                </select>
+              </div>
+            )}
+            <div className={isSuperAdminOrAdmin ? "col-md-1" : "col-md-4"}>
               <button 
                 className="btn btn-primary w-100"
                 onClick={handleAssignCourse}
+                disabled={!selectedCourse || (isSuperAdminOrAdmin && !selectedTeacher)}
               >
                 <PlusCircle size={18} className="me-2" />
-                Asignar Curso
+                Asignar
               </button>
             </div>
           </div>
@@ -251,10 +426,17 @@ const TeacherCoursesManager = () => {
       
       <div className="card">
         <div className="card-header bg-info text-white">
-          <h5 className="mb-0">Mis Cursos Asignados</h5>
+          <h5 className="mb-0">
+            {isSuperAdminOrAdmin ? 'Cursos Asignados al Docente Seleccionado' : 'Mis Cursos Asignados'}
+          </h5>
         </div>
         <div className="card-body">
-          {loading ? (
+          {isSuperAdminOrAdmin && !selectedTeacher ? (
+            <div className="alert alert-info">
+              <User size={18} className="me-2" />
+              Selecciona un docente para ver sus cursos asignados
+            </div>
+          ) : loading ? (
             <div className="text-center py-3">
               <div className="spinner-border text-primary" role="status">
                 <span className="visually-hidden">Cargando...</span>
@@ -262,7 +444,7 @@ const TeacherCoursesManager = () => {
             </div>
           ) : assignedCourses.length === 0 ? (
             <div className="alert alert-info">
-              No tienes cursos asignados actualmente.
+              {isSuperAdminOrAdmin ? 'El docente seleccionado no tiene cursos asignados actualmente.' : 'No tienes cursos asignados actualmente.'}
             </div>
           ) : (
             <div className="table-responsive">
@@ -271,6 +453,8 @@ const TeacherCoursesManager = () => {
                   <tr>
                     <th>Curso</th>
                     <th>Grado</th>
+                    {isSuperAdminOrAdmin && <th>Institución</th>}
+                    {isSuperAdminOrAdmin && <th>Rol</th>}
                     <th>Fecha Asignación</th>
                     <th className="text-end">Acciones</th>
                   </tr>
@@ -301,6 +485,39 @@ const TeacherCoursesManager = () => {
                           Grado {course.grade}
                         </span>
                       </td>
+                      {isSuperAdminOrAdmin && (
+                        <td>
+                          {course.institution ? (
+                            <span className="d-flex align-items-center">
+                              <Building2 size={16} className="me-1 text-muted" />
+                              {course.institution}
+                            </span>
+                          ) : (
+                            <span className="text-muted">-</span>
+                          )}
+                        </td>
+                      )}
+                      {isSuperAdminOrAdmin && (
+                        <td>
+                          {editingCourse?.id === course.id ? (
+                            <select 
+                              className="form-select form-select-sm"
+                              value={editSelectedRole}
+                              onChange={(e) => setEditSelectedRole(e.target.value)}
+                            >
+                              <option value="co-docente">Co-docente</option>
+                              <option value="principal">Principal</option>
+                              <option value="tutor">Tutor</option>
+                              <option value="reemplazo">Reemplazo</option>
+                            </select>
+                          ) : (
+                            <span className={`badge bg-${getRoleBadgeColor(course.role)}`}>
+                              {course.role === 'principal' && <Award size={14} className="me-1" />}
+                              {getRoleLabel(course.role)}
+                            </span>
+                          )}
+                        </td>
+                      )}
                       <td>
                         <div className="d-flex align-items-center">
                           <Calendar size={16} className="me-1 text-muted" />

@@ -22,12 +22,13 @@ import questionnaireIndicatorsRoutes from './routes/questionnaireIndicators.js';
 import indicatorEvaluationRoutes from './routes/indicatorEvaluation.js';
 
 // Middleware imports
-import { verifyToken } from './middleware/authMiddleware.js';
+import { verifyToken, isAdmin, isSuperAdmin } from './middleware/authMiddleware.js';
 import { recalculatePhaseAverages, recalculateAllStudentsPhaseAverages } from './utils/recalculatePhaseAverages.js';
 import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
 import teachers from './routes/teachers.js';
 import teacherRoutes from './routes/teacherRoutes.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
+import usersRoutes from './routes/usersRoutes.js';
 import pool from './config/db.js';
 import { syncSubjectCategories } from './utils/syncSubjectCategories.js';
 
@@ -76,13 +77,248 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json()); 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-// Configuración de rutas
+
+// ⚠️ IMPORTANTE: Definir rutas de autenticación ANTES de montar otras rutas que requieren token
+// Esto asegura que /api/auth/login y /api/auth/register no sean interceptadas por middleware de autenticación
+
+// Configuración de rutas (rutas públicas primero)
+// Las rutas específicas deben ir antes de las rutas generales que requieren autenticación
+// IMPORTANTE: La ruta POST /api/students para completar registros debe ir ANTES del router
+// para que tenga prioridad sobre router.post('/', ...) que crea usuarios nuevos
+
+// Ruta para completar datos de estudiante (debe ir ANTES de studentRoutes)
+app.post('/api/students', async (req, res) => {
+  try {
+    const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
+    
+    console.log("Datos recibidos para estudiante:", req.body);
+    
+    // Si no hay user_id pero hay name, crear primero el usuario
+    let userId = user_id;
+    
+    if (!userId && name) {
+      // Crear un nuevo usuario con estado 'activo'
+      const hashedPassword = await bcrypt.hash('password123', 10);
+      
+      const [userResult] = await db.query(
+        'INSERT INTO users (name, email, phone, password, role, estado) VALUES (?, ?, ?, ?, ?, ?)',
+        [name, contact_email, contact_phone, hashedPassword, 'estudiante', 'activo']
+      );
+      
+      userId = userResult.insertId;
+      console.log("Usuario creado con ID:", userId);
+    }
+    
+    // Verificar que user_id no sea nulo
+    if (!userId) {
+      return res.status(400).json({ message: 'El campo user_id es obligatorio' });
+    }
+    
+    // Verificar si ya existe un registro de estudiante para este user_id
+    const [existingStudent] = await db.query(
+      'SELECT id FROM students WHERE user_id = ?',
+      [userId]
+    );
+    
+    let studentId;
+    
+    // Verificar si el campo institution existe en users y students
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar error, asumir que no existe
+    }
+    
+    // Obtener institution del usuario si existe
+    let userInstitution = null;
+    if (hasInstitution) {
+      try {
+        const [userData] = await db.query('SELECT institution FROM users WHERE id = ?', [userId]);
+        userInstitution = userData.length > 0 ? userData[0].institution : null;
+      } catch (error) {
+        // Ignorar error
+      }
+    }
+    
+    if (existingStudent.length > 0) {
+      // Si ya existe, actualizar el registro existente
+      studentId = existingStudent[0].id;
+      if (hasInstitution) {
+        await db.query(
+          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ?, institution = ? WHERE id = ?',
+          [contact_phone, contact_email, age, grade, course_id, userInstitution, studentId]
+        );
+      } else {
+        await db.query(
+          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
+          [contact_phone, contact_email, age, grade, course_id, studentId]
+        );
+      }
+    } else {
+      // Si no existe, crear nuevo registro
+      if (hasInstitution) {
+        const [result] = await db.query(
+          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id, institution) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [userId, contact_phone, contact_email, age, grade, course_id, userInstitution]
+        );
+        studentId = result.insertId;
+      } else {
+        const [result] = await db.query(
+          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [userId, contact_phone, contact_email, age, grade, course_id]
+        );
+        studentId = result.insertId;
+      }
+    }
+    
+    // Verificar que studentId esté definido
+    if (!studentId) {
+      console.error('❌ studentId no está definido después de crear/actualizar estudiante');
+      return res.status(500).json({ message: 'Error: No se pudo obtener el ID del estudiante' });
+    }
+    
+    // Si se proporcionó un teacher_id, crear/actualizar la relación en teacher_students
+    if (teacher_id) {
+      try {
+        console.log(`🔗 Creando relación teacher_students: teacher_id=${teacher_id}, student_id=${studentId}`);
+        
+        // Eliminar relaciones existentes primero
+        await db.query(
+          'DELETE FROM teacher_students WHERE student_id = ?',
+          [studentId]
+        );
+        
+        // Crear nueva relación
+        await db.query(
+          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
+          [teacher_id, studentId]
+        );
+        
+        console.log(`✅ Relación teacher_students creada exitosamente`);
+      } catch (relError) {
+        console.error('❌ Error al crear relación teacher_students:', relError);
+        // Si es error de duplicado, no es crítico - continuar
+        if (relError.code !== 'ER_DUP_ENTRY') {
+          throw relError; // Re-lanzar si no es duplicado
+        }
+        console.log('⚠️ Relación ya existía, continuando...');
+      }
+    }
+    
+    console.log(`✅ Estudiante ${existingStudent.length > 0 ? 'actualizado' : 'creado'} exitosamente con ID: ${studentId}`);
+    
+    res.status(201).json({ 
+      message: existingStudent.length > 0 ? 'Datos de estudiante actualizados correctamente' : 'Estudiante registrado correctamente', 
+      studentId: studentId 
+    });
+  } catch (error) {
+    console.error('❌ Error registrando estudiante:', error);
+    console.error('📌 Stack trace:', error.stack);
+    console.error('📌 Error code:', error.code);
+    console.error('📌 Error message:', error.message);
+    console.error('📌 SQL State:', error.sqlState);
+    console.error('📌 Request body:', req.body);
+    
+    // Si es error de duplicado en teacher_students, ignorarlo y continuar
+    if (error.code === 'ER_DUP_ENTRY') {
+      console.log('⚠️ Error de duplicado detectado, pero continuando...');
+      // Intentar obtener studentId si está disponible
+      let existingStudentId;
+      if (req.body.user_id) {
+        try {
+          const [existing] = await db.query('SELECT id FROM students WHERE user_id = ?', [req.body.user_id]);
+          if (existing.length > 0) {
+            existingStudentId = existing[0].id;
+          }
+        } catch (e) {
+          // Ignorar
+        }
+      }
+      return res.status(201).json({ 
+        message: 'Estudiante registrado correctamente (relación con profesor ya existía)', 
+        studentId: existingStudentId 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Error al registrar estudiante', 
+      error: error.message,
+      sqlError: error.sqlMessage || undefined,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// ⚠️ RUTA DIRECTA PARA COMPLETAR REGISTRO DE DOCENTE (debe ir ANTES del router)
+// Ruta para completar datos de teacher (pública para permitir completar registro inicial)
+app.post('/api/teachers', async (req, res) => {
+  try {
+    const { user_id, subject, institution } = req.body;
+
+    console.log("📝 Datos recibidos para docente:", req.body);
+
+    // 1. Verificar si el campo institution existe en la tabla users
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      console.log('⚠️ No se pudo verificar si existe el campo institution en users');
+    }
+
+    // 2. Crear el registro en la tabla teachers
+    const result = await db.query(
+      'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
+      [user_id, subject, institution]
+    );
+
+    // 3. Actualizar institution en la tabla users si existe el campo
+    if (hasInstitution && institution) {
+      await db.query(
+        'UPDATE users SET institution = ? WHERE id = ?',
+        [institution, user_id]
+      );
+      console.log('✅ Campo institution actualizado en users:', institution);
+    } else if (institution) {
+      console.log('⚠️ El campo institution fue enviado pero no existe en la tabla users');
+    }
+
+    res.status(201).json({ 
+      success: true,
+      message: 'Docente registrado correctamente', 
+      teacherId: result.insertId 
+    });
+
+  } catch (error) {
+    console.error('❌ Error registrando docente:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al registrar docente',
+      error: error.message 
+    });
+  }
+});
+
+// Registrar el router de estudiantes DESPUÉS de la ruta específica para completar registros
 app.use('/api/students', studentRoutes);
 app.use('/api/questions', questionRoutes);
 app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/evaluation-results', evaluationResultsRoutes);
-app.use('/api', improvementPlansRoutes);
 app.use('/api/phase-evaluation', phaseEvaluationRoutes);
 app.use('/api/teachers', teachers);
 app.use('/api/teacher', teacherRoutes);
@@ -90,6 +326,12 @@ app.use('/api/teacher-courses', teacherCoursesRoutes);
 app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
 app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
+app.use('/api', improvementPlansRoutes);
+
+// ⚠️ usersRoutes DEBE ir DESPUÉS de definir las rutas de auth
+// porque usersRoutes aplica verifyToken a todas las rutas que empiezan con /api
+// Si va antes, interceptará /api/auth/login
+app.use('/api/admin', usersRoutes);
 
 // Configurar multer
 const storage = multer.diskStorage({
@@ -126,41 +368,130 @@ app.post('/api/subir-comprobante/:id', upload.single('imagen'), async (req, res)
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
+  console.log('🔐 ========== INICIO DE LOGIN ==========');
+  console.log('🔐 Email recibido:', email ? email.substring(0, 10) + '...' : 'undefined');
+  console.log('🔐 Password recibido:', password ? '***' + password.substring(password.length - 2) : 'undefined');
+
   try {
+    if (!email || !password) {
+      console.log('❌ Email o contraseña vacíos');
+      return res.status(401).json({ 
+        success: false,
+        error: "Email y contraseña son requeridos" 
+      });
+    }
+
+    console.log('📊 Buscando usuario en la base de datos...');
     const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
+    console.log(`📊 Usuarios encontrados: ${rows.length}`);
 
     if (rows.length === 0) {
-      return res.status(401).json({ error: "Usuario no encontrado" });
+      console.log('❌ Usuario no encontrado en la base de datos');
+      return res.status(401).json({ 
+        success: false,
+        error: "Usuario no encontrado" 
+      });
     }
 
     const user = rows[0];
-    const passwordMatch = await bcrypt.compare(password, user.password);
-
-    if (!passwordMatch) {
-      return res.status(401).json({ error: "Contraseña incorrecta" });
+    console.log('✅ Usuario encontrado:', { 
+      id: user.id, 
+      email: user.email, 
+      role: user.role, 
+      estado: user.estado,
+      estadoType: typeof user.estado,
+      hasPassword: !!user.password,
+      passwordLength: user.password ? user.password.length : 0
+    });
+    
+    // Verificar si el usuario está activo - SOLO si el campo existe Y es explícitamente 0 o false
+    // Si el campo no existe, es null, undefined, o cualquier otro valor, asumimos que está activo
+    if (user.estado === 0 || user.estado === false || user.estado === '0' || user.estado === 'false') {
+      console.log('❌ Usuario inactivo. Estado:', user.estado, 'Tipo:', typeof user.estado);
+      return res.status(401).json({ 
+        success: false,
+        error: "Usuario inactivo. Contacta al administrador." 
+      });
+    }
+    
+    console.log('✅ Usuario activo (o sin restricción de estado), continuando con verificación de contraseña...');
+    
+    console.log('🔒 Verificando contraseña...');
+    console.log('🔒 Password recibido (primeros 10 chars):', password ? password.substring(0, 10) : 'undefined');
+    console.log('🔒 Hash almacenado (primeros 20 chars):', user.password ? user.password.substring(0, 20) : 'undefined');
+    
+    if (!user.password) {
+      console.log('❌ El usuario no tiene contraseña almacenada');
+      return res.status(401).json({ 
+        success: false,
+        error: "Usuario sin contraseña configurada. Contacta al administrador." 
+      });
     }
 
-    const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '2h' });
+    try {
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      console.log('🔒 Resultado de verificación de contraseña:', passwordMatch);
 
-    res.json({
+      if (!passwordMatch) {
+        console.log('❌ Contraseña incorrecta');
+        return res.status(401).json({ 
+          success: false,
+          error: "Contraseña incorrecta" 
+        });
+      }
+    } catch (bcryptError) {
+      console.error('❌ Error al comparar contraseña:', bcryptError);
+      return res.status(500).json({ 
+        success: false,
+        error: "Error al verificar la contraseña",
+        details: process.env.NODE_ENV === 'development' ? bcryptError.message : undefined
+      });
+    }
+
+    // Usar user.role (no user.rol) para el token
+    console.log('🎫 Generando token para usuario:', { id: user.id, role: user.role });
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '2h' });
+    console.log('✅ Token generado exitosamente');
+
+    const responseData = {
+      success: true,
       message: "Inicio de sesión exitoso",
       token,
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        role: user.role,
+        estado: user.estado !== undefined ? user.estado : 1,
+        created_at: user.created_at || user.create_at
+      },
+      // Mantener compatibilidad con código anterior
       usuario: {
         id: user.id,
         name: user.name,
         phone: user.phone,
         email: user.email,
-        password: user.password,
         role: user.role,
-        create_at: user.create_at
+        estado: user.estado !== undefined ? user.estado : 1,
+        created_at: user.created_at || user.create_at
       }
-    });
+    };
+
+    console.log('✅ Login exitoso, enviando respuesta');
+    res.json(responseData);
   } catch (error) {
-    res.status(500).json({ error: "Error en el servidor" });
+    console.error('❌ Error en login:', error);
+    console.error('❌ Stack trace:', error.stack);
+    res.status(500).json({ 
+      success: false,
+      error: "Error en el servidor",
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-// 🔹 Nueva ruta para registrar usuarios
+// ⚠️ RUTA DE REGISTRO - También debe ir antes de rutas que requieren token
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, phone, email, password, role } = req.body;
@@ -212,6 +543,24 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+// ⚠️ AHORA montamos las rutas que requieren autenticación
+// Configuración de rutas protegidas (después de rutas públicas de auth)
+app.use('/api/students', studentRoutes);
+app.use('/api/questions', questionRoutes);
+app.use('/api/questionnaires', questionnaireRoutes);
+app.use('/api/quiz', quizRoutes);
+app.use('/api/evaluation-results', evaluationResultsRoutes);
+app.use('/api/phase-evaluation', phaseEvaluationRoutes);
+app.use('/api/teachers', teachers);
+app.use('/api/teacher', teacherRoutes);
+app.use('/api/teacher-courses', teacherCoursesRoutes);
+app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
+app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
+app.use('/api/indicators', indicatorsRoutes);
+app.use('/api', improvementPlansRoutes);
+// ⚠️ usersRoutes aplica verifyToken, por eso debe ir DESPUÉS de las rutas públicas de auth
+app.use('/api/admin', usersRoutes);  // Cambiado de '/api' a '/api/admin' para evitar conflictos
+
 const verificarToken = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1]; // Extrae el token del header
 
@@ -251,10 +600,53 @@ app.post('/api/auth/reestablecer-password', async (req, res) => {
   }
 });
 
-// Ruta para obtener todos los cursos
+// Ruta para obtener todos los cursos (actualizada para incluir institution y teacher_id si existen)
 app.get('/api/courses', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT id, name FROM courses ORDER BY name');
+    // Verificar si los campos institution y teacher_id existen en la tabla
+    let hasInstitution = false;
+    let hasTeacherId = false;
+    
+    try {
+      const [institutionCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'courses' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = institutionCols.length > 0;
+      
+      const [teacherIdCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'courses' 
+        AND COLUMN_NAME = 'teacher_id'
+      `);
+      hasTeacherId = teacherIdCols.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    // Construir query dinámica de forma robusta
+    let selectFields = 'c.id, c.name, c.grade';
+    if (hasInstitution) {
+      selectFields += ', c.institution';
+    }
+    if (hasTeacherId) {
+      selectFields += ', c.teacher_id, u.name as teacher_name';
+    }
+    
+    let query = `SELECT ${selectFields} FROM courses c`;
+    if (hasTeacherId) {
+      query += ' LEFT JOIN teachers t ON c.teacher_id = t.id LEFT JOIN users u ON t.user_id = u.id';
+    }
+    query += ' ORDER BY c.name';
+    
+    console.log('🔍 Query para obtener cursos:', query);
+    const [rows] = await pool.query(query);
+    console.log(`✅ Se encontraron ${rows.length} cursos`);
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener cursos:', error);
@@ -262,8 +654,577 @@ app.get('/api/courses', async (req, res) => {
   }
 });
 
-// Ruta para completar datos de estudiante
-// En server.js, modificar la ruta /api/students:
+// Rutas CRUD de cursos para super_administrador
+// POST - Crear nuevo curso
+app.post('/api/courses', verifyToken, isSuperAdmin, async (req, res) => {
+  try {
+    const { name, grade, institution, teacher_id } = req.body;
+    
+    if (!name || !grade) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'El nombre y el grado son obligatorios' 
+      });
+    }
+    
+    // Verificar si el campo institution existe
+    let hasInstitution = false;
+    let hasTeacherId = false;
+    
+    try {
+      const [institutionCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'courses' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = institutionCols.length > 0;
+      
+      const [teacherIdCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'courses' 
+        AND COLUMN_NAME = 'teacher_id'
+      `);
+      hasTeacherId = teacherIdCols.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    // Construir query dinámica
+    let fields = 'name, grade';
+    let values = '?, ?';
+    let params = [name, grade];
+    
+    if (hasInstitution && institution) {
+      fields += ', institution';
+      values += ', ?';
+      params.push(institution);
+    }
+    
+    if (hasTeacherId && teacher_id) {
+      // Verificar que el teacher_id existe
+      const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacher_id]);
+      if (teacherRows.length === 0) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'El docente especificado no existe' 
+        });
+      }
+      
+      fields += ', teacher_id';
+      values += ', ?';
+      params.push(teacher_id);
+    }
+    
+    const [result] = await pool.query(
+      `INSERT INTO courses (${fields}) VALUES (${values})`,
+      params
+    );
+    
+    const courseId = result.insertId;
+    
+    // Si se asignó un teacher_id, también crear la relación en teacher_courses con role='principal'
+    if (hasTeacherId && teacher_id) {
+      try {
+        // Verificar si el campo role existe en teacher_courses
+        let hasRole = false;
+        try {
+          const [roleCols] = await pool.query(`
+            SELECT COLUMN_NAME 
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'teacher_courses' 
+            AND COLUMN_NAME = 'role'
+          `);
+          hasRole = roleCols.length > 0;
+        } catch (error) {
+          // Ignorar error
+        }
+        
+        // Verificar si ya existe la relación
+        const [existingRelation] = await pool.query(
+          'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+          [teacher_id, courseId]
+        );
+        
+        if (existingRelation.length === 0) {
+          // Crear la relación en teacher_courses con role='principal' si existe el campo
+          if (hasRole) {
+            await pool.query(
+              'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date, role) VALUES (?, ?, NOW(), ?)',
+              [teacher_id, courseId, 'principal']
+            );
+            console.log(`✅ Relación teacher_courses creada con role='principal': teacher_id=${teacher_id}, course_id=${courseId}`);
+          } else {
+            await pool.query(
+              'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date) VALUES (?, ?, NOW())',
+              [teacher_id, courseId]
+            );
+            console.log(`✅ Relación teacher_courses creada: teacher_id=${teacher_id}, course_id=${courseId}`);
+          }
+        }
+      } catch (relError) {
+        console.error('⚠️ Error al crear relación en teacher_courses (no crítico):', relError);
+        // No fallar la creación del curso si hay error en la relación
+      }
+    }
+    
+    res.status(201).json({
+      success: true,
+      message: 'Curso creado exitosamente',
+      data: {
+        id: courseId,
+        name,
+        grade,
+        institution: hasInstitution ? institution : null,
+        teacher_id: hasTeacherId ? teacher_id : null
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error al crear curso:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al crear curso',
+      error: error.message 
+    });
+  }
+});
+
+// PUT - Actualizar curso existente
+app.put('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, grade, institution, teacher_id } = req.body;
+    
+    // Verificar que el curso existe
+    const [existingRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
+    if (existingRows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Curso no encontrado' 
+      });
+    }
+    
+    // Verificar si los campos existen
+    let hasInstitution = false;
+    let hasTeacherId = false;
+    
+    try {
+      const [institutionCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'courses' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = institutionCols.length > 0;
+      
+      const [teacherIdCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'courses' 
+        AND COLUMN_NAME = 'teacher_id'
+      `);
+      hasTeacherId = teacherIdCols.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    // Construir query de actualización
+    let updates = [];
+    let params = [];
+    
+    if (name !== undefined) {
+      updates.push('name = ?');
+      params.push(name);
+    }
+    
+    if (grade !== undefined) {
+      updates.push('grade = ?');
+      params.push(grade);
+    }
+    
+    if (hasInstitution && institution !== undefined) {
+      updates.push('institution = ?');
+      params.push(institution || null);
+    }
+    
+    if (hasTeacherId && teacher_id !== undefined) {
+      if (teacher_id) {
+        // Verificar que el teacher_id existe
+        const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacher_id]);
+        if (teacherRows.length === 0) {
+          return res.status(400).json({ 
+            success: false,
+            message: 'El docente especificado no existe' 
+          });
+        }
+      }
+      updates.push('teacher_id = ?');
+      params.push(teacher_id || null);
+    }
+    
+    if (updates.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No se proporcionaron campos para actualizar' 
+      });
+    }
+    
+    params.push(id);
+    
+    // Obtener el teacher_id anterior antes de actualizar
+    let oldTeacherId = null;
+    if (hasTeacherId) {
+      const [currentRows] = await pool.query('SELECT teacher_id FROM courses WHERE id = ?', [id]);
+      if (currentRows.length > 0) {
+        oldTeacherId = currentRows[0].teacher_id;
+      }
+    }
+    
+    await pool.query(
+      `UPDATE courses SET ${updates.join(', ')} WHERE id = ?`,
+      params
+    );
+    
+    // Manejar la relación en teacher_courses si el teacher_id cambió
+    if (hasTeacherId && teacher_id !== undefined) {
+      // Verificar si el campo role existe en teacher_courses
+      let hasRole = false;
+      try {
+        const [roleCols] = await pool.query(`
+          SELECT COLUMN_NAME 
+          FROM INFORMATION_SCHEMA.COLUMNS 
+          WHERE TABLE_SCHEMA = DATABASE() 
+          AND TABLE_NAME = 'teacher_courses' 
+          AND COLUMN_NAME = 'role'
+        `);
+        hasRole = roleCols.length > 0;
+      } catch (error) {
+        // Ignorar error
+      }
+      
+      const newTeacherId = teacher_id || null;
+      
+      // Si había un docente anterior y cambió, cambiar su role a 'co-docente' o eliminar relación
+      if (oldTeacherId && oldTeacherId !== newTeacherId) {
+        try {
+          if (hasRole) {
+            // Cambiar el role del docente anterior de 'principal' a 'co-docente' (si existe)
+            await pool.query(
+              'UPDATE teacher_courses SET role = ? WHERE teacher_id = ? AND course_id = ? AND role = ?',
+              ['co-docente', oldTeacherId, id, 'principal']
+            );
+            console.log(`🔄 Role del docente anterior actualizado a 'co-docente': teacher_id=${oldTeacherId}, course_id=${id}`);
+          } else {
+            // Si no existe role, eliminar la relación antigua
+            await pool.query(
+              'DELETE FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+              [oldTeacherId, id]
+            );
+            console.log(`🗑️ Relación teacher_courses eliminada: teacher_id=${oldTeacherId}, course_id=${id}`);
+          }
+        } catch (relError) {
+          console.error('⚠️ Error al actualizar relación antigua en teacher_courses:', relError);
+        }
+      }
+      
+      // Si hay un nuevo docente, crear/actualizar la relación con role='principal'
+      if (newTeacherId) {
+        try {
+          // Verificar si ya existe la relación
+          const [existingRelation] = await pool.query(
+            'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+            [newTeacherId, id]
+          );
+          
+          if (existingRelation.length === 0) {
+            // Crear nueva relación con role='principal' si existe el campo
+            if (hasRole) {
+              await pool.query(
+                'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date, role) VALUES (?, ?, NOW(), ?)',
+                [newTeacherId, id, 'principal']
+              );
+              console.log(`✅ Relación teacher_courses creada con role='principal': teacher_id=${newTeacherId}, course_id=${id}`);
+            } else {
+              await pool.query(
+                'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date) VALUES (?, ?, NOW())',
+                [newTeacherId, id]
+              );
+              console.log(`✅ Relación teacher_courses creada: teacher_id=${newTeacherId}, course_id=${id}`);
+            }
+          } else {
+            // Si ya existe, actualizar su role a 'principal' si existe el campo
+            if (hasRole) {
+              await pool.query(
+                'UPDATE teacher_courses SET role = ? WHERE teacher_id = ? AND course_id = ?',
+                ['principal', newTeacherId, id]
+              );
+              console.log(`🔄 Role actualizado a 'principal': teacher_id=${newTeacherId}, course_id=${id}`);
+            }
+          }
+        } catch (relError) {
+          console.error('⚠️ Error al crear/actualizar relación en teacher_courses:', relError);
+        }
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Curso actualizado exitosamente',
+      data: { id: parseInt(id), name, grade, institution, teacher_id }
+    });
+  } catch (error) {
+    console.error('❌ Error al actualizar curso:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al actualizar curso',
+      error: error.message 
+    });
+  }
+});
+
+// DELETE - Eliminar curso
+app.delete('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verificar que el curso existe
+    const [existingRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
+    if (existingRows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Curso no encontrado' 
+      });
+    }
+    
+    // Verificar si hay estudiantes asignados a este curso
+    const [studentsRows] = await pool.query('SELECT COUNT(*) as count FROM students WHERE course_id = ?', [id]);
+    if (studentsRows[0].count > 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: `No se puede eliminar el curso porque tiene ${studentsRows[0].count} estudiante(s) asignado(s)` 
+      });
+    }
+    
+    // Eliminar todas las relaciones en teacher_courses para este curso
+    try {
+      await pool.query('DELETE FROM teacher_courses WHERE course_id = ?', [id]);
+      console.log(`🗑️ Relaciones teacher_courses eliminadas para course_id=${id}`);
+    } catch (relError) {
+      console.error('⚠️ Error al eliminar relaciones en teacher_courses (no crítico):', relError);
+      // Continuar con la eliminación del curso aunque falle la eliminación de relaciones
+    }
+    
+    // Eliminar el curso
+    await pool.query('DELETE FROM courses WHERE id = ?', [id]);
+    
+    res.json({
+      success: true,
+      message: 'Curso eliminado exitosamente',
+      data: { id: parseInt(id) }
+    });
+  } catch (error) {
+    console.error('❌ Error al eliminar curso:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al eliminar curso',
+      error: error.message 
+    });
+  }
+});
+
+// Obtener todos los docentes asignados a un curso (con sus roles)
+app.get('/api/courses/:id/teachers', verifyToken, isSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verificar si el campo role existe en teacher_courses
+    let hasRole = false;
+    try {
+      const [roleCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'teacher_courses' 
+        AND COLUMN_NAME = 'role'
+      `);
+      hasRole = roleCols.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    let roleField = '';
+    if (hasRole) {
+      roleField = ', tc.role';
+    }
+    
+    const query = `
+      SELECT tc.id, tc.teacher_id, tc.assigned_date${roleField},
+             t.subject, u.name as teacher_name, u.email as teacher_email
+      FROM teacher_courses tc
+      JOIN teachers t ON tc.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      WHERE tc.course_id = ?
+      ORDER BY ${hasRole ? "tc.role = 'principal' DESC, " : ''}tc.assigned_date DESC
+    `;
+    
+    const [rows] = await pool.query(query, [id]);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener docentes del curso:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener docentes del curso',
+      error: error.message 
+    });
+  }
+});
+
+// Agregar docente adicional a un curso
+app.post('/api/courses/:id/teachers', verifyToken, isSuperAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { teacher_id, role } = req.body;
+    
+    if (!teacher_id) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Se requiere teacher_id' 
+      });
+    }
+    
+    // Verificar que el curso existe
+    const [courseRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
+    if (courseRows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Curso no encontrado' 
+      });
+    }
+    
+    // Verificar que el docente existe
+    const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacher_id]);
+    if (teacherRows.length === 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'El docente especificado no existe' 
+      });
+    }
+    
+    // Verificar si el campo role existe
+    let hasRole = false;
+    try {
+      const [roleCols] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'teacher_courses' 
+        AND COLUMN_NAME = 'role'
+      `);
+      hasRole = roleCols.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    // Verificar si ya existe la relación
+    const [existingRelation] = await pool.query(
+      'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+      [teacher_id, id]
+    );
+    
+    if (existingRelation.length > 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Este docente ya está asignado a este curso' 
+      });
+    }
+    
+    // Crear la relación
+    const finalRole = hasRole ? (role || 'co-docente') : null;
+    if (hasRole && finalRole) {
+      await pool.query(
+        'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date, role) VALUES (?, ?, NOW(), ?)',
+        [teacher_id, id, finalRole]
+      );
+    } else {
+      await pool.query(
+        'INSERT INTO teacher_courses (teacher_id, course_id, assigned_date) VALUES (?, ?, NOW())',
+        [teacher_id, id]
+      );
+    }
+    
+    res.status(201).json({
+      success: true,
+      message: 'Docente asignado al curso exitosamente',
+      data: { teacher_id: parseInt(teacher_id), course_id: parseInt(id), role: finalRole }
+    });
+  } catch (error) {
+    console.error('❌ Error al asignar docente al curso:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al asignar docente al curso',
+      error: error.message 
+    });
+  }
+});
+
+// Eliminar docente de un curso
+app.delete('/api/courses/:id/teachers/:teacherId', verifyToken, isSuperAdmin, async (req, res) => {
+  try {
+    const { id, teacherId } = req.params;
+    
+    // Verificar que la relación existe
+    const [existingRelation] = await pool.query(
+      'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+      [teacherId, id]
+    );
+    
+    if (existingRelation.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Relación no encontrada' 
+      });
+    }
+    
+    // No permitir eliminar el docente principal si está en courses.teacher_id
+    const [courseRows] = await pool.query('SELECT teacher_id FROM courses WHERE id = ?', [id]);
+    if (courseRows.length > 0 && courseRows[0].teacher_id == teacherId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'No se puede eliminar el docente principal. Primero cambia el docente principal del curso.' 
+      });
+    }
+    
+    // Eliminar la relación
+    await pool.query(
+      'DELETE FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+      [teacherId, id]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Docente eliminado del curso exitosamente',
+      data: { teacher_id: parseInt(teacherId), course_id: parseInt(id) }
+    });
+  } catch (error) {
+    console.error('❌ Error al eliminar docente del curso:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al eliminar docente del curso',
+      error: error.message 
+    });
+  }
+});
+
+// Esta ruta fue movida más arriba (antes de app.use('/api/students', studentRoutes))
+// para que tenga prioridad sobre router.post('/', ...) que crea usuarios nuevos
+// La ruta para completar datos de estudiante ahora está en la línea ~88
+/* Ruta movida arriba
 app.post('/api/students', async (req, res) => {
   try {
     const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
@@ -274,12 +1235,12 @@ app.post('/api/students', async (req, res) => {
     let userId = user_id;
     
     if (!userId && name) {
-      // Crear un nuevo usuario
+      // Crear un nuevo usuario con estado 'activo'
       const hashedPassword = await bcrypt.hash('password123', 10);
       
       const [userResult] = await db.query(
-        'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, ?)',
-        [name, contact_email, contact_phone, hashedPassword, 'estudiante']
+        'INSERT INTO users (name, email, phone, password, role, estado) VALUES (?, ?, ?, ?, ?, ?)',
+        [name, contact_email, contact_phone, hashedPassword, 'estudiante', 'activo']
       );
       
       userId = userResult.insertId;
@@ -291,34 +1252,154 @@ app.post('/api/students', async (req, res) => {
       return res.status(400).json({ message: 'El campo user_id es obligatorio' });
     }
     
-    // Guardar los datos en la tabla 'students'
-    const [result] = await db.query(
-      'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, contact_phone, contact_email, age, grade, course_id]
+    // Verificar si ya existe un registro de estudiante para este user_id
+    const [existingStudent] = await db.query(
+      'SELECT id FROM students WHERE user_id = ?',
+      [userId]
     );
     
-    const studentId = result.insertId;
+    let studentId;
     
-    // Si se proporcionó un teacher_id, crear la relación en teacher_students
-    if (teacher_id) {
-      await db.query(
-        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-        [teacher_id, studentId]
-      );
+    // Verificar si el campo institution existe en users y students
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar error, asumir que no existe
     }
     
-    res.status(201).json({ message: 'Estudiante registrado correctamente', studentId: studentId });
+    // Obtener institution del usuario si existe
+    let userInstitution = null;
+    if (hasInstitution) {
+      try {
+        const [userData] = await db.query('SELECT institution FROM users WHERE id = ?', [userId]);
+        userInstitution = userData.length > 0 ? userData[0].institution : null;
+      } catch (error) {
+        // Ignorar error
+      }
+    }
+    
+    if (existingStudent.length > 0) {
+      // Si ya existe, actualizar el registro existente
+      studentId = existingStudent[0].id;
+      if (hasInstitution) {
+        await db.query(
+          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ?, institution = ? WHERE id = ?',
+          [contact_phone, contact_email, age, grade, course_id, userInstitution, studentId]
+        );
+      } else {
+        await db.query(
+          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
+          [contact_phone, contact_email, age, grade, course_id, studentId]
+        );
+      }
+    } else {
+      // Si no existe, crear nuevo registro
+      if (hasInstitution) {
+        const [result] = await db.query(
+          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id, institution) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [userId, contact_phone, contact_email, age, grade, course_id, userInstitution]
+        );
+        studentId = result.insertId;
+      } else {
+        const [result] = await db.query(
+          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [userId, contact_phone, contact_email, age, grade, course_id]
+        );
+        studentId = result.insertId;
+      }
+    }
+    
+    // Verificar que studentId esté definido
+    if (!studentId) {
+      console.error('❌ studentId no está definido después de crear/actualizar estudiante');
+      return res.status(500).json({ message: 'Error: No se pudo obtener el ID del estudiante' });
+    }
+    
+    // Si se proporcionó un teacher_id, crear/actualizar la relación en teacher_students
+    if (teacher_id) {
+      try {
+        console.log(`🔗 Creando relación teacher_students: teacher_id=${teacher_id}, student_id=${studentId}`);
+        
+        // Eliminar relaciones existentes primero
+        await db.query(
+          'DELETE FROM teacher_students WHERE student_id = ?',
+          [studentId]
+        );
+        
+        // Crear nueva relación
+        await db.query(
+          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
+          [teacher_id, studentId]
+        );
+        
+        console.log(`✅ Relación teacher_students creada exitosamente`);
+      } catch (relError) {
+        console.error('❌ Error al crear relación teacher_students:', relError);
+        // Si es error de duplicado, no es crítico - continuar
+        if (relError.code !== 'ER_DUP_ENTRY') {
+          throw relError; // Re-lanzar si no es duplicado
+        }
+        console.log('⚠️ Relación ya existía, continuando...');
+      }
+    }
+    
+    console.log(`✅ Estudiante ${existingStudent.length > 0 ? 'actualizado' : 'creado'} exitosamente con ID: ${studentId}`);
+    
+    res.status(201).json({ 
+      message: existingStudent.length > 0 ? 'Datos de estudiante actualizados correctamente' : 'Estudiante registrado correctamente', 
+      studentId: studentId 
+    });
   } catch (error) {
     console.error('❌ Error registrando estudiante:', error);
-    res.status(500).json({ message: 'Error al registrar estudiante', error: error.message });
+    console.error('📌 Stack trace:', error.stack);
+    console.error('📌 Error code:', error.code);
+    console.error('📌 Error message:', error.message);
+    console.error('📌 SQL State:', error.sqlState);
+    console.error('📌 Request body:', req.body);
+    
+    // Si es error de duplicado en teacher_students, ignorarlo y continuar
+    if (error.code === 'ER_DUP_ENTRY') {
+      console.log('⚠️ Error de duplicado detectado, pero continuando...');
+      // Intentar obtener studentId si está disponible
+      let existingStudentId;
+      if (req.body.user_id) {
+        try {
+          const [existing] = await db.query('SELECT id FROM students WHERE user_id = ?', [req.body.user_id]);
+          if (existing.length > 0) {
+            existingStudentId = existing[0].id;
+          }
+        } catch (e) {
+          // Ignorar
+        }
+      }
+      return res.status(201).json({ 
+        message: 'Estudiante registrado correctamente (relación con profesor ya existía)', 
+        studentId: existingStudentId 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Error al registrar estudiante', 
+      error: error.message,
+      sqlError: error.sqlMessage || undefined,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
-
-
-
-// Ruta para obtener todos los estudiantes
+*/
+// Ruta para obtener todos los estudiantes (pública para compatibilidad, pero se recomienda usar el router)
+// Esta ruta se usa como fallback si el router no está funcionando correctamente
 app.get('/api/students', async (req, res) => {
   try {
+    console.log('📋 [GET] /api/students - Ruta directa (sin autenticación)');
     const [rows] = await db.query(`
       SELECT 
         s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
@@ -328,6 +1409,7 @@ app.get('/api/students', async (req, res) => {
       JOIN users u ON s.user_id = u.id
       LEFT JOIN courses c ON s.course_id = c.id
     `);
+    console.log(`✅ ${rows.length} estudiantes encontrados`);
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener estudiantes:', error);
@@ -361,9 +1443,28 @@ app.get('/api/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Verificar si institution existe antes de incluirla
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'students' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar
+    }
+    
+    const institutionFields = hasInstitution 
+      ? 's.institution, u.institution as user_institution, ' 
+      : '';
+    
     const [rows] = await db.query(`
       SELECT 
-        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
         u.name, u.email, u.phone, u.role,
         c.name as course_name
       FROM students s
@@ -380,6 +1481,139 @@ app.get('/api/students/:id', async (req, res) => {
   } catch (error) {
     console.error('❌ Error al obtener estudiante:', error);
     res.status(500).json({ message: 'Error al obtener estudiante' });
+  }
+});
+
+// Ruta para obtener estudiante por user_id (útil para completar registros)
+app.get('/api/students/user/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Verificar si institution existe
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'students' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar
+    }
+    
+    const institutionFields = hasInstitution 
+      ? 's.institution, u.institution as user_institution, ' 
+      : '';
+    
+    const [rows] = await db.query(`
+      SELECT 
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
+        u.name, u.email, u.phone, u.role,
+        c.name as course_name,
+        (SELECT teacher_id FROM teacher_students WHERE student_id = s.id LIMIT 1) as teacher_id
+      FROM students s
+      JOIN users u ON s.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+      WHERE s.user_id = ?
+    `, [userId]);
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Estudiante no encontrado para este usuario' });
+    }
+    
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('❌ Error al obtener estudiante por user_id:', error);
+    res.status(500).json({ message: 'Error al obtener estudiante' });
+  }
+});
+
+// Ruta para obtener la institución de un usuario (útil cuando aún no hay registro de estudiante)
+app.get('/api/users/:userId/institution', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Verificar si institution existe
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar
+    }
+    
+    if (!hasInstitution) {
+      return res.json({ institution: null });
+    }
+    
+    const [rows] = await db.query(
+      'SELECT institution FROM users WHERE id = ?',
+      [userId]
+    );
+    
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+    
+    res.json({ institution: rows[0].institution || null });
+  } catch (error) {
+    console.error('❌ Error al obtener institución del usuario:', error);
+    res.status(500).json({ message: 'Error al obtener institución' });
+  }
+});
+
+// Ruta para obtener usuarios con registros incompletos (estudiantes sin datos en tabla students)
+app.get('/api/users/incomplete/students', async (req, res) => {
+  try {
+    console.log('📋 [GET] /api/users/incomplete/students - Obteniendo estudiantes incompletos');
+    const [rows] = await db.query(`
+      SELECT 
+        u.id, u.name, u.email, u.phone, u.role, u.created_at, u.estado
+      FROM users u
+      WHERE u.role = 'estudiante'
+      AND NOT EXISTS (
+        SELECT 1 FROM students s WHERE s.user_id = u.id
+      )
+      ORDER BY u.created_at DESC
+    `);
+    
+    console.log(`✅ Se encontraron ${rows.length} estudiantes con registro incompleto`);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener usuarios incompletos:', error);
+    res.status(500).json({ message: 'Error al obtener usuarios incompletos', error: error.message });
+  }
+});
+
+// Ruta para obtener usuarios con registros incompletos (docentes sin datos en tabla teachers)
+app.get('/api/users/incomplete/teachers', async (req, res) => {
+  try {
+    console.log('📋 [GET] /api/users/incomplete/teachers - Obteniendo docentes incompletos');
+    const [rows] = await db.query(`
+      SELECT 
+        u.id, u.name, u.email, u.phone, u.role, u.created_at, u.estado
+      FROM users u
+      WHERE u.role = 'docente'
+      AND NOT EXISTS (
+        SELECT 1 FROM teachers t WHERE t.user_id = u.id
+      )
+      ORDER BY u.created_at DESC
+    `);
+    
+    console.log(`✅ Se encontraron ${rows.length} docentes con registro incompleto`);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener usuarios incompletos:', error);
+    res.status(500).json({ message: 'Error al obtener usuarios incompletos', error: error.message });
   }
 });
 
@@ -407,11 +1641,44 @@ app.put('/api/students/:id', async (req, res) => {
       [name, email, phone, userId]
     );
     
+    // Verificar si el campo institution existe
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    // Obtener institution del usuario para sincronizar con students
+    let userInstitution = null;
+    if (hasInstitution) {
+      try {
+        const [currentUser] = await db.query('SELECT institution FROM users WHERE id = ?', [userId]);
+        userInstitution = currentUser.length > 0 ? currentUser[0].institution : null;
+      } catch (error) {
+        // Ignorar error
+      }
+    }
+    
     // Actualizar datos en la tabla students
-    await db.query(
-      'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
-      [contact_phone, contact_email, age, grade, course_id, id]
-    );
+    if (hasInstitution) {
+      await db.query(
+        'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ?, institution = ? WHERE id = ?',
+        [contact_phone, contact_email, age, grade, course_id, userInstitution, id]
+      );
+    } else {
+      await db.query(
+        'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
+        [contact_phone, contact_email, age, grade, course_id, id]
+      );
+    }
     
     // Si se proporcionó un teacher_id, actualizar la relación en teacher_students
     if (teacher_id) {
@@ -503,27 +1770,6 @@ app.get('/api/students/by-user/:userId', async (req, res) => {
   } catch (error) {
     console.error('❌ Error al obtener estudiante:', error);
     res.status(500).json({ message: 'Error al obtener estudiante' });
-  }
-});
-
-// Ruta para completar datos de teacher
-app.post('/api/teachers', async (req, res) => {
-  try {
-    const { user_id, subject, institution } = req.body;
-
-    console.log("Datos recibidos para docente:", req.body);
-
-    // Aquí deberías guardar los datos en la tabla 'students'
-    const result = await db.query(
-      'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
-      [user_id, subject, institution]
-    );
-
-    res.status(201).json({ message: 'Donte registrado correctamente', teacherId: result.insertId });
-
-  } catch (error) {
-    console.error('❌ Error registrando docente:', error);
-    res.status(500).json({ message: 'Error al registrar dodente' });
   }
 });
 
@@ -672,7 +1918,7 @@ app.post('/api/subjects', async (req, res) => {
 // Ruta para obtener todas las categorías
 app.get('/api/all-categories', async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       'SELECT * FROM subject_categories ORDER BY subject, category'
     );
     
@@ -686,7 +1932,7 @@ app.get('/api/all-categories', async (req, res) => {
 // Ruta para obtener todas las materias disponibles
 app.get('/api/subjects', async (req, res) => {
   try {
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       'SELECT DISTINCT subject FROM subject_categories ORDER BY subject'
     );
     
@@ -702,7 +1948,7 @@ app.get('/api/teacher/subject/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     
-    const [rows] = await db.query(
+    const [rows] = await pool.query(
       'SELECT subject FROM teachers WHERE user_id = ?',
       [userId]
     );
@@ -791,6 +2037,99 @@ app.post('/api/subject-categories', async (req, res) => {
   } catch (error) {
     console.error('❌ Error al crear categoría:', error);
     res.status(500).json({ message: 'Error al crear categoría' });
+  }
+});
+
+// Ruta para actualizar una categoría
+app.put('/api/subject-categories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { subject, category } = req.body;
+    
+    if (!subject || !category) {
+      return res.status(400).json({ message: 'Se requiere subject y category' });
+    }
+    
+    // Verificar si la categoría existe
+    const [existingRows] = await pool.query(
+      'SELECT * FROM subject_categories WHERE id = ?',
+      [id]
+    );
+    
+    if (existingRows.length === 0) {
+      return res.status(404).json({ message: 'Categoría no encontrada' });
+    }
+    
+    // Verificar si ya existe otra categoría con el mismo subject y category
+    const [duplicateRows] = await pool.query(
+      'SELECT * FROM subject_categories WHERE subject = ? AND category = ? AND id != ?',
+      [subject, category, id]
+    );
+    
+    if (duplicateRows.length > 0) {
+      return res.status(400).json({ message: 'Ya existe otra categoría con estos valores' });
+    }
+    
+    // Actualizar la categoría
+    await pool.query(
+      'UPDATE subject_categories SET subject = ?, category = ? WHERE id = ?',
+      [subject, category, id]
+    );
+    
+    res.json({
+      id: parseInt(id),
+      subject,
+      category,
+      message: 'Categoría actualizada exitosamente'
+    });
+  } catch (error) {
+    console.error('❌ Error al actualizar categoría:', error);
+    res.status(500).json({ message: 'Error al actualizar categoría' });
+  }
+});
+
+// Ruta para eliminar una categoría
+app.delete('/api/subject-categories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Verificar si la categoría existe
+    const [existingRows] = await pool.query(
+      'SELECT * FROM subject_categories WHERE id = ?',
+      [id]
+    );
+    
+    if (existingRows.length === 0) {
+      return res.status(404).json({ message: 'Categoría no encontrada' });
+    }
+    
+    // Eliminar la categoría
+    await pool.query(
+      'DELETE FROM subject_categories WHERE id = ?',
+      [id]
+    );
+    
+    res.json({
+      message: 'Categoría eliminada exitosamente',
+      id: parseInt(id)
+    });
+  } catch (error) {
+    console.error('❌ Error al eliminar categoría:', error);
+    res.status(500).json({ message: 'Error al eliminar categoría' });
+  }
+});
+
+// Ruta para obtener todas las materias y categorías (completo)
+app.get('/api/subject-categories-all', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM subject_categories ORDER BY subject, category'
+    );
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener todas las materias y categorías:', error);
+    res.status(500).json({ message: 'Error al obtener materias y categorías' });
   }
 });
 
@@ -1222,6 +2561,30 @@ app.delete('/api/teacher/unassign-student', async (req, res) => {
   }
 });
 
+// Eliminar todas las relaciones teacher_students para un estudiante
+app.delete('/api/teacher/student/:studentId/teacher', async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    
+    console.log(`🗑️ Eliminando relaciones teacher_students para student_id: ${studentId}`);
+    
+    const [result] = await db.query(
+      'DELETE FROM teacher_students WHERE student_id = ?',
+      [studentId]
+    );
+    
+    console.log(`✅ Relaciones eliminadas: ${result.affectedRows}`);
+    
+    res.json({ 
+      message: 'Relaciones eliminadas correctamente',
+      deletedRows: result.affectedRows
+    });
+  } catch (error) {
+    console.error('❌ Error al eliminar relaciones teacher_students:', error);
+    res.status(500).json({ message: 'Error al eliminar relaciones' });
+  }
+});
+
 // NUEVAS RUTAS PARA SOLUCIONAR EL ERROR 404
 // Ruta para obtener los mejores resultados de evaluación para un estudiante (evaluation_results)
 app.get('/api/student/evaluation-results/:studentId', async (req, res) => {
@@ -1273,21 +2636,168 @@ app.get('/api/student/evaluation-results/:studentId', async (req, res) => {
   }
 });
 
-// Añadir a server.js o crear en routes/teacherRoutes.js
+// La ruta /api/teachers/list ahora está definida en routes/teachers.js
+// para evitar que sea capturada por router.get('/:id') antes de llegar aquí
+// Esta ruta duplicada se ha eliminado y ahora se usa la del router
+/* Ruta movida a routes/teachers.js
 app.get('/api/teachers/list', async (req, res) => {
   try {
-    const [rows] = await pool.query(`
-      SELECT t.id, t.subject, u.name 
+    const { course_id, grade, institution } = req.query;
+    
+    console.log('🔍 [GET] /api/teachers/list - Parámetros recibidos:', { course_id, grade, institution });
+    
+    // Verificar si el campo institution existe en users
+    let hasInstitution = false;
+    try {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      console.log('⚠️ Campo institution no disponible aún en users');
+    }
+    
+    let query = `
+      SELECT DISTINCT t.id, t.subject, u.name, u.email, u.phone
+    `;
+    
+    if (hasInstitution) {
+      query += `, u.institution`;
+    }
+    
+    query += `
       FROM teachers t
       JOIN users u ON t.user_id = u.id
-      ORDER BY u.name
-    `);
+    `;
+    
+    const params = [];
+    const conditions = [];
+    let hasJoin = false;
+    let hasCoursesJoin = false;
+    
+    // Si se proporciona course_id, filtrar por profesores que enseñan ese curso
+    if (course_id) {
+      query += ` INNER JOIN teacher_courses tc ON t.id = tc.teacher_id`;
+      hasJoin = true;
+      hasCoursesJoin = true;
+      conditions.push('tc.course_id = ?');
+      params.push(course_id);
+      console.log('📌 Filtro por course_id:', course_id);
+    }
+    // Si se proporciona grade, filtrar por profesores que enseñan cursos de ese grado
+    else if (grade) {
+      query += `
+        INNER JOIN teacher_courses tc ON t.id = tc.teacher_id
+        INNER JOIN courses c ON tc.course_id = c.id
+      `;
+      hasJoin = true;
+      hasCoursesJoin = true;
+      conditions.push('c.grade = ?');
+      params.push(grade);
+      console.log('📌 Filtro por grade:', grade);
+    }
+    
+    // Si se proporciona institution, filtrar por profesores de esa institución
+    if (institution && hasInstitution) {
+      // Usar comparación flexible: exacta o que contenga la palabra clave
+      // Ejemplo: "La Chucua" coincidirá con "Colegio La Chucua" y viceversa
+      // Extraer palabras clave de la institución (ej: "La Chucua" de "Colegio La Chucua")
+      const institutionTrimmed = institution.trim();
+      const institutionWords = institutionTrimmed.split(/\s+/).filter(w => w.length > 2);
+      const mainKeyword = institutionWords.length > 1 ? institutionWords.slice(-2).join(' ') : institutionTrimmed;
+      
+      conditions.push(`(
+        LOWER(TRIM(COALESCE(u.institution, ''))) = LOWER(TRIM(?)) 
+        OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+        OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+        OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(u.institution, ''))), '%')
+      )`);
+      params.push(institutionTrimmed, institutionTrimmed, mainKeyword, institutionTrimmed);
+      console.log('📌 Filtro por institution (flexible):', institutionTrimmed, '| Palabra clave:', mainKeyword);
+    }
+    
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    
+    query += ` ORDER BY u.name`;
+    
+    console.log('📝 Query SQL:', query);
+    console.log('📝 Parámetros:', params);
+    
+    const [rows] = await pool.query(query, params);
+    
+    console.log(`✅ Profesores encontrados: ${rows.length}`);
+    if (rows.length > 0) {
+      console.log('👨‍🏫 Primeros profesores:', rows.slice(0, 3).map(t => ({ 
+        id: t.id, 
+        name: t.name, 
+        institution: t.institution,
+        subject: t.subject 
+      })));
+    } else {
+      // Si no hay resultados y hay filtros, intentar una consulta más relajada
+      if (conditions.length > 0) {
+        console.log('⚠️ No se encontraron profesores con los filtros estrictos, intentando búsqueda más relajada...');
+        
+        // Si hay course_id e institution, intentar primero solo por institution
+        if (course_id && institution && hasInstitution) {
+          console.log('🔍 Intentando búsqueda solo por institución (sin filtro de curso)...');
+          const institutionTrimmed = institution.trim();
+          const institutionWords = institutionTrimmed.split(/\s+/).filter(w => w.length > 2);
+          const mainKeyword = institutionWords.length > 1 ? institutionWords.slice(-2).join(' ') : institutionTrimmed;
+          
+          const relaxedQuery = `
+            SELECT DISTINCT t.id, t.subject, u.name, u.email, u.phone, u.institution
+            FROM teachers t
+            JOIN users u ON t.user_id = u.id
+            WHERE (
+              LOWER(TRIM(COALESCE(u.institution, ''))) = LOWER(TRIM(?)) 
+              OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+              OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+              OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(u.institution, ''))), '%')
+            )
+            ORDER BY u.name
+          `;
+          const [relaxedRows] = await pool.query(relaxedQuery, [
+            institutionTrimmed, 
+            institutionTrimmed, 
+            mainKeyword, 
+            institutionTrimmed
+          ]);
+          console.log(`🔍 Búsqueda relajada (solo institución): ${relaxedRows.length} profesores encontrados`);
+          if (relaxedRows.length > 0) {
+            console.log('💡 Sugerencia: Los profesores encontrados no tienen el curso asignado en teacher_courses.');
+            console.log('💡 Profesores de la institución:', relaxedRows.map(t => ({ 
+              id: t.id, 
+              name: t.name, 
+              institution: t.institution 
+            })));
+            // Devolver los profesores de la institución aunque no tengan el curso asignado
+            // Esto permite al usuario asignar el curso después
+            return res.json(relaxedRows);
+          }
+        }
+        // Si solo hay institution sin course_id, verificar que haya profesores
+        else if (institution && hasInstitution && !course_id && !grade) {
+          console.log('⚠️ No se encontraron profesores para la institución:', institution);
+          console.log('💡 Verifica que los profesores tengan la institución asignada en la tabla users');
+        }
+      }
+    }
+    
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener lista de profesores:', error);
-    res.status(500).json({ message: 'Error al obtener lista de profesores' });
+    console.error('📌 Stack trace:', error.stack);
+    res.status(500).json({ message: 'Error al obtener lista de profesores', error: error.message });
   }
 });
+*/
 
 // Obtener el profesor asignado a un estudiante - MODIFICADA
 app.get('/api/teacher/student-teacher/:studentId', async (req, res) => {

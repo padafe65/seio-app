@@ -56,13 +56,8 @@ export const getStudentById = async (req, res) => {
       student_id: req.user.student_id 
     });
 
-    // Si es admin o super_administrador, permitir acceso sin restricciones
-    if (userRole === 'admin' || userRole === 'super_administrador') {
-      console.log('Acceso permitido para administrador/super_administrador');
-      // Continuar con la obtención de datos sin restricciones
-    }
     // Si es docente, verificar que el estudiante esté asignado a él
-    else if (userRole === 'docente') {
+    if (userRole === 'docente') {
       console.log('Verificando permisos para docente...');
       
       // 1. Primero, obtener el ID del profesor
@@ -141,6 +136,7 @@ export const getStudentById = async (req, res) => {
         u.name as user_name, 
         u.created_at as user_created_at,
         u.estado as user_estado,
+        u.institution as user_institution,
         c.name as course_name
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -199,6 +195,7 @@ export const updateStudent = async (req, res) => {
     name, 
     email, 
     phone, 
+    institution,  // ✨ AGREGADO: campo institution
     contact_email, 
     contact_phone, 
     age, 
@@ -213,6 +210,7 @@ export const updateStudent = async (req, res) => {
     name, 
     email, 
     phone, 
+    institution,  // ✨ AGREGADO: incluir institution en el log
     contact_email, 
     contact_phone, 
     age, 
@@ -229,12 +227,7 @@ export const updateStudent = async (req, res) => {
 
   try {
     // 1. Verificar permisos
-    // Si es admin o super_administrador, permitir acceso sin restricciones
-    if (userRole === 'admin' || userRole === 'super_administrador') {
-      console.log('Acceso permitido para administrador/super_administrador a actualizar estudiante');
-      // Continuar con la actualización sin restricciones
-    }
-    else if (userRole === 'docente') {
+    if (userRole === 'docente') {
       // Verificar que el estudiante esté asignado a este docente
       const [teacher] = await connection.query(
         'SELECT id FROM teachers WHERE user_id = ?', 
@@ -282,11 +275,38 @@ export const updateStudent = async (req, res) => {
 
     const userIdToUpdate = student[0].user_id;
 
-    // 3. Actualizar la tabla users
-    await connection.query(
-      'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
-      [name, email, phone, userIdToUpdate]
-    );
+    // 3. Actualizar la tabla users (incluyendo institution si existe)
+    // Verificar si el campo institution existe en la tabla users
+    let hasInstitution = false;
+    try {
+      const [columns] = await connection.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      console.log('⚠️ No se pudo verificar si existe el campo institution:', error);
+    }
+    
+    // Actualizar users con o sin institution según exista el campo
+    if (hasInstitution && institution !== undefined) {
+      await connection.query(
+        'UPDATE users SET name = ?, email = ?, phone = ?, institution = ? WHERE id = ?',
+        [name, email, phone, institution || null, userIdToUpdate]
+      );
+      console.log('✅ Campo institution actualizado en users:', institution || null);
+    } else {
+      await connection.query(
+        'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
+        [name, email, phone, userIdToUpdate]
+      );
+      if (institution !== undefined) {
+        console.log('⚠️ El campo institution fue enviado pero no existe en la tabla users');
+      }
+    }
 
     // 4. Actualizar la tabla students
     await connection.query(

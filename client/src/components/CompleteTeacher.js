@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
+import api from '../config/axios'; // ✨ AGREGADO: usar la instancia configurada de axios
 
 const notiMySwal = withReactContent(Swal);
 
@@ -31,24 +32,40 @@ const CompletarDocente = () => {
       return;
     }
     try {
-      await axios.post(`${API_URL}/api/teachers`, teacher);
-      alert('Información de docente completada exitosamente.');
+      // ✨ USAR api (que tiene baseURL y token configurado) en lugar de axios directo
+      // api ya tiene baseURL: 'http://localhost:5000/api', así que solo usar '/teachers'
+      const config = {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken') || localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      };
+      await api.post('/teachers', teacher, config);
+      
+      // Verificar si fue creado por admin
+      const createdByAdmin = localStorage.getItem('created_by_admin') === 'true';
+      
+      // Limpiar localStorage
+      localStorage.removeItem('user_id');
+      localStorage.removeItem('created_by_admin');
+      
       await notiMySwal.fire({
         icon: 'success',
         title: 'Registro completo',
-        html: `<i><strong>¡Bien hecho!</strong><br>Tu registro como docente ha sido completado con éxito. Ahora puedes iniciar sesión.</i>`,
+        html: `<i><strong>¡Bien hecho!</strong><br>El registro del docente ha sido completado con éxito.</i>`,
         imageUrl: "img/profesor.gif",
         imageWidth: 100,
         imageHeight: 100,
-        confirmButtonText: 'Ir al login',
+        confirmButtonText: createdByAdmin ? 'Volver a usuarios' : 'Ir al login',
         confirmButtonColor: '#3085d6'
       });
 
-      // ✅ Limpiar el localStorage si es necesario
-      localStorage.removeItem('user_id');
-
-      // ✅ Redirigir al login
-      navigate('/login');
+      // ✅ Redirigir según el origen
+      if (createdByAdmin) {
+        navigate('/admin/users');
+      } else {
+        navigate('/');
+      }
     } catch (error) {
       console.error('Error al completar los datos:', error);
     }

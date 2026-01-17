@@ -1,19 +1,36 @@
 import axios from 'axios';
 
+// Asegurar que baseURL siempre termine con /api
+const getBaseURL = () => {
+  const envURL = process.env.REACT_APP_API_URL;
+  if (envURL) {
+    // Si ya tiene /api, dejarlo así; si no, agregarlo
+    return envURL.endsWith('/api') ? envURL : `${envURL}/api`;
+  }
+  return 'http://localhost:5000/api';
+};
+
 const axiosInstance = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
+  baseURL: getBaseURL(),
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
+// Debug: Verificar el baseURL configurado
+console.log('🔧 [axios] baseURL configurado:', axiosInstance.defaults.baseURL);
+
 // Add a request interceptor to include the auth token
 axiosInstance.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    // Intentar obtener token de 'authToken' primero (estándar del sistema), luego 'token'
+    const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // Debug: Log la URL completa que se está construyendo
+    const fullUrl = config.baseURL ? `${config.baseURL}${config.url}` : config.url;
+    console.log('🌐 [axios] Petición:', config.method?.toUpperCase(), fullUrl);
     return config;
   },
   (error) => {

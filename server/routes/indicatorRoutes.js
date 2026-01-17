@@ -43,6 +43,23 @@ router.get('/', verifyToken, async (req, res) => {
       console.log(`✅ Docente encontrado:`, teacher[0]);
     }
     
+    // Verificar si el campo institution existe en users
+    let hasInstitution = false;
+    try {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    const institutionField = hasInstitution ? ', u.institution' : '';
+    
     // Construir la consulta base para obtener indicadores
     let query = `
       SELECT DISTINCT
@@ -57,7 +74,7 @@ router.get('/', verifyToken, async (req, res) => {
         q.title as questionnaire_title,
         t.subject as teacher_subject, 
         u.name as teacher_name,
-        u.email as teacher_email,
+        u.email as teacher_email${institutionField},
         GROUP_CONCAT(DISTINCT CONCAT(si.student_id, '|', 
           IFNULL((SELECT name FROM users WHERE id = s.user_id), ''), '|', 
           IFNULL(s.grade, '')) SEPARATOR ';') as students_info
@@ -1047,8 +1064,8 @@ router.get('/:id/students', verifyToken, async (req, res) => {
     let students;
     
     if (req.user.role === 'super_administrador') {
-      // Super administrador: obtener TODOS los estudiantes del grado (activos e inactivos) para ver su estado
-      console.log('👑 Super administrador: obteniendo todos los estudiantes del grado', indicatorGrade, '(incluyendo inactivos)');
+      // Super administrador: obtener todos los estudiantes del grado del indicador
+      console.log('👑 Super administrador: obteniendo todos los estudiantes del grado', indicatorGrade);
       [students] = await connection.query(`
         SELECT DISTINCT
           s.id,
@@ -1056,7 +1073,6 @@ router.get('/:id/students', verifyToken, async (req, res) => {
           u.name as name,
           s.grade,
           u.email,
-          u.estado as user_estado,
           MAX(si.achieved) as achieved,
           MAX(si.assigned_at) as assigned_at,
           MAX(si.indicator_id) as indicator_id,
@@ -1070,7 +1086,8 @@ router.get('/:id/students', verifyToken, async (req, res) => {
           WHERE si.indicator_id = ?
         ) si ON s.id = si.student_id
         WHERE s.grade = ?
-        GROUP BY s.id, s.user_id, u.name, s.grade, u.email, u.estado
+          AND (u.estado = 'activo' OR u.estado = 1)
+        GROUP BY s.id, s.user_id, u.name, s.grade, u.email
         ORDER BY u.name
       `, [indicatorId, indicatorGrade]);
     } else {

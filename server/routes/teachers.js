@@ -31,6 +31,160 @@ router.get('/', isTeacherOrAdmin, async (req, res) => {
   }
 });
 
+// Obtener lista de profesores (filtrada por curso/grado/institución)
+// IMPORTANTE: Esta ruta debe ir ANTES de /:id para que /list no sea capturado como id
+router.get('/list', async (req, res) => {
+  try {
+    const { course_id, grade, institution } = req.query;
+    
+    console.log('🔍 [GET] /api/teachers/list - Parámetros recibidos:', { course_id, grade, institution });
+    
+    // Verificar si el campo institution existe en users
+    let hasInstitution = false;
+    try {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      console.log('⚠️ Campo institution no disponible aún en users');
+    }
+    
+    let query = `
+      SELECT DISTINCT t.id, t.subject, u.name, u.email, u.phone
+    `;
+    
+    if (hasInstitution) {
+      query += `, u.institution`;
+    }
+    
+    query += `
+      FROM teachers t
+      JOIN users u ON t.user_id = u.id
+    `;
+    
+    const params = [];
+    const conditions = [];
+    
+    // Si se proporciona course_id, filtrar por profesores que enseñan ese curso
+    if (course_id) {
+      query += ` INNER JOIN teacher_courses tc ON t.id = tc.teacher_id`;
+      conditions.push('tc.course_id = ?');
+      params.push(course_id);
+      console.log('📌 Filtro por course_id:', course_id);
+    }
+    // Si se proporciona grade, filtrar por profesores que enseñan cursos de ese grado
+    else if (grade) {
+      query += `
+        INNER JOIN teacher_courses tc ON t.id = tc.teacher_id
+        INNER JOIN courses c ON tc.course_id = c.id
+      `;
+      conditions.push('c.grade = ?');
+      params.push(grade);
+      console.log('📌 Filtro por grade:', grade);
+    }
+    
+    // Si se proporciona institution, filtrar por profesores de esa institución
+    if (institution && hasInstitution) {
+      // Usar comparación flexible: exacta o que contenga la palabra clave
+      // Ejemplo: "La Chucua" coincidirá con "Colegio La Chucua" y viceversa
+      // Extraer palabras clave de la institución (ej: "La Chucua" de "Colegio La Chucua")
+      const institutionTrimmed = institution.trim();
+      const institutionWords = institutionTrimmed.split(/\s+/).filter(w => w.length > 2);
+      const mainKeyword = institutionWords.length > 1 ? institutionWords.slice(-2).join(' ') : institutionTrimmed;
+      
+      conditions.push(`(
+        LOWER(TRIM(COALESCE(u.institution, ''))) = LOWER(TRIM(?)) 
+        OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+        OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+        OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(u.institution, ''))), '%')
+      )`);
+      params.push(institutionTrimmed, institutionTrimmed, mainKeyword, institutionTrimmed);
+      console.log('📌 Filtro por institution (flexible):', institutionTrimmed, '| Palabra clave:', mainKeyword);
+    }
+    
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    
+    query += ` ORDER BY u.name`;
+    
+    console.log('📝 Query SQL:', query);
+    console.log('📝 Parámetros:', params);
+    
+    const [rows] = await pool.query(query, params);
+    
+    console.log(`✅ Profesores encontrados: ${rows.length}`);
+    if (rows.length > 0) {
+      console.log('👨‍🏫 Primeros profesores:', rows.slice(0, 3).map(t => ({ 
+        id: t.id, 
+        name: t.name, 
+        institution: t.institution,
+        subject: t.subject 
+      })));
+    } else {
+      // Si no hay resultados y hay filtros, intentar una consulta más relajada
+      if (conditions.length > 0) {
+        console.log('⚠️ No se encontraron profesores con los filtros estrictos, intentando búsqueda más relajada...');
+        
+        // Si hay course_id e institution, intentar primero solo por institution
+        if (course_id && institution && hasInstitution) {
+          console.log('🔍 Intentando búsqueda solo por institución (sin filtro de curso)...');
+          const institutionTrimmed = institution.trim();
+          const institutionWords = institutionTrimmed.split(/\s+/).filter(w => w.length > 2);
+          const mainKeyword = institutionWords.length > 1 ? institutionWords.slice(-2).join(' ') : institutionTrimmed;
+          
+          const relaxedQuery = `
+            SELECT DISTINCT t.id, t.subject, u.name, u.email, u.phone, u.institution
+            FROM teachers t
+            JOIN users u ON t.user_id = u.id
+            WHERE (
+              LOWER(TRIM(COALESCE(u.institution, ''))) = LOWER(TRIM(?)) 
+              OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+              OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+              OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(u.institution, ''))), '%')
+            )
+            ORDER BY u.name
+          `;
+          const [relaxedRows] = await pool.query(relaxedQuery, [
+            institutionTrimmed, 
+            institutionTrimmed, 
+            mainKeyword, 
+            institutionTrimmed
+          ]);
+          console.log(`🔍 Búsqueda relajada (solo institución): ${relaxedRows.length} profesores encontrados`);
+          if (relaxedRows.length > 0) {
+            console.log('💡 Sugerencia: Los profesores encontrados no tienen el curso asignado en teacher_courses.');
+            console.log('💡 Profesores de la institución:', relaxedRows.map(t => ({ 
+              id: t.id, 
+              name: t.name, 
+              institution: t.institution 
+            })));
+            // Devolver los profesores de la institución aunque no tengan el curso asignado
+            // Esto permite al usuario asignar el curso después
+            return res.json(relaxedRows);
+          }
+        }
+        // Si solo hay institution sin course_id, verificar que haya profesores
+        else if (institution && hasInstitution && !course_id && !grade) {
+          console.log('⚠️ No se encontraron profesores para la institución:', institution);
+          console.log('💡 Verifica que los profesores tengan la institución asignada en la tabla users');
+        }
+      }
+    }
+    
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener lista de profesores:', error);
+    console.error('📌 Stack trace:', error.stack);
+    res.status(500).json({ message: 'Error al obtener lista de profesores', error: error.message });
+  }
+});
+
 // Obtener un profesor por ID
 router.get('/:id', async (req, res) => {
   try {
@@ -70,17 +224,43 @@ router.post('/', isAdmin, async (req, res) => {
       return res.status(400).json({ message: 'Este usuario ya está registrado como profesor' });
     }
     
-    // Crear el profesor
+    // 1. Verificar si el campo institution existe en la tabla users
+    let hasInstitution = false;
+    try {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      console.log('⚠️ No se pudo verificar si existe el campo institution en users');
+    }
+    
+    // 2. Crear el profesor en la tabla teachers
     const [result] = await pool.query(
       'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
       [user_id, subject, institution]
     );
     
-    // Actualizar el rol del usuario a 'docente' si no lo es ya
+    // 3. Actualizar el rol del usuario a 'docente' si no lo es ya
     await pool.query(
       "UPDATE users SET role = 'docente' WHERE id = ? AND role != 'super_administrador'",
       [user_id]
     );
+    
+    // 4. Actualizar institution en la tabla users si existe el campo
+    if (hasInstitution && institution) {
+      await pool.query(
+        'UPDATE users SET institution = ? WHERE id = ?',
+        [institution, user_id]
+      );
+      console.log('✅ Campo institution actualizado en users:', institution);
+    } else if (institution) {
+      console.log('⚠️ El campo institution fue enviado pero no existe en la tabla users');
+    }
     
     res.status(201).json({ 
       success: true, 

@@ -30,24 +30,99 @@ router.get('/test-db', async (req, res) => {
   }
 });
 
-// Obtener todos los planes de mejoramiento
+// Obtener todos los planes de mejoramiento (con filtros opcionales)
 router.get('/improvement-plans', verifyToken, async (req, res) => {
   try {
-    const [plans] = await pool.query(`
-      SELECT ip.*, 
+    const { institution, course, grade, teacher_name, student_name, activity_status } = req.query;
+    
+    // Verificar si el campo institution existe en users
+    let hasInstitution = false;
+    try {
+      const [columns] = await pool.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'users' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar error
+    }
+    
+    // Construir la consulta base usando DISTINCT para evitar duplicados
+    let query = `
+      SELECT DISTINCT ip.id, ip.student_id, ip.teacher_id, ip.title, ip.subject, 
+             ip.description, ip.activities, ip.deadline, ip.file_url, 
+             ip.failed_achievements, ip.passed_achievements, ip.completed, 
+             ip.email_sent, ip.created_at, ip.video_urls, ip.resource_links,
+             ip.activity_status, ip.completion_date, ip.teacher_notes, 
+             ip.student_feedback, ip.attempts_count, ip.last_activity_date,
              s.user_id as student_user_id, 
              t.user_id as teacher_user_id,
              us.name as student_name,
              ut.name as teacher_name,
-             c.name as course_name
+             c.name as course_name,
+             s.grade,
+             s.course_id
+    `;
+    
+    // Agregar institution si existe el campo
+    if (hasInstitution) {
+      query += `, COALESCE(us.institution, ut.institution) as institution`;
+    }
+    
+    query += `
       FROM improvement_plans ip
       JOIN students s ON ip.student_id = s.id
       JOIN teachers t ON ip.teacher_id = t.id
       JOIN users us ON s.user_id = us.id
       JOIN users ut ON t.user_id = ut.id
       LEFT JOIN courses c ON s.course_id = c.id
-      ORDER BY ip.created_at DESC
-    `);
+    `;
+    
+    const conditions = [];
+    const params = [];
+    
+    // Agregar filtros si se proporcionan
+    if (institution && hasInstitution) {
+      conditions.push(`(us.institution LIKE ? OR ut.institution LIKE ?)`);
+      const institutionPattern = `%${institution}%`;
+      params.push(institutionPattern, institutionPattern);
+    }
+    
+    if (course) {
+      conditions.push(`c.name LIKE ?`);
+      params.push(`%${course}%`);
+    }
+    
+    if (grade) {
+      conditions.push(`s.grade = ?`);
+      params.push(parseInt(grade));
+    }
+    
+    if (teacher_name) {
+      conditions.push(`ut.name LIKE ?`);
+      params.push(`%${teacher_name}%`);
+    }
+    
+    if (student_name) {
+      conditions.push(`us.name LIKE ?`);
+      params.push(`%${student_name}%`);
+    }
+    
+    if (activity_status) {
+      conditions.push(`ip.activity_status = ?`);
+      params.push(activity_status);
+    }
+    
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+    
+    query += ` ORDER BY ip.created_at DESC`;
+    
+    const [plans] = await pool.query(query, params);
     res.json(plans);
   } catch (error) {
     console.error('Error al obtener planes de mejoramiento:', error);
@@ -180,6 +255,194 @@ router.get('/improvement-plans/templates', verifyToken, async (req, res) => {
   }
 });
 
+// =====================================================
+// RUTAS ESPECÍFICAS DEBEN IR ANTES DE RUTAS CON PARÁMETROS
+// =====================================================
+
+// Obtener estadísticas de planes automáticos
+router.get('/improvement-plans/auto-stats', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    console.log('📊 Obteniendo estadísticas de planes automáticos');
+    
+    // Estadísticas generales
+    const [totalStats] = await pool.query(`
+      SELECT 
+        COUNT(*) as total_plans,
+        COUNT(CASE WHEN activity_status = 'pending' THEN 1 END) as pending_plans,
+        COUNT(CASE WHEN activity_status = 'in_progress' THEN 1 END) as in_progress_plans,
+        COUNT(CASE WHEN activity_status = 'completed' THEN 1 END) as completed_plans,
+        COUNT(CASE WHEN activity_status = 'failed' THEN 1 END) as failed_plans,
+        COUNT(CASE WHEN teacher_notes LIKE '%generado automáticamente%' THEN 1 END) as auto_generated_plans
+      FROM improvement_plans
+    `);
+    
+    // Estadísticas por materia
+    const [subjectStats] = await pool.query(`
+      SELECT 
+        subject,
+        COUNT(*) as total_plans,
+        COUNT(CASE WHEN activity_status = 'completed' THEN 1 END) as completed_plans,
+        AVG(CASE WHEN activity_status = 'completed' THEN 1 ELSE 0 END) * 100 as completion_rate
+      FROM improvement_plans
+      WHERE teacher_notes LIKE '%generado automáticamente%'
+      GROUP BY subject
+      ORDER BY total_plans DESC
+    `);
+    
+    // Estadísticas por grado
+    const [gradeStats] = await pool.query(`
+      SELECT 
+        s.grade,
+        COUNT(*) as total_plans,
+        COUNT(CASE WHEN ip.activity_status = 'completed' THEN 1 END) as completed_plans,
+        AVG(CASE WHEN ip.activity_status = 'completed' THEN 1 ELSE 0 END) * 100 as completion_rate
+      FROM improvement_plans ip
+      JOIN students s ON ip.student_id = s.id
+      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
+      GROUP BY s.grade
+      ORDER BY s.grade
+    `);
+    
+    // Planes recientes
+    const [recentPlans] = await pool.query(`
+      SELECT 
+        ip.id,
+        ip.title,
+        ip.subject,
+        ip.activity_status,
+        ip.created_at,
+        us.name as student_name,
+        s.grade,
+        ut.name as teacher_name
+      FROM improvement_plans ip
+      JOIN students s ON ip.student_id = s.id
+      JOIN users us ON s.user_id = us.id
+      JOIN teachers t ON ip.teacher_id = t.id
+      JOIN users ut ON t.user_id = ut.id
+      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
+      ORDER BY ip.created_at DESC
+      LIMIT 10
+    `);
+    
+    res.json({
+      success: true,
+      message: 'Estadísticas obtenidas correctamente',
+      data: {
+        general: totalStats[0],
+        by_subject: subjectStats,
+        by_grade: gradeStats,
+        recent_plans: recentPlans
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo estadísticas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo estadísticas',
+      error: error.message
+    });
+  }
+});
+
+// Obtener vista de planes automáticos
+router.get('/improvement-plans/auto-view', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    console.log('👁️ Obteniendo vista de planes automáticos');
+    
+    const [autoPlans] = await pool.query(`
+      SELECT 
+        ip.id as plan_id,
+        ip.title,
+        ip.subject,
+        ip.activity_status,
+        ip.created_at,
+        ip.deadline,
+        us.name as student_name,
+        s.grade,
+        s.contact_email,
+        ut.name as teacher_name,
+        q.title as questionnaire_title,
+        q.id as questionnaire_id,
+        er.best_score as student_score,
+        CASE 
+          WHEN ip.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 'RECIENTE'
+          WHEN ip.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 'ACTIVO'
+          ELSE 'ANTIGUO'
+        END as plan_age,
+        DATEDIFF(ip.deadline, NOW()) as days_remaining
+      FROM improvement_plans ip
+      JOIN students s ON ip.student_id = s.id
+      JOIN users us ON s.user_id = us.id
+      JOIN teachers t ON ip.teacher_id = t.id
+      JOIN users ut ON t.user_id = ut.id
+      LEFT JOIN questionnaires q ON ip.title LIKE CONCAT('%', q.title, '%')
+      LEFT JOIN evaluation_results er ON er.student_id = s.id AND er.questionnaire_id = q.id
+      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
+      ORDER BY ip.created_at DESC
+    `);
+    
+    res.json({
+      success: true,
+      message: 'Vista de planes automáticos obtenida',
+      data: autoPlans
+    });
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo vista de planes automáticos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo vista de planes automáticos',
+      error: error.message
+    });
+  }
+});
+
+// Ejecutar procedimiento almacenado para procesar cuestionario
+router.post('/improvement-plans/execute-procedure/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const { questionnaireId } = req.params;
+    
+    console.log(`⚙️ Ejecutando procedimiento almacenado para cuestionario ${questionnaireId}`);
+    
+    // Verificar si el procedimiento existe antes de ejecutarlo
+    try {
+      const [result] = await pool.query('CALL sp_process_questionnaire_improvement_plans(?)', [questionnaireId]);
+      
+      res.json({
+        success: true,
+        message: 'Procedimiento ejecutado correctamente',
+        data: result[0] || result
+      });
+    } catch (procedureError) {
+      // Si el procedimiento no existe, usar la función alternativa
+      if (procedureError.code === 'ER_SP_DOES_NOT_EXIST' || procedureError.message.includes('does not exist') || procedureError.message.includes('no existe')) {
+        console.log('⚠️ Procedimiento almacenado no existe, usando función alternativa...');
+        
+        // Usar la función processQuestionnaireResults como alternativa
+        const result = await processQuestionnaireResults(parseInt(questionnaireId));
+        
+        res.json({
+          success: true,
+          message: 'Procesamiento completado usando método alternativo',
+          data: result
+        });
+      } else {
+        throw procedureError;
+      }
+    }
+    
+  } catch (error) {
+    console.error('❌ Error ejecutando procedimiento:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error ejecutando procedimiento almacenado',
+      error: error.message,
+      code: error.code
+    });
+  }
+});
+
 // Obtener un plan de mejoramiento específico
 router.get('/improvement-plans/:id', async (req, res) => {
   try {
@@ -245,6 +508,35 @@ router.post('/improvement-plans', async (req, res) => {
     const [teacherCheck] = await pool.query('SELECT * FROM teachers WHERE id = ?', [teacher_id]);
     if (teacherCheck.length === 0) {
       return res.status(400).json({ message: 'El profesor no existe' });
+    }
+    
+    // Verificar si ya existe un plan similar para este estudiante
+    // Un plan se considera duplicado si tiene el mismo student_id, teacher_id, title y subject
+    // y no está completado (o está pendiente/en progreso)
+    const [existingPlans] = await pool.query(
+      `SELECT id, title, subject, activity_status, completed, created_at 
+       FROM improvement_plans 
+       WHERE student_id = ? 
+       AND teacher_id = ? 
+       AND title = ? 
+       AND subject = ?
+       AND (completed = 0 OR activity_status IN ('pending', 'in_progress'))`,
+      [student_id, teacher_id, title.trim(), subject]
+    );
+    
+    if (existingPlans.length > 0) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Ya existe un plan de mejoramiento activo con el mismo título y materia para este estudiante',
+        duplicate_plan_id: existingPlans[0].id,
+        duplicate_plan: {
+          id: existingPlans[0].id,
+          title: existingPlans[0].title,
+          subject: existingPlans[0].subject,
+          status: existingPlans[0].activity_status || (existingPlans[0].completed ? 'completed' : 'pending'),
+          created_at: existingPlans[0].created_at
+        }
+      });
     }
     
     // Obtener el email del estudiante para notificación
@@ -958,170 +1250,6 @@ router.post('/improvement-plans/process-student/:studentId/:questionnaireId', ve
     res.status(500).json({
       success: false,
       message: 'Error procesando estudiante automáticamente',
-      error: error.message
-    });
-  }
-});
-
-// Obtener estadísticas de planes automáticos
-router.get('/improvement-plans/auto-stats', verifyToken, isTeacherOrAdmin, async (req, res) => {
-  try {
-    console.log('📊 Obteniendo estadísticas de planes automáticos');
-    
-    // Estadísticas generales
-    const [totalStats] = await pool.query(`
-      SELECT 
-        COUNT(*) as total_plans,
-        COUNT(CASE WHEN activity_status = 'pending' THEN 1 END) as pending_plans,
-        COUNT(CASE WHEN activity_status = 'in_progress' THEN 1 END) as in_progress_plans,
-        COUNT(CASE WHEN activity_status = 'completed' THEN 1 END) as completed_plans,
-        COUNT(CASE WHEN activity_status = 'failed' THEN 1 END) as failed_plans,
-        COUNT(CASE WHEN teacher_notes LIKE '%generado automáticamente%' THEN 1 END) as auto_generated_plans
-      FROM improvement_plans
-    `);
-    
-    // Estadísticas por materia
-    const [subjectStats] = await pool.query(`
-      SELECT 
-        subject,
-        COUNT(*) as total_plans,
-        COUNT(CASE WHEN activity_status = 'completed' THEN 1 END) as completed_plans,
-        AVG(CASE WHEN activity_status = 'completed' THEN 1 ELSE 0 END) * 100 as completion_rate
-      FROM improvement_plans
-      WHERE teacher_notes LIKE '%generado automáticamente%'
-      GROUP BY subject
-      ORDER BY total_plans DESC
-    `);
-    
-    // Estadísticas por grado
-    const [gradeStats] = await pool.query(`
-      SELECT 
-        s.grade,
-        COUNT(*) as total_plans,
-        COUNT(CASE WHEN ip.activity_status = 'completed' THEN 1 END) as completed_plans,
-        AVG(CASE WHEN ip.activity_status = 'completed' THEN 1 ELSE 0 END) * 100 as completion_rate
-      FROM improvement_plans ip
-      JOIN students s ON ip.student_id = s.id
-      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
-      GROUP BY s.grade
-      ORDER BY s.grade
-    `);
-    
-    // Planes recientes
-    const [recentPlans] = await pool.query(`
-      SELECT 
-        ip.id,
-        ip.title,
-        ip.subject,
-        ip.activity_status,
-        ip.created_at,
-        us.name as student_name,
-        s.grade,
-        ut.name as teacher_name
-      FROM improvement_plans ip
-      JOIN students s ON ip.student_id = s.id
-      JOIN users us ON s.user_id = us.id
-      JOIN teachers t ON ip.teacher_id = t.id
-      JOIN users ut ON t.user_id = ut.id
-      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
-      ORDER BY ip.created_at DESC
-      LIMIT 10
-    `);
-    
-    res.json({
-      success: true,
-      message: 'Estadísticas obtenidas correctamente',
-      data: {
-        general: totalStats[0],
-        by_subject: subjectStats,
-        by_grade: gradeStats,
-        recent_plans: recentPlans
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error obteniendo estadísticas:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error obteniendo estadísticas',
-      error: error.message
-    });
-  }
-});
-
-// Obtener vista de planes automáticos
-router.get('/improvement-plans/auto-view', verifyToken, isTeacherOrAdmin, async (req, res) => {
-  try {
-    console.log('👁️ Obteniendo vista de planes automáticos');
-    
-    const [autoPlans] = await pool.query(`
-      SELECT 
-        ip.id as plan_id,
-        ip.title,
-        ip.subject,
-        ip.activity_status,
-        ip.created_at,
-        ip.deadline,
-        us.name as student_name,
-        s.grade,
-        s.contact_email,
-        ut.name as teacher_name,
-        q.title as questionnaire_title,
-        q.id as questionnaire_id,
-        er.best_score as student_score,
-        CASE 
-          WHEN ip.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 'RECIENTE'
-          WHEN ip.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 'ACTIVO'
-          ELSE 'ANTIGUO'
-        END as plan_age,
-        DATEDIFF(ip.deadline, NOW()) as days_remaining
-      FROM improvement_plans ip
-      JOIN students s ON ip.student_id = s.id
-      JOIN users us ON s.user_id = us.id
-      JOIN teachers t ON ip.teacher_id = t.id
-      JOIN users ut ON t.user_id = ut.id
-      LEFT JOIN questionnaires q ON ip.title LIKE CONCAT('%', q.title, '%')
-      LEFT JOIN evaluation_results er ON er.student_id = s.id AND er.questionnaire_id = q.id
-      WHERE ip.teacher_notes LIKE '%generado automáticamente%'
-      ORDER BY ip.created_at DESC
-    `);
-    
-    res.json({
-      success: true,
-      message: 'Vista de planes automáticos obtenida',
-      data: autoPlans
-    });
-    
-  } catch (error) {
-    console.error('❌ Error obteniendo vista de planes automáticos:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error obteniendo vista de planes automáticos',
-      error: error.message
-    });
-  }
-});
-
-// Ejecutar procedimiento almacenado para procesar cuestionario
-router.post('/improvement-plans/execute-procedure/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
-  try {
-    const { questionnaireId } = req.params;
-    
-    console.log(`⚙️ Ejecutando procedimiento almacenado para cuestionario ${questionnaireId}`);
-    
-    const [result] = await pool.query('CALL sp_process_questionnaire_improvement_plans(?)', [questionnaireId]);
-    
-    res.json({
-      success: true,
-      message: 'Procedimiento ejecutado correctamente',
-      data: result[0]
-    });
-    
-  } catch (error) {
-    console.error('❌ Error ejecutando procedimiento:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error ejecutando procedimiento almacenado',
       error: error.message
     });
   }

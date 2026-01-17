@@ -45,10 +45,7 @@ export const verifyToken = async (req, res, next) => {
       }
 
       // Verificar si el usuario está activo
-      // El estado puede ser: número (1/0), string ('1'/'0'), o string ('activo'/'inactivo')
-      const estado = user[0].estado;
-      const isInactive = estado === 0 || estado === '0' || estado === 'inactivo' || estado === false || estado === 'false';
-      if (isInactive) {
+      if (user[0].estado !== 'activo') {
         return res.status(403).json({
           success: false,
           error: 'Tu cuenta ha sido desactivada. Contacta al administrador.',
@@ -111,6 +108,22 @@ export const verifyToken = async (req, res, next) => {
       code: 'AUTH_SERVER_ERROR'
     });
   }
+};
+
+/**
+ * Middleware para verificar si el usuario es super_administrador
+ */
+export const isSuperAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'super_administrador') {
+    return next();
+  }
+  
+  return res.status(403).json({
+    success: false,
+    error: 'Acceso denegado. Se requieren privilegios de super administrador.',
+    code: 'SUPER_ADMIN_ACCESS_REQUIRED',
+    userRole: req.user?.role
+  });
 };
 
 /**

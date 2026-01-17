@@ -662,7 +662,7 @@ const IndicatorForm = () => {
               if (indicatorStudentsResponse.data?.success && Array.isArray(indicatorStudentsResponse.data.data)) {
                 const allStudents = indicatorStudentsResponse.data.data;
                 
-                // Procesar estudiantes con su estado de indicador y estado de usuario
+                // Procesar estudiantes con su estado de indicador
                 const processedStudents = allStudents.map(student => ({
                   id: String(student.id),
                   name: student.name || `Estudiante ${student.id}`,
@@ -670,8 +670,7 @@ const IndicatorForm = () => {
                   email: student.email || '',
                   hasIndicator: student.has_indicator === 1,
                   has_indicator: student.has_indicator || 0,
-                  achieved: student.achieved || false,
-                  user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+                  achieved: student.achieved || false
                 }));
                 
                 // Agregar opciones por defecto
@@ -1069,8 +1068,7 @@ const IndicatorForm = () => {
                 email: student.email || '',
                 hasIndicator: false,
                 has_indicator: 0,
-                achieved: false,
-                user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo) si está disponible
+                achieved: false
               }));
               
               setStudents([
@@ -1397,8 +1395,7 @@ const IndicatorForm = () => {
               hasIndicator: hasIndicator,
               has_indicator: hasIndicator ? 1 : 0,
               achieved: indicatorData ? indicatorData.achieved : (student.achieved || false),
-              assigned_at: indicatorData ? indicatorData.assigned_at : (student.assigned_at || null),
-              user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+              assigned_at: indicatorData ? indicatorData.assigned_at : (student.assigned_at || null)
             });
           }
         } else {
@@ -1413,8 +1410,7 @@ const IndicatorForm = () => {
             hasIndicator: indicatorData ? indicatorData.hasIndicator : (student.has_indicator === 1),
             has_indicator: indicatorData ? (indicatorData.hasIndicator ? 1 : 0) : (student.has_indicator || 0),
             achieved: indicatorData ? indicatorData.achieved : (student.achieved || false),
-            assigned_at: indicatorData ? indicatorData.assigned_at : (student.assigned_at || null),
-            user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+            assigned_at: indicatorData ? indicatorData.assigned_at : (student.assigned_at || null)
           });
         }
       });
@@ -1728,7 +1724,7 @@ const IndicatorForm = () => {
               const allStudents = indicatorStudentsResponse.data.data;
               console.log(`📊 Total estudiantes del grado obtenidos: ${allStudents.length}`);
               
-              // Procesar estudiantes con su estado de indicador y estado de usuario
+              // Procesar estudiantes con su estado de indicador
               const processedStudents = allStudents.map(student => ({
                 id: String(student.id),
                 name: student.name || `Estudiante ${student.id}`,
@@ -1736,8 +1732,7 @@ const IndicatorForm = () => {
                 email: student.email || '',
                 hasIndicator: student.has_indicator === 1,
                 has_indicator: student.has_indicator || 0,
-                achieved: student.achieved || false,
-                user_estado: student.user_estado || student.estado || null // Estado del usuario (activo/inactivo)
+                achieved: student.achieved || false
               }));
               
               console.log('👥 Estudiantes procesados (con estado de indicador):', processedStudents.map(s => ({
@@ -2185,7 +2180,7 @@ const IndicatorForm = () => {
             </button>
           </div>
         ) : (
-          <div className="table-responsive table-responsive-wrapper">
+          <div className="overflow-x-auto">
             <table className="table table-bordered table-hover table-striped">
               <thead className="table-dark">
                 <tr>
@@ -2245,17 +2240,12 @@ const IndicatorForm = () => {
                       </span>
                     )}
                   </th>
-                  {user?.role === 'super_administrador' && (
-                    <th scope="col">
-                      Estado Usuario
-                    </th>
-                  )}
                   <th 
                     scope="col" 
                     className="cursor-pointer"
                     onClick={() => handleSort('status')}
                   >
-                    Estado Indicador
+                    Estado
                     {sortBy === 'status' && (
                       <span className="ms-2">
                         {sortOrder === 'asc' ? '↑' : '↓'}
@@ -2271,10 +2261,6 @@ const IndicatorForm = () => {
                   
                   // Usar una clave única combinando id e index para evitar duplicados
                   const uniqueKey = `student-${String(student.id)}-${index}`;
-                  
-                  // Determinar el estado del usuario
-                  const userEstado = student.user_estado || student.estado;
-                  const isUserActive = userEstado === 'activo' || userEstado === 1 || userEstado === '1';
                   
                   return (
                     <tr 
@@ -2302,13 +2288,6 @@ const IndicatorForm = () => {
                           {student.email || 'N/A'}
                         </span>
                       </td>
-                      {user?.role === 'super_administrador' && (
-                        <td>
-                          <span className={`badge ${isUserActive ? 'bg-success' : 'bg-danger'}`}>
-                            {isUserActive ? 'Activo' : 'Inactivo'}
-                          </span>
-                        </td>
-                      )}
                       <td>
                         {isSelected && (
                           <span className="badge bg-primary">

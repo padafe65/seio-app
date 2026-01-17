@@ -2,22 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
-import axiosClient from '../../api/axiosClient';
+import api from '../../config/axios';
 import StudentGradesEditor from '../../components/StudentGradesEditor';
 
 const StudentForm = ({ isViewMode = false }) => {
-  console.log('🚀 [StudentForm] Componente montado/actualizado');
   const { id } = useParams();
-  console.log('📝 [StudentForm] Parámetro id de la URL:', id);
   const navigate = useNavigate();
-  const { user, isAuthReady } = useAuth();
-  console.log('👤 [StudentForm] Estado de autenticación:', { 
-    user: user ? { id: user.id, role: user.role } : null, 
-    isAuthReady 
-  });
+  const { user } = useAuth(); // Se mantiene por si se necesita en el futuro
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [filteredTeachers, setFilteredTeachers] = useState([]);
+  const [userInstitution, setUserInstitution] = useState(null);
   const [showGradesEditor, setShowGradesEditor] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -28,47 +24,25 @@ const StudentForm = ({ isViewMode = false }) => {
     age: '',
     grade: '',
     course_id: '',
-    teacher_id: ''
+    teacher_id: '',
+    institution: ''
   });
 
-  useEffect(() => {
-    console.log('🔄 [StudentForm] useEffect ejecutado', { isAuthReady, user: user?.role, id });
-    
-    // Si isAuthReady es false por más de 5 segundos, mostrar un mensaje
-    const authTimeout = setTimeout(() => {
-      if (!isAuthReady) {
-        console.error('❌ [StudentForm] Timeout esperando autenticación');
-        setLoading(false);
+  // Configuración para las peticiones HTTP
+  const getAuthConfig = () => {
+    const token = localStorage.getItem('authToken');
+    return {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
       }
-    }, 5000);
-    
-    // Esperar a que la autenticación esté lista
-    if (!isAuthReady) {
-      console.log('⏳ [StudentForm] Esperando autenticación...');
-      return () => clearTimeout(authTimeout);
-    }
-    
-    clearTimeout(authTimeout);
-    
-    // Si no hay usuario después de que la autenticación esté lista, redirigir
-    if (!user) {
-      console.log('❌ [StudentForm] No hay usuario, redirigiendo...');
-      navigate('/');
-      return;
-    }
-    
-    // Verificar permisos: solo admin, super_administrador o docente pueden acceder
-    if (!['admin', 'super_administrador', 'docente'].includes(user.role)) {
-      console.log('❌ [StudentForm] Usuario sin permisos, redirigiendo...', user.role);
-      navigate('/dashboard');
-      return;
-    }
-    
-    console.log('✅ [StudentForm] Permisos verificados, iniciando carga de datos...');
+    };
+  };
 
+  useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const response = await axiosClient.get('/courses');
+        const response = await api.get('/courses', getAuthConfig());
         setCourses(Array.isArray(response.data) ? response.data : []);
       } catch (error) {
         console.error('Error al cargar cursos:', error);
@@ -84,13 +58,24 @@ const StudentForm = ({ isViewMode = false }) => {
       console.log('🔍 Iniciando fetchTeachers...');
       
       try {
+        // Verificar el token
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          const error = new Error('No se encontró el token de autenticación. Por favor, inicie sesión nuevamente.');
+          error.code = 'MISSING_TOKEN';
+          throw error;
+        }
+        
+        // Obtener la configuración de autenticación
+        const config = getAuthConfig();
+        
         // Realizar la petición para obtener la lista de docentes
-        console.log('🌐 Solicitando lista de docentes a /teachers');
+        console.log('🌐 Solicitando lista de docentes a /api/teachers');
         
         let response;
         try {
-          response = await axiosClient.get('/teachers');
-          console.log('✅ Petición a /teachers exitosa');
+          response = await api.get('/teachers', config);
+          console.log('✅ Petición a /api/teachers exitosa');
         } catch (error) {
           // Manejar errores de red o de la API
           console.error('❌ Error en la petición a /api/teachers:', {
@@ -157,7 +142,7 @@ const StudentForm = ({ isViewMode = false }) => {
           if (!currentTeacher) {
             console.log('Docente no encontrado en la lista, buscando individualmente...');
             try {
-              const teacherResponse = await axiosClient.get(`/teachers/${currentTeacherId}`);
+              const teacherResponse = await api.get(`/api/teachers/${currentTeacherId}`, getAuthConfig());
               currentTeacher = teacherResponse.data?.data || teacherResponse.data;
               
               if (currentTeacher) {
@@ -212,6 +197,7 @@ const StudentForm = ({ isViewMode = false }) => {
         }
         
         setTeachers(formattedTeachers);
+        setFilteredTeachers(formattedTeachers); // Inicializar profesores filtrados
         return formattedTeachers;
       } catch (error) {
         console.error('Error al cargar profesores:', error);
@@ -222,22 +208,18 @@ const StudentForm = ({ isViewMode = false }) => {
     };
 
     const fetchStudentData = async () => {
-      if (!id) {
-        console.log('⚠️ [StudentForm] No hay ID de estudiante');
-        return;
-      }
+      if (!id) return;
       
       try {
-        console.log('🔍 [fetchStudentData] Obteniendo datos del estudiante con ID:', id);
+        console.log('🔍 Obteniendo datos del estudiante con ID:', id);
         
         // 1. Obtener los datos del estudiante
         let studentData;
         try {
-          console.log(`🌐 [fetchStudentData] Solicitando datos del estudiante con ID: ${id}`);
-          const studentResponse = await axiosClient.get(`/students/${id}`);
-          console.log('📦 [fetchStudentData] Respuesta recibida:', studentResponse);
+          console.log(`🌐 Solicitando datos del estudiante con ID: ${id}`);
+          const studentResponse = await api.get(`/students/${id}`, getAuthConfig());
           studentData = studentResponse.data?.data || studentResponse.data;
-          console.log('✅ [fetchStudentData] Datos del estudiante obtenidos:', studentData);
+          console.log('✅ Datos del estudiante obtenidos:', studentData);
           
           if (!studentData) {
             throw new Error('No se encontraron datos del estudiante');
@@ -266,6 +248,7 @@ const StudentForm = ({ isViewMode = false }) => {
           name: studentData.user_name || studentData.name || '',
           phone: studentData.user_phone || studentData.phone || '',
           email: studentData.user_email || studentData.email || '',
+          institution: studentData.user_institution || studentData.institution || '',
           contact_email: studentData.contact_email || '',
           contact_phone: studentData.contact_phone || '',
           age: studentData.age || '',
@@ -274,8 +257,20 @@ const StudentForm = ({ isViewMode = false }) => {
           teacher_id: studentData.teacher_id ? String(studentData.teacher_id) : ''
         };
         
+        // Obtener la institución del estudiante/usuario
+        if (studentData.institution || studentData.user_institution) {
+          setUserInstitution(studentData.institution || studentData.user_institution);
+          console.log('🏫 Institución del estudiante:', studentData.institution || studentData.user_institution);
+        } else {
+          // Si no hay institución, el campo quedará vacío (esto es normal si el estudiante no tiene institución asignada)
+          console.log('ℹ️ El estudiante no tiene institución asignada (el campo quedará vacío)');
+        }
+        
         // 3. Establecer los datos iniciales del formulario
         setFormData(initialFormData);
+        
+        // 4. Filtrar profesores después de cargar la lista completa
+        // Esto se hará en el useEffect que escucha cambios en course_id y grade
         
         // 4. Verificar si el estudiante ya tiene un docente asignado
         let mainTeacherId = null;
@@ -330,39 +325,98 @@ const StudentForm = ({ isViewMode = false }) => {
 
     const loadData = async () => {
       try {
-        console.log('🔄 [StudentForm] Iniciando carga de datos...', { id });
         setLoading(true);
         
         // 1. Cargar cursos
-        console.log('📚 [StudentForm] Cargando cursos...');
         await fetchCourses();
         
         // 2. Si hay un ID, cargar datos del estudiante
         if (id) {
-          console.log('👤 [StudentForm] Cargando datos del estudiante ID:', id);
           await fetchStudentData();
         } else {
-          console.log('➕ [StudentForm] Nuevo estudiante, cargando docentes...');
           // Si es un nuevo estudiante, solo cargar la lista de docentes
           await fetchTeachers();
         }
         
-        console.log('✅ [StudentForm] Datos cargados correctamente');
       } catch (error) {
-        console.error('❌ [StudentForm] Error al cargar datos:', error);
+        console.error('Error al cargar datos:', error);
         Swal.fire({
           icon: 'error',
           title: 'Error',
           text: error.message || 'No se pudieron cargar los datos. Por favor, intente nuevamente.'
         });
       } finally {
-        console.log('🏁 [StudentForm] Finalizando carga, estableciendo loading = false');
         setLoading(false);
       }
     };
 
     loadData();
-  }, [id, user, isAuthReady, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // Filtrar profesores cuando cambia el curso, grado o institución
+  useEffect(() => {
+    const filterTeachers = async () => {
+      if (!formData.grade && !formData.course_id && !userInstitution) {
+        setFilteredTeachers(teachers);
+        return;
+      }
+
+      try {
+        const token = localStorage.getItem('authToken');
+        const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
+        
+        let filtered = [];
+        let queryParams = [];
+        
+        // Construir parámetros de consulta
+        if (formData.course_id) {
+          queryParams.push(`course_id=${formData.course_id}`);
+        } else if (formData.grade) {
+          queryParams.push(`grade=${formData.grade}`);
+        }
+        
+        // Agregar institución si está disponible
+        if (userInstitution) {
+          queryParams.push(`institution=${encodeURIComponent(userInstitution)}`);
+        }
+        
+        // Si hay filtros, hacer la consulta filtrada
+        if (queryParams.length > 0) {
+          const queryString = queryParams.join('&');
+          const response = await api.get(`/teachers/list?${queryString}`, config);
+          filtered = response.data || [];
+          console.log('👨‍🏫 Profesores filtrados:', { 
+            filters: { course_id: formData.course_id, grade: formData.grade, institution: userInstitution },
+            count: filtered.length 
+          });
+        } else {
+          filtered = teachers;
+        }
+        
+        setFilteredTeachers(filtered);
+        
+        // Si el profesor actual no está en la lista filtrada, limpiar la selección
+        if (formData.teacher_id && filtered.length > 0) {
+          const teacherExists = filtered.some(t => {
+            const teacherId = t.id || t.user_id;
+            return teacherId?.toString() === formData.teacher_id.toString();
+          });
+          if (!teacherExists) {
+            setFormData(prev => ({ ...prev, teacher_id: '' }));
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error al filtrar profesores:', error);
+        setFilteredTeachers(teachers);
+      }
+    };
+
+    if (teachers.length > 0) {
+      filterTeachers();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.course_id, formData.grade, userInstitution, teachers]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -390,6 +444,7 @@ const StudentForm = ({ isViewMode = false }) => {
         name: formData.name,
         email: formData.email,
         phone: formData.phone || '',
+        institution: formData.institution || '', // ✨ AGREGADO: campo institution
         contact_email: formData.contact_email || '',
         contact_phone: formData.contact_phone || '',
         age: formData.age || null,
@@ -403,7 +458,7 @@ const StudentForm = ({ isViewMode = false }) => {
 
       if (!id) {
         // CREAR: Enviar todos los datos a la ruta de creación de estudiantes
-        const response = await axiosClient.post('/students', studentData);
+        const response = await api.post('/students', studentData, getAuthConfig());
         console.log("Respuesta de creación:", response.data);
 
         Swal.fire({
@@ -417,7 +472,7 @@ const StudentForm = ({ isViewMode = false }) => {
         navigate('/estudiantes');
       } else {
         // ACTUALIZAR: Usar PATCH para enviar solo los campos modificados
-        const response = await axiosClient.patch(`/students/${id}`, studentData);
+        const response = await api.patch(`/students/${id}`, studentData, getAuthConfig());
         console.log("Respuesta de actualización:", response.data);
 
         Swal.fire({
@@ -427,13 +482,9 @@ const StudentForm = ({ isViewMode = false }) => {
           showConfirmButton: false,
           timer: 1500
         }).then(() => {
-          // Redirigir según el rol del usuario
-          let redirectPath = '/estudiantes';
-          if (user?.role === 'docente') {
-            redirectPath = '/mis-estudiantes';
-          } else if (user?.role === 'super_administrador' || user?.role === 'admin') {
-            redirectPath = '/estudiantes';
-          }
+          // Redirigir a 'mis-estudiantes' si el usuario es un docente
+          // o a 'estudiantes' si es administrador
+          const redirectPath = user?.role === 'docente' ? '/mis-estudiantes' : '/estudiantes';
           navigate(redirectPath);
         });
       }
@@ -476,27 +527,17 @@ const StudentForm = ({ isViewMode = false }) => {
     }
   };
 
-  console.log('🎨 [StudentForm] Renderizando componente', { 
-    loading, 
-    hasFormData: !!formData.name,
-    id,
-    user: user ? { id: user.id, role: user.role } : null,
-    isAuthReady 
-  });
+
 
   if (loading) {
-    console.log('⏳ [StudentForm] Mostrando spinner de carga...');
     return (
-      <div className="d-flex flex-column justify-content-center align-items-center my-5">
+      <div className="d-flex justify-content-center my-5">
         <div className="spinner-border text-primary" role="status">
           <span className="visually-hidden">Cargando...</span>
         </div>
-        <p className="mt-3 text-muted">Cargando datos del estudiante...</p>
       </div>
     );
   }
-
-  console.log('✅ [StudentForm] Renderizando formulario completo');
 
   return (
     <div className="container my-4">
@@ -623,7 +664,46 @@ const StudentForm = ({ isViewMode = false }) => {
               </div>
               
               <div className="col-md-6 mb-3">
-                <label htmlFor="teacher_id" className="form-label">Docente Asignado</label>
+                <label htmlFor="course_id" className="form-label">Curso</label>
+                <select
+                  className="form-select"
+                  id="course_id"
+                  name="course_id"
+                  value={formData.course_id}
+                  onChange={handleChange}
+                  disabled={isViewMode}
+                >
+                  <option value="">Seleccionar curso (opcional)</option>
+                  {courses.length > 0 ? (
+                    courses
+                      .filter(course => !formData.grade || course.grade === formData.grade)
+                      .map(course => (
+                        <option key={course.id} value={course.id}>
+                          {course.name} - Grado {course.grade}
+                        </option>
+                      ))
+                  ) : (
+                    <option value="" disabled>No hay cursos disponibles</option>
+                  )}
+                </select>
+                <small className="form-text text-muted">
+                  {formData.grade 
+                    ? `Cursos disponibles para grado ${formData.grade}°`
+                    : 'Selecciona un grado para filtrar cursos'}
+                </small>
+              </div>
+            </div>
+            
+            <div className="row">
+              <div className="col-md-12 mb-3">
+                <label htmlFor="teacher_id" className="form-label">
+                  Docente Asignado
+                  {userInstitution && (
+                    <span className="badge bg-info ms-2" title={`Filtrado por institución: ${userInstitution}`}>
+                      {userInstitution}
+                    </span>
+                  )}
+                </label>
                 {loading ? (
                   <div className="d-flex align-items-center">
                     <div className="spinner-border spinner-border-sm me-2" role="status">
@@ -640,16 +720,21 @@ const StudentForm = ({ isViewMode = false }) => {
                       value={formData.teacher_id || ''}
                       onChange={handleChange}
                       required
-                      disabled={isViewMode || teachers.length === 0}
+                      disabled={isViewMode || filteredTeachers.length === 0 || (!formData.grade && !formData.course_id && !userInstitution)}
                     >
-                      <option value="">Seleccione un docente</option>
-                      {teachers.length > 0 ? (
-                        teachers.map((teacher) => {
+                      <option value="">
+                        {!formData.grade && !formData.course_id && !userInstitution
+                          ? 'Primero selecciona un grado o curso'
+                          : 'Seleccione un docente'}
+                      </option>
+                      {filteredTeachers.length > 0 ? (
+                        filteredTeachers.map((teacher) => {
                           // Manejar tanto teacher.id como teacher.user_id
                           const teacherId = teacher.id || teacher.user_id;
                           const isSelected = formData.teacher_id === teacherId?.toString();
                           // Usar el nombre del usuario si está disponible, de lo contrario un valor por defecto
                           const displayName = teacher.user_name || teacher.name || `Docente #${teacherId}`;
+                          const subject = teacher.subject || '';
                           
                           return (
                             <option 
@@ -657,16 +742,31 @@ const StudentForm = ({ isViewMode = false }) => {
                               value={teacherId}
                               className={isSelected ? 'fw-bold' : ''}
                             >
-                              {isSelected ? '✓ ' : ''}{displayName}
+                              {isSelected ? '✓ ' : ''}{displayName}{subject ? ` - ${subject}` : ''}
+                              {teacher.institution && teacher.institution !== userInstitution ? ` (${teacher.institution})` : ''}
                             </option>
                           );
                         })
                       ) : (
-                        <option value="" disabled>No hay docentes disponibles</option>
+                        <option value="" disabled>
+                          {formData.grade || formData.course_id || userInstitution
+                            ? `No hay docentes disponibles${userInstitution ? ` de ${userInstitution}` : ''}${formData.grade ? ` para grado ${formData.grade}°` : ''}${formData.course_id ? ' para este curso' : ''}`
+                            : 'No hay docentes disponibles'}
+                        </option>
                       )}
                     </select>
                     <div className="form-text">
-                      {formData.teacher_id ? (
+                      {!formData.grade && !formData.course_id && !userInstitution ? (
+                        <span className="text-info">
+                          <i className="bi bi-info-circle-fill me-1"></i>
+                          Selecciona un grado o curso para ver los docentes disponibles
+                        </span>
+                      ) : userInstitution ? (
+                        <span className="text-info">
+                          <i className="bi bi-info-circle-fill me-1"></i>
+                          Mostrando docentes de la institución "{userInstitution}"{formData.grade ? ` del grado ${formData.grade}°` : ''}{formData.course_id ? ' de este curso' : ''}
+                        </span>
+                      ) : formData.teacher_id ? (
                         <span className="text-success">
                           <i className="bi bi-check-circle-fill me-1"></i>
                           Docente seleccionado correctamente
@@ -674,14 +774,27 @@ const StudentForm = ({ isViewMode = false }) => {
                       ) : (
                         <span className="text-warning">
                           <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                          {teachers.length === 0 ? 
-                            'No hay docentes disponibles para asignar' : 
+                          {filteredTeachers.length === 0 ? 
+                            `No hay docentes disponibles${userInstitution ? ` de ${userInstitution}` : ''}${formData.grade ? ` para grado ${formData.grade}°` : ''}${formData.course_id ? ' para este curso' : ''}` : 
                             'Seleccione un docente para este estudiante'}
                         </span>
                       )}
                     </div>
                   </>
                 )}
+              </div>
+              <div className="col-md-6 mb-3">
+                <label htmlFor="contact_email" className="form-label">Institución: </label>
+                <input
+                  type="text"
+                  className="form-control"
+                  id="institution"
+                  name="institution"
+                  value={formData.institution}
+                  onChange={handleChange}
+                  required
+                  disabled={isViewMode}
+                />
               </div>
             </div>
             
@@ -725,7 +838,7 @@ const StudentForm = ({ isViewMode = false }) => {
                 <button 
                   type="button" 
                   className="btn btn-primary"
-                  onClick={() => navigate(`/estudiantes/${id}/editar`)}
+                  onClick={() => navigate(`/estudiantes/editar/${id}`)}
                 >
                   Editar
                 </button>

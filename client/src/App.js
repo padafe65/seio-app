@@ -8,8 +8,6 @@ import Login from './pages/Login.js';
 import Registro from './pages/Registro.js';
 import Admin from './pages/Admin.js';
 import './styles/styles.css';
-import './styles/responsive.css';
-import { useWindowSize } from './hooks/useWindowSize';
 import ResetPassword from './pages/ResetPassword.js';
 import CompleteStudent from './components/CompleteStudent.js';
 import CompleteTeacher from './components/CompleteTeacher.js';
@@ -51,6 +49,8 @@ import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.j
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
 import ImprovementPlanDetailEnhanced from './pages/improvement-plans/ImprovementPlanDetailEnhanced.js';
 import TeacherCoursesManager from './pages/courses/TeacherCoursesManager';
+import CoursesList from './pages/courses/CoursesList.js';
+import CourseForm from './pages/courses/CourseForm.js';
 import AutomaticImprovementPlansManager from './components/AutomaticImprovementPlansManager.js';
 import UsersManagement from './pages/users/UsersManagement.js';
 import UserForm from './pages/users/UserForm.js';
@@ -193,27 +193,20 @@ function AppContent() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
     const handleShow = () => setShow(true);
-    const windowSize = useWindowSize();
-    
-    // Cerrar offcanvas cuando cambia a desktop
-    useEffect(() => {
-      if (windowSize.width >= 768 && show) {
-        setShow(false);
-      }
-    }, [windowSize.width, show]);
     
     return (
       <div>
         {/* Botón para mostrar sidebar en móviles */}
         <button 
-          className="btn btn-dark d-md-none menu-mobile-button" 
+          className="btn btn-dark d-md-none position-fixed" 
+          style={{ top: '70px', left: '10px', zIndex: 1030 }} 
           onClick={handleShow}
         >
           <Menu size={20} />
         </button>
         
         {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar sidebar-fixed bg-dark text-white">
+        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
           <div className="p-3">
             <h5 className="mb-3">Panel de Control</h5>
             <ul className="nav flex-column">
@@ -336,7 +329,12 @@ function AppContent() {
         </Offcanvas>
         
         {/* Contenido principal */}
-        <div className="main-content-responsive">
+        <div style={{ 
+          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
+          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
+          padding: '20px', 
+          marginTop: '56px' 
+        }}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
@@ -396,27 +394,20 @@ function AppContent() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
     const handleShow = () => setShow(true);
-    const windowSize = useWindowSize();
-    
-    // Cerrar offcanvas cuando cambia a desktop
-    useEffect(() => {
-      if (windowSize.width >= 768 && show) {
-        setShow(false);
-      }
-    }, [windowSize.width, show]);
     
     return (
       <div>
         {/* Botón para mostrar sidebar en móviles */}
         <button 
-          className="btn btn-dark d-md-none menu-mobile-button" 
+          className="btn btn-dark d-md-none position-fixed" 
+          style={{ top: '70px', left: '10px', zIndex: 1030 }} 
           onClick={handleShow}
         >
           <Menu size={20} />
         </button>
         
         {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar sidebar-fixed bg-dark text-white">
+        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
           <div className="p-3">
             <h5 className="mb-3">👑 Panel Super Admin</h5>
             <ul className="nav flex-column">
@@ -478,6 +469,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/materias-categorias" className="nav-link bg-success text-white d-flex align-items-center">
                   <Database size={18} className="me-2" /> Materias/Categorías
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/cursos" className="nav-link bg-info text-white d-flex align-items-center">
+                  <BookOpen size={18} className="me-2" /> Gestión de Cursos
                 </Link>
               </li>
             </ul>
@@ -556,7 +552,12 @@ function AppContent() {
         </Offcanvas>
         
         {/* Contenido principal */}
-        <div className="main-content-responsive">
+        <div style={{ 
+          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
+          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
+          padding: '20px', 
+          marginTop: '56px' 
+        }}>
           <Routes>
             <Route path="/dashboard" element={<SuperAdminDashboard />} />
             <Route path="/admin/users" element={<UsersManagement />} />
@@ -566,12 +567,12 @@ function AppContent() {
             <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
             <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
             
-            {/* Rutas para estudiantes - Orden importante: más específicas primero */}
+            {/* Rutas para estudiantes */}
             <Route path="/estudiantes" element={<StudentsList />} />
             <Route path="/estudiantes/nuevo" element={<StudentForm />} />
+            <Route path="/estudiantes/:id" element={<StudentDetail />} />
             <Route path="/estudiantes/:id/editar" element={<StudentForm />} />
             <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
-            <Route path="/estudiantes/:id" element={<StudentDetail />} />
             
             {/* Rutas para indicadores */}
             <Route path="/indicadores" element={<IndicatorsList />} />
@@ -597,6 +598,11 @@ function AppContent() {
             <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
+            
+            {/* Rutas para cursos (super_administrador) */}
+            <Route path="/cursos" element={<CoursesList />} />
+            <Route path="/cursos/nuevo" element={<CourseForm />} />
+            <Route path="/cursos/:id/editar" element={<CourseForm />} />
           </Routes>
         </div>
       </div>
@@ -608,27 +614,20 @@ function AppContent() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
     const handleShow = () => setShow(true);
-    const windowSize = useWindowSize();
-    
-    // Cerrar offcanvas cuando cambia a desktop
-    useEffect(() => {
-      if (windowSize.width >= 768 && show) {
-        setShow(false);
-      }
-    }, [windowSize.width, show]);
     
     return (
       <div>
         {/* Botón para mostrar sidebar en móviles */}
         <button 
-          className="btn btn-dark d-md-none menu-mobile-button" 
+          className="btn btn-dark d-md-none position-fixed" 
+          style={{ top: '70px', left: '10px', zIndex: 1030 }} 
           onClick={handleShow}
         >
           <Menu size={20} />
         </button>
         
         {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar sidebar-fixed bg-dark text-white">
+        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
           <div className="p-3">
             <h5 className="mb-3">Panel de Estudiante</h5>
             <ul className="nav flex-column">
@@ -698,7 +697,12 @@ function AppContent() {
         </Offcanvas>
         
         {/* Contenido principal */}
-        <div className="main-content-responsive">
+        <div style={{ 
+          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
+          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
+          padding: '20px', 
+          marginTop: '56px' 
+        }}>
           <Routes>
             <Route path="/dashboard" element={<StudentDashboardPage />} />
             <Route path="/take-quiz" element={<TakeQuizPage />} />

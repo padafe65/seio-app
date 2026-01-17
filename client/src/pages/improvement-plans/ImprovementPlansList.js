@@ -2,11 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Eye, Edit, Trash2, Search, Filter, CheckCircle, XCircle } from 'lucide-react';
-import axios from 'axios';
+import axios from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
 import Swal from 'sweetalert2';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const ImprovementPlansList = () => {
   const [plans, setPlans] = useState([]);
@@ -15,32 +13,57 @@ const ImprovementPlansList = () => {
   const [error, setError] = useState(null);
   const [students, setStudents] = useState([]);
   const [selectedStudent, setSelectedStudent] = useState('');
+  
+  // Filtros adicionales para super_administrador
+  const [filters, setFilters] = useState({
+    institution: '',
+    course: '',
+    grade: '',
+    teacher_name: '',
+    student_name: '',
+    activity_status: ''
+  });
+  
+  const [institutions, setInstitutions] = useState([]);
+  const [courses, setCourses] = useState([]);
   const { user } = useAuth();
   
   useEffect(() => {
     const fetchPlans = async () => {
       try {
         let url;
+        const params = new URLSearchParams();
         
+        // Construir la URL según el rol
         if (user.role === 'docente') {
-          url = `${API_URL}/api/improvement-plans/teacher/${user.id}`;
+          url = `/improvement-plans/teacher/${user.id}`;
         } else if (user.role === 'estudiante') {
-          url = `${API_URL}/api/improvement-plans/student/${user.id}`;
+          url = `/improvement-plans/student/${user.id}`;
         } else {
-          url = `${API_URL}/api/improvement-plans`;
+          url = `/improvement-plans`;
+          
+          // Agregar filtros si es super_administrador o admin
+          if ((user.role === 'super_administrador' || user.role === 'administrador') && filters) {
+            Object.keys(filters).forEach(key => {
+              if (filters[key]) {
+                params.append(key, filters[key]);
+              }
+            });
+          }
         }
         
         if (selectedStudent && user.role === 'docente') {
-          url = `${API_URL}/api/improvement-plans/student/${selectedStudent}`;
+          url = `/improvement-plans/student/${selectedStudent}`;
         }
         
-        const response = await axios.get(url, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        setPlans(response.data);
+        // Agregar parámetros a la URL si existen
+        const queryString = params.toString();
+        if (queryString) {
+          url += `?${queryString}`;
+        }
+        
+        const response = await axios.get(url);
+        setPlans(Array.isArray(response.data) ? response.data : []);
         setLoading(false);
       } catch (error) {
         console.error('Error al cargar planes de mejoramiento:', error);
@@ -53,19 +76,9 @@ const ImprovementPlansList = () => {
       if (user.role === 'docente') {
         try {
           // Obtener el teacher_id asociado con el user_id
-          const teacherResponse = await axios.get(`${API_URL}/api/teachers/by-user/${user.id}`, {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-              'Content-Type': 'application/json'
-            }
-          });
+          const teacherResponse = await axios.get(`/teachers/by-user/${user.id}`);
           if (teacherResponse.data && teacherResponse.data.id) {
-            const studentsResponse = await axios.get(`${API_URL}/api/teachers/${teacherResponse.data.id}/students`, {
-              headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-                'Content-Type': 'application/json'
-              }
-            });
+            const studentsResponse = await axios.get(`/teachers/${teacherResponse.data.id}/students`);
             setStudents(studentsResponse.data);
           }
         } catch (error) {
@@ -74,9 +87,31 @@ const ImprovementPlansList = () => {
       }
     };
     
+    const fetchFilterOptions = async () => {
+      // Solo para super_administrador
+      if (user.role === 'super_administrador' || user.role === 'administrador') {
+        try {
+          // Obtener instituciones únicas
+          const usersResponse = await axios.get('/admin/users');
+          const users = usersResponse.data.data || usersResponse.data || [];
+          const uniqueInstitutions = [...new Set(users.map(u => u.institution).filter(Boolean))];
+          setInstitutions(uniqueInstitutions.sort());
+          
+          // Obtener cursos únicos
+          const coursesResponse = await axios.get('/courses');
+          const allCourses = Array.isArray(coursesResponse.data) ? coursesResponse.data : [];
+          const uniqueCourses = [...new Set(allCourses.map(c => c.name).filter(Boolean))];
+          setCourses(uniqueCourses.sort());
+        } catch (error) {
+          console.error('Error al cargar opciones de filtro:', error);
+        }
+      }
+    };
+    
     fetchPlans();
     fetchStudents();
-  }, [user, selectedStudent]);
+    fetchFilterOptions();
+  }, [user, selectedStudent, filters]);
   
   const handleDelete = async (id) => {
     try {
@@ -92,12 +127,7 @@ const ImprovementPlansList = () => {
       });
       
       if (result.isConfirmed) {
-        await axios.delete(`${API_URL}/api/improvement-plans/${id}`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
-            'Content-Type': 'application/json'
-          }
-        });
+        await axios.delete(`/improvement-plans/${id}`);
         setPlans(plans.filter(plan => plan.id !== id));
         
         Swal.fire(
@@ -116,6 +146,25 @@ const ImprovementPlansList = () => {
     }
   };
   
+  const handleFilterChange = (key, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+  
+  const clearFilters = () => {
+    setFilters({
+      institution: '',
+      course: '',
+      grade: '',
+      teacher_name: '',
+      student_name: '',
+      activity_status: ''
+    });
+    setSearchTerm('');
+  };
+  
   const filteredPlans = plans.filter(plan => 
     plan.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     plan.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -128,6 +177,28 @@ const ImprovementPlansList = () => {
     const date = new Date(dateString);
     return date.toLocaleDateString('es-CO');
   };
+  
+  const getStatusBadge = (plan) => {
+    // Priorizar activity_status sobre completed
+    if (plan.activity_status) {
+      const statusConfig = {
+        'pending': { label: 'Pendiente', class: 'bg-warning' },
+        'in_progress': { label: 'En Progreso', class: 'bg-info' },
+        'completed': { label: 'Completado', class: 'bg-success' },
+        'failed': { label: 'Fallido', class: 'bg-danger' }
+      };
+      const config = statusConfig[plan.activity_status] || { label: plan.activity_status, class: 'bg-secondary' };
+      return <span className={`badge ${config.class}`}>{config.label}</span>;
+    }
+    // Fallback a completed si no hay activity_status
+    return plan.completed ? (
+      <span className="badge bg-success">Completado</span>
+    ) : (
+      <span className="badge bg-warning">Pendiente</span>
+    );
+  };
+  
+  const showAdvancedFilters = user.role === 'super_administrador' || user.role === 'administrador';
   
   return (
     <div>
@@ -149,8 +220,9 @@ const ImprovementPlansList = () => {
       
       <div className="card mb-4">
         <div className="card-body">
+          {/* Búsqueda básica */}
           <div className="row mb-3">
-            <div className="col-md-6">
+            <div className={showAdvancedFilters ? "col-md-6" : "col-md-12"}>
               <div className="input-group">
                 <span className="input-group-text">
                   <Search size={18} />
@@ -165,7 +237,7 @@ const ImprovementPlansList = () => {
               </div>
             </div>
             
-            {user.role === 'docente' && (
+            {user.role === 'docente' && !showAdvancedFilters && (
               <div className="col-md-6">
                 <div className="input-group">
                   <span className="input-group-text">
@@ -188,6 +260,113 @@ const ImprovementPlansList = () => {
             )}
           </div>
           
+          {/* Filtros avanzados para super_administrador/administrador */}
+          {showAdvancedFilters && (
+            <>
+              <div className="row mb-3">
+                <div className="col-md-3">
+                  <label className="form-label small text-muted">Institución</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    placeholder="Filtrar por institución..."
+                    value={filters.institution}
+                    onChange={(e) => handleFilterChange('institution', e.target.value)}
+                    list="institutions-list"
+                  />
+                  <datalist id="institutions-list">
+                    {institutions.map((inst, idx) => (
+                      <option key={idx} value={inst} />
+                    ))}
+                  </datalist>
+                </div>
+                
+                <div className="col-md-3">
+                  <label className="form-label small text-muted">Curso</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    placeholder="Filtrar por curso..."
+                    value={filters.course}
+                    onChange={(e) => handleFilterChange('course', e.target.value)}
+                    list="courses-list"
+                  />
+                  <datalist id="courses-list">
+                    {courses.map((course, idx) => (
+                      <option key={idx} value={course} />
+                    ))}
+                  </datalist>
+                </div>
+                
+                <div className="col-md-2">
+                  <label className="form-label small text-muted">Grado</label>
+                  <select
+                    className="form-select form-select-sm"
+                    value={filters.grade}
+                    onChange={(e) => handleFilterChange('grade', e.target.value)}
+                  >
+                    <option value="">Todos</option>
+                    <option value="7">7°</option>
+                    <option value="8">8°</option>
+                    <option value="9">9°</option>
+                    <option value="10">10°</option>
+                    <option value="11">11°</option>
+                  </select>
+                </div>
+                
+                <div className="col-md-2">
+                  <label className="form-label small text-muted">Estado</label>
+                  <select
+                    className="form-select form-select-sm"
+                    value={filters.activity_status}
+                    onChange={(e) => handleFilterChange('activity_status', e.target.value)}
+                  >
+                    <option value="">Todos</option>
+                    <option value="pending">Pendiente</option>
+                    <option value="in_progress">En Progreso</option>
+                    <option value="completed">Completado</option>
+                    <option value="failed">Fallido</option>
+                  </select>
+                </div>
+                
+                <div className="col-md-2">
+                  <label className="form-label small text-muted">&nbsp;</label>
+                  <button
+                    className="btn btn-outline-secondary btn-sm w-100"
+                    onClick={clearFilters}
+                    title="Limpiar filtros"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+              </div>
+              
+              <div className="row mb-3">
+                <div className="col-md-6">
+                  <label className="form-label small text-muted">Docente</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    placeholder="Filtrar por docente..."
+                    value={filters.teacher_name}
+                    onChange={(e) => handleFilterChange('teacher_name', e.target.value)}
+                  />
+                </div>
+                
+                <div className="col-md-6">
+                  <label className="form-label small text-muted">Estudiante</label>
+                  <input
+                    type="text"
+                    className="form-control form-control-sm"
+                    placeholder="Filtrar por estudiante..."
+                    value={filters.student_name}
+                    onChange={(e) => handleFilterChange('student_name', e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+          
           {loading ? (
             <div className="text-center py-4">
               <div className="spinner-border text-primary" role="status">
@@ -203,6 +382,13 @@ const ImprovementPlansList = () => {
                     <th>Materia</th>
                     {user.role !== 'estudiante' && <th>Estudiante</th>}
                     {user.role !== 'docente' && <th>Docente</th>}
+                    {showAdvancedFilters && (
+                      <>
+                        <th>Institución</th>
+                        <th>Curso</th>
+                        <th>Grado</th>
+                      </>
+                    )}
                     <th>Fecha Límite</th>
                     <th>Estado</th>
                     <th className="text-end">Acciones</th>
@@ -216,14 +402,15 @@ const ImprovementPlansList = () => {
                         <td>{plan.subject}</td>
                         {user.role !== 'estudiante' && <td>{plan.student_name}</td>}
                         {user.role !== 'docente' && <td>{plan.teacher_name}</td>}
+                        {showAdvancedFilters && (
+                          <>
+                            <td>{plan.institution || <span className="text-muted">-</span>}</td>
+                            <td>{plan.course_name || <span className="text-muted">-</span>}</td>
+                            <td>{plan.grade ? `${plan.grade}°` : <span className="text-muted">-</span>}</td>
+                          </>
+                        )}
                         <td>{formatDate(plan.deadline)}</td>
-                        <td>
-                          {plan.completed ? (
-                            <span className="badge bg-success">Completado</span>
-                          ) : (
-                            <span className="badge bg-warning">Pendiente</span>
-                          )}
-                        </td>
+                        <td>{getStatusBadge(plan)}</td>
                         <td className="text-end">
                           <div className="btn-group">
                             <Link 
@@ -254,7 +441,7 @@ const ImprovementPlansList = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={user.role === 'estudiante' ? 5 : 6} className="text-center py-3">
+                      <td colSpan={user.role === 'estudiante' ? 5 : (showAdvancedFilters ? 9 : 6)} className="text-center py-3">
                         No se encontraron planes de mejoramiento
                       </td>
                     </tr>

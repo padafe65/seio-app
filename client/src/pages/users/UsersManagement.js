@@ -3,20 +3,27 @@ import { useAuth } from '../../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
 import axiosClient from '../../api/axiosClient';
 import Swal from 'sweetalert2';
-import { Edit, Trash2, UserPlus, Shield, User, Mail, Phone, Eye } from 'lucide-react';
+import { Edit, Trash2, UserPlus, Shield, User, Mail, Phone, UserCheck } from 'lucide-react';
 
 const UsersManagement = () => {
   const { user, isAuthReady } = useAuth();
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [incompleteUsers, setIncompleteUsers] = useState({ students: [], teachers: [] });
   const [filter, setFilter] = useState('all'); // all, estudiante, docente, administrador, super_administrador
+  const [searchFilters, setSearchFilters] = useState({
+    name: '',
+    email: '',
+    institution: ''  // ✨ AGREGADO: filtro por institución
+  });
 
   useEffect(() => {
     if (!isAuthReady) return;
     
     if (user && user.role === 'super_administrador') {
       fetchUsers();
+      fetchIncompleteUsers();
     } else {
       navigate('/');
     }
@@ -26,19 +33,7 @@ const UsersManagement = () => {
     try {
       setLoading(true);
       const response = await axiosClient.get('/admin/users');
-      const usersData = response.data.data || response.data || [];
-      
-      // Debug: Verificar valores de estado recibidos
-      if (usersData.length > 0) {
-        console.log('🔍 Valores de estado recibidos (primeros 3):', usersData.slice(0, 3).map(u => ({
-          id: u.id,
-          name: u.name,
-          estado: u.estado,
-          estadoType: typeof u.estado
-        })));
-      }
-      
-      setUsers(usersData);
+      setUsers(response.data.data || response.data || []);
     } catch (error) {
       console.error('Error al cargar usuarios:', error);
       Swal.fire({
@@ -49,6 +44,63 @@ const UsersManagement = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchIncompleteUsers = async () => {
+    try {
+      console.log('🔍 Cargando usuarios incompletos...');
+      const [studentsResponse, teachersResponse] = await Promise.all([
+        axiosClient.get('/users/incomplete/students'),
+        axiosClient.get('/users/incomplete/teachers')
+      ]);
+      
+      console.log('📊 Estudiantes incompletos:', studentsResponse.data);
+      console.log('📊 Docentes incompletos:', teachersResponse.data);
+      
+      setIncompleteUsers({
+        students: studentsResponse.data || [],
+        teachers: teachersResponse.data || []
+      });
+      
+      console.log('✅ Usuarios incompletos cargados correctamente');
+    } catch (error) {
+      console.error('❌ Error al cargar usuarios incompletos:', error);
+      console.error('❌ Detalles del error:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        url: error.config?.url
+      });
+      // No mostrar error al usuario, solo loguear
+      // Si el error es 404, significa que los endpoints no están disponibles
+      // En ese caso, simplemente no mostrar los botones de completar registro
+    }
+  };
+
+  // Verificar si un usuario tiene registro incompleto
+  const hasIncompleteRegistration = (userItem) => {
+    if (userItem.role === 'estudiante') {
+      return incompleteUsers.students.some(u => u.id === userItem.id);
+    }
+    if (userItem.role === 'docente') {
+      return incompleteUsers.teachers.some(u => u.id === userItem.id);
+    }
+    return false;
+  };
+
+  // Manejar completar registro
+  const handleCompleteRegistration = (userItem) => {
+    // Establecer las banderas necesarias en localStorage
+    localStorage.setItem('user_id', userItem.id);
+    localStorage.setItem('completing_user_id', userItem.id);
+    localStorage.setItem('created_by_admin', 'true');
+    
+    // Redirigir según el rol
+    if (userItem.role === 'estudiante') {
+      navigate('/CompleteStudent');
+    } else if (userItem.role === 'docente') {
+      navigate('/CompleteTeacher');
     }
   };
 
@@ -87,9 +139,13 @@ const UsersManagement = () => {
   };
 
   const handleStatusChange = async (userId, currentStatus) => {
-    // Normalizar el estado actual y cambiarlo: activo (1, '1', 'activo', true) -> inactivo (0), inactivo -> activo (1)
-    const isCurrentlyActive = currentStatus === 1 || currentStatus === '1' || currentStatus === 'activo' || currentStatus === true;
-    const newStatus = isCurrentlyActive ? 0 : 1;
+    // Normalize currentStatus to number if it's a string
+    // Handle 'pendiente' as inactive
+    const currentStatusNum = typeof currentStatus === 'string' 
+      ? (currentStatus.toLowerCase() === 'activo' || currentStatus === '1' ? 1 : 0)
+      : (currentStatus === 1 ? 1 : 0);
+    
+    const newStatus = currentStatusNum === 1 ? 0 : 1;
     const statusText = newStatus === 1 ? 'activar' : 'desactivar';
     
     const result = await Swal.fire({
@@ -143,9 +199,53 @@ const UsersManagement = () => {
     );
   };
 
-  const filteredUsers = filter === 'all' 
-    ? users 
-    : users.filter(u => u.role === filter);
+  // Helper function to normalize estado value (handles both string and number)
+  const isActive = (estado) => {
+    if (estado === null || estado === undefined) {
+      return true; // Default to active if not set
+    }
+    // Handle string values
+    if (typeof estado === 'string') {
+      const estadoLower = estado.toLowerCase();
+      return estadoLower === 'activo' || estado === '1';
+      // 'pendiente' and 'inactivo' are treated as inactive
+    }
+    // Handle number values
+    return estado === 1 || estado === '1';
+  };
+
+  // Helper function to get estado as number for API calls
+  const getEstadoAsNumber = (estado) => {
+    if (estado === null || estado === undefined) {
+      return 1; // Default to active
+    }
+    if (typeof estado === 'string') {
+      const estadoLower = estado.toLowerCase();
+      // 'pendiente' is treated as inactive (0)
+      return (estadoLower === 'activo' || estado === '1') ? 1 : 0;
+    }
+    return estado === 1 ? 1 : 0;
+  };
+
+  const filteredUsers = users.filter(u => {
+    // Filtro por rol
+    const matchesRole = filter === 'all' || u.role === filter;
+    
+    // Filtros por nombre, email e institución
+    const matchesName = !searchFilters.name || (u.name || '').toLowerCase().includes(searchFilters.name.toLowerCase());
+    const matchesEmail = !searchFilters.email || (u.email || '').toLowerCase().includes(searchFilters.email.toLowerCase());
+    const matchesInstitution = !searchFilters.institution || (u.institution || '').toLowerCase().includes(searchFilters.institution.toLowerCase());
+    
+    return matchesRole && matchesName && matchesEmail && matchesInstitution;
+  });
+
+  const handleSearchFilterChange = (field, value) => {
+    setSearchFilters(prev => ({ ...prev, [field]: value }));
+  };
+
+  const clearSearchFilters = () => {
+    setSearchFilters({ name: '', email: '', institution: '' });
+  };
 
   if (loading) {
     return (
@@ -173,43 +273,107 @@ const UsersManagement = () => {
       {/* Filtros */}
       <div className="card mb-4">
         <div className="card-body">
-          <div className="btn-group" role="group">
-            <button
-              type="button"
-              className={`btn ${filter === 'all' ? 'btn-primary' : 'btn-outline-primary'}`}
-              onClick={() => setFilter('all')}
-            >
-              Todos ({users.length})
-            </button>
-            <button
-              type="button"
-              className={`btn ${filter === 'super_administrador' ? 'btn-danger' : 'btn-outline-danger'}`}
-              onClick={() => setFilter('super_administrador')}
-            >
-              Super Admin ({users.filter(u => u.role === 'super_administrador').length})
-            </button>
-            <button
-              type="button"
-              className={`btn ${filter === 'administrador' ? 'btn-warning' : 'btn-outline-warning'}`}
-              onClick={() => setFilter('administrador')}
-            >
-              Admin ({users.filter(u => u.role === 'administrador').length})
-            </button>
-            <button
-              type="button"
-              className={`btn ${filter === 'docente' ? 'btn-info' : 'btn-outline-info'}`}
-              onClick={() => setFilter('docente')}
-            >
-              Docentes ({users.filter(u => u.role === 'docente').length})
-            </button>
-            <button
-              type="button"
-              className={`btn ${filter === 'estudiante' ? 'btn-success' : 'btn-outline-success'}`}
-              onClick={() => setFilter('estudiante')}
-            >
-              Estudiantes ({users.filter(u => u.role === 'estudiante').length})
-            </button>
+          {/* Filtros por rol */}
+          <div className="mb-3">
+            <label className="form-label small text-muted mb-2">Filtrar por Rol</label>
+            <div className="btn-group" role="group">
+              <button
+                type="button"
+                className={`btn ${filter === 'all' ? 'btn-primary' : 'btn-outline-primary'}`}
+                onClick={() => setFilter('all')}
+              >
+                Todos ({users.length})
+              </button>
+              <button
+                type="button"
+                className={`btn ${filter === 'super_administrador' ? 'btn-danger' : 'btn-outline-danger'}`}
+                onClick={() => setFilter('super_administrador')}
+              >
+                Super Admin ({users.filter(u => u.role === 'super_administrador').length})
+              </button>
+              <button
+                type="button"
+                className={`btn ${filter === 'administrador' ? 'btn-warning' : 'btn-outline-warning'}`}
+                onClick={() => setFilter('administrador')}
+              >
+                Admin ({users.filter(u => u.role === 'administrador').length})
+              </button>
+              <button
+                type="button"
+                className={`btn ${filter === 'docente' ? 'btn-info' : 'btn-outline-info'}`}
+                onClick={() => setFilter('docente')}
+              >
+                Docentes ({users.filter(u => u.role === 'docente').length})
+              </button>
+              <button
+                type="button"
+                className={`btn ${filter === 'estudiante' ? 'btn-success' : 'btn-outline-success'}`}
+                onClick={() => setFilter('estudiante')}
+              >
+                Estudiantes ({users.filter(u => u.role === 'estudiante').length})
+              </button>
+            </div>
           </div>
+          
+          {/* Filtros de búsqueda rápida */}
+          <div className="row g-3">
+            <div className="col-md-4">
+              <label className="form-label small text-muted">Buscar por Nombre</label>
+              <div className="input-group">
+                <span className="input-group-text">
+                  <User size={16} />
+                </span>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Nombre del usuario"
+                  value={searchFilters.name}
+                  onChange={(e) => handleSearchFilterChange('name', e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label small text-muted">Buscar por Email</label>
+              <div className="input-group">
+                <span className="input-group-text">
+                  <Mail size={16} />
+                </span>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Email del usuario"
+                  value={searchFilters.email}
+                  onChange={(e) => handleSearchFilterChange('email', e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label small text-muted">Buscar por Institución</label>
+              <div className="input-group">
+                <span className="input-group-text">
+                  <Shield size={16} />
+                </span>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Nombre de la institución"
+                  value={searchFilters.institution}
+                  onChange={(e) => handleSearchFilterChange('institution', e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          
+          {(searchFilters.name || searchFilters.email || searchFilters.institution) && (
+            <div className="mt-3">
+              <button
+                className="btn btn-sm btn-outline-secondary"
+                onClick={clearSearchFilters}
+              >
+                Limpiar Búsqueda
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -237,12 +401,17 @@ const UsersManagement = () => {
                 </thead>
                 <tbody>
                   {filteredUsers.map((userItem) => (
-                    <tr key={userItem.id}>
+                    <tr key={userItem.id} className={hasIncompleteRegistration(userItem) ? 'table-warning' : ''}>
                       <td>{userItem.id}</td>
                       <td>
                         <div className="d-flex align-items-center gap-2">
                           <User size={18} className="text-muted" />
                           {userItem.name}
+                          {hasIncompleteRegistration(userItem) && (
+                            <span className="badge bg-warning text-dark" title="Registro incompleto">
+                              Incompleto
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -263,20 +432,13 @@ const UsersManagement = () => {
                       </td>
                       <td>{getRoleBadge(userItem.role)}</td>
                       <td>
-                        {(() => {
-                          // Normalizar el estado: puede venir como número (1/0), string ('1'/'0'), o string ('activo'/'inactivo')
-                          const estado = userItem.estado;
-                          const isActive = estado === 1 || estado === '1' || estado === 'activo' || estado === true;
-                          return (
-                            <button
-                              className={`btn btn-sm ${isActive ? 'btn-success' : 'btn-secondary'}`}
-                              onClick={() => handleStatusChange(userItem.id, userItem.estado)}
-                              title={isActive ? 'Activo - Click para desactivar' : 'Inactivo - Click para activar'}
-                            >
-                              {isActive ? 'Activo' : 'Inactivo'}
-                            </button>
-                          );
-                        })()}
+                        <button
+                          className={`btn btn-sm ${isActive(userItem.estado) ? 'btn-success' : 'btn-secondary'}`}
+                          onClick={() => handleStatusChange(userItem.id, getEstadoAsNumber(userItem.estado))}
+                          title={isActive(userItem.estado) ? 'Activo - Click para desactivar' : 'Inactivo - Click para activar'}
+                        >
+                          {isActive(userItem.estado) ? 'Activo' : 'Inactivo'}
+                        </button>
                       </td>
                       <td>
                         {userItem.created_at 
@@ -284,7 +446,17 @@ const UsersManagement = () => {
                           : 'N/A'}
                       </td>
                       <td>
-                        <div className="d-flex gap-2">
+                        <div className="d-flex gap-2 flex-wrap">
+                          {/* Botón para completar registro (solo si tiene registro incompleto) */}
+                          {hasIncompleteRegistration(userItem) && (
+                            <button
+                              className="btn btn-sm btn-outline-warning"
+                              onClick={() => handleCompleteRegistration(userItem)}
+                              title="Completar registro de datos"
+                            >
+                              <UserCheck size={16} />
+                            </button>
+                          )}
                           <Link
                             to={`/admin/users/${userItem.id}/edit`}
                             className="btn btn-sm btn-outline-primary"
