@@ -20,6 +20,7 @@ import improvementPlansRoutes from './routes/improvementPlans.js';
 import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
 import questionnaireIndicatorsRoutes from './routes/questionnaireIndicators.js';
 import indicatorEvaluationRoutes from './routes/indicatorEvaluation.js';
+import educationalResourcesRoutes from './routes/educationalResources.js';
 
 // Middleware imports
 import { verifyToken, isAdmin, isSuperAdmin } from './middleware/authMiddleware.js';
@@ -330,6 +331,7 @@ app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
 app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
 app.use('/api', improvementPlansRoutes);
+app.use('/api/educational-resources', educationalResourcesRoutes);
 
 // ⚠️ usersRoutes DEBE ir DESPUÉS de definir las rutas de auth
 // porque usersRoutes aplica verifyToken a todas las rutas que empiezan con /api
@@ -561,6 +563,7 @@ app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
 app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
 app.use('/api', improvementPlansRoutes);
+app.use('/api/educational-resources', educationalResourcesRoutes);
 // ⚠️ usersRoutes aplica verifyToken, por eso debe ir DESPUÉS de las rutas públicas de auth
 app.use('/api/admin', usersRoutes);  // Cambiado de '/api' a '/api/admin' para evitar conflictos
 

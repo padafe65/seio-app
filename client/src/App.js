@@ -28,7 +28,7 @@ import Swal from 'sweetalert2';
 import { 
   Home, Users, FileText, BarChart2, 
   PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen,
-  Shield, UserPlus, Database, Activity
+  Shield, UserPlus, Database, Activity, GraduationCap
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -54,6 +54,8 @@ import CourseForm from './pages/courses/CourseForm.js';
 import AutomaticImprovementPlansManager from './components/AutomaticImprovementPlansManager.js';
 import UsersManagement from './pages/users/UsersManagement.js';
 import UserForm from './pages/users/UserForm.js';
+import EducationalResourcesList from './pages/educational-resources/EducationalResourcesList.js';
+import EducationalResourceForm from './pages/educational-resources/EducationalResourceForm.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -476,6 +478,11 @@ function AppContent() {
                   <BookOpen size={18} className="me-2" /> Gestión de Cursos
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/recursos-educativos" className="nav-link bg-warning text-dark d-flex align-items-center">
+                  <GraduationCap size={18} className="me-2" /> Recursos Educativos
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
@@ -547,6 +554,11 @@ function AppContent() {
                   <Database size={18} className="me-2" /> Materias/Categorías
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/recursos-educativos" className="nav-link bg-warning text-dark d-flex align-items-center" onClick={handleClose}>
+                  <GraduationCap size={18} className="me-2" /> Recursos Educativos
+                </Link>
+              </li>
             </ul>
           </Offcanvas.Body>
         </Offcanvas>
@@ -603,6 +615,11 @@ function AppContent() {
             <Route path="/cursos" element={<CoursesList />} />
             <Route path="/cursos/nuevo" element={<CourseForm />} />
             <Route path="/cursos/:id/editar" element={<CourseForm />} />
+            
+            {/* Rutas para recursos educativos */}
+            <Route path="/recursos-educativos" element={<EducationalResourcesList />} />
+            <Route path="/recursos-educativos/nuevo" element={<EducationalResourceForm />} />
+            <Route path="/recursos-educativos/:id/editar" element={<EducationalResourceForm />} />
           </Routes>
         </div>
       </div>

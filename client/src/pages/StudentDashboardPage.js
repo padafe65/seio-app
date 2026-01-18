@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
+import LearningResourcesSection from '../components/educational-resources/LearningResourcesSection';
 
 const StudentDashboardPage = () => {
   const { user } = useAuth();
@@ -239,7 +240,7 @@ const StudentDashboardPage = () => {
       </div>
       
       {/* Acciones rápidas */}
-      <div className="row">
+      <div className="row mb-4">
         <div className="col-12">
           <div className="card">
             <div className="card-header">
@@ -261,6 +262,18 @@ const StudentDashboardPage = () => {
           </div>
         </div>
       </div>
+      
+      {/* Recursos de Aprendizaje */}
+      {studentData?.id && (
+        <div className="row">
+          <div className="col-12">
+            <LearningResourcesSection 
+              studentId={studentData.id} 
+              grade={studentData.grade}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };
