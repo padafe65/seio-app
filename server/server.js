@@ -196,10 +196,13 @@ app.post('/api/students', async (req, res) => {
           [studentId]
         );
         
-        // Crear nueva relación
+        // Obtener año académico actual
+        const currentAcademicYear = new Date().getFullYear();
+        
+        // Crear nueva relación (incluyendo academic_year)
         await db.query(
-          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-          [teacher_id, studentId]
+          'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+          [teacher_id, studentId, currentAcademicYear]
         );
         
         console.log(`✅ Relación teacher_students creada exitosamente`);
@@ -1334,10 +1337,13 @@ app.post('/api/students', async (req, res) => {
           [studentId]
         );
         
-        // Crear nueva relación
+        // Obtener año académico actual
+        const currentAcademicYear = new Date().getFullYear();
+        
+        // Crear nueva relación (incluyendo academic_year)
         await db.query(
-          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-          [teacher_id, studentId]
+          'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+          [teacher_id, studentId, currentAcademicYear]
         );
         
         console.log(`✅ Relación teacher_students creada exitosamente`);
@@ -1744,32 +1750,74 @@ app.delete('/api/students/:id', async (req, res) => {
 });
 
 // Añadir esta ruta a tu server.js si no existe
-// Ruta para obtener un estudiante por user_id
-app.get('/api/students/by-user/:userId', async (req, res) => {
+// Ruta para obtener un estudiante por user_id (requiere autenticación)
+app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    const authenticatedUserId = req.user.id;
+    const userRole = req.user.role;
     
+    // Verificar que el usuario solo pueda ver sus propios datos (si es estudiante)
+    if (userRole === 'estudiante' && parseInt(userId) !== authenticatedUserId) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'No tienes permiso para ver esta información',
+        error: 'FORBIDDEN'
+      });
+    }
+    
+    // Verificar si institution existe en students
+    let hasInstitution = false;
+    try {
+      const [columns] = await db.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'students' 
+        AND COLUMN_NAME = 'institution'
+      `);
+      hasInstitution = columns.length > 0;
+    } catch (error) {
+      // Ignorar
+    }
+    
+    const institutionFields = hasInstitution 
+      ? 's.institution, u.institution as user_institution, ' 
+      : '';
+    
+    // Obtener año académico actual para filtrar grades
+    const currentAcademicYear = new Date().getFullYear();
+
     const [rows] = await db.query(`
       SELECT 
-        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
         u.name, u.email, u.phone, u.role,
-        c.name as course_name,
+        c.name as course_name, c.grade as course_grade,
         g.phase1, g.phase2, g.phase3, g.phase4, g.average
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN courses c ON s.course_id = c.id
-      LEFT JOIN grades g ON s.id = g.student_id
+      LEFT JOIN grades g ON s.id = g.student_id 
+        AND (g.academic_year = ? OR g.academic_year IS NULL)
       WHERE s.user_id = ?
-    `, [userId]);
+    `, [currentAcademicYear, userId]);
     
     if (rows.length === 0) {
-      return res.status(404).json({ message: 'Estudiante no encontrado' });
+      return res.status(404).json({ 
+        success: false,
+        message: 'Estudiante no encontrado' 
+      });
     }
     
+    // Devolver directamente el objeto del estudiante (el frontend espera esto)
     res.json(rows[0]);
   } catch (error) {
     console.error('❌ Error al obtener estudiante:', error);
-    res.status(500).json({ message: 'Error al obtener estudiante' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener estudiante',
+      error: error.message
+    });
   }
 });
 
@@ -1790,7 +1838,10 @@ app.get('/api/student/attempts/:student_id', async (req, res) => {
 
     const realStudentId = studentRows[0].id;
 
-    // Consulta mejorada
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+
+    // Consulta mejorada (filtrada por academic_year) - incluir institución y período académico
     const [rows] = await db.query(`
       SELECT 
         qa.id as attempt_id,
@@ -1803,19 +1854,25 @@ app.get('/api/student/attempts/:student_id', async (req, res) => {
         q.phase,
         u.name AS teacher_name,
         c.name AS course_name,
+        COALESCE(s.institution, u_student.institution) AS institution,
+        COALESCE(qa.academic_year, ?) AS academic_year,
         (
           SELECT COUNT(*) 
           FROM quiz_attempts 
           WHERE student_id = qa.student_id 
             AND questionnaire_id = qa.questionnaire_id
+            AND (academic_year = ? OR academic_year IS NULL)
         ) AS total_attempts
       FROM quiz_attempts qa
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       JOIN users u ON q.created_by = u.id
       JOIN courses c ON q.course_id = c.id
+      LEFT JOIN students s ON qa.student_id = s.id
+      LEFT JOIN users u_student ON s.user_id = u_student.id
       WHERE qa.student_id = ?
+      AND (qa.academic_year = ? OR qa.academic_year IS NULL)
       ORDER BY qa.attempt_date DESC
-    `, [realStudentId]);
+    `, [currentAcademicYear, currentAcademicYear, realStudentId, currentAcademicYear]);
 
     // Agregar subject_name si quieres mantenerlo
     const processedRows = rows.map(row => ({
@@ -2204,15 +2261,19 @@ app.get('/api/teacher/students/:userId', async (req, res) => {
     
     const teacherId = teacherRows[0].id;
     
-    // Ahora obtener los estudiantes asociados a ese teacher_id
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Ahora obtener los estudiantes asociados a ese teacher_id (filtrados por academic_year)
     const [rows] = await pool.query(`
       SELECT s.*, c.name as course_name, u.name, u.email, u.phone
       FROM teacher_students ts
       JOIN students s ON ts.student_id = s.id
       JOIN users u ON s.user_id = u.id
       JOIN courses c ON s.course_id = c.id
-      WHERE ts.teacher_id = ?
-    `, [teacherId]);
+      WHERE ts.teacher_id = ? 
+      AND (ts.academic_year = ? OR ts.academic_year IS NULL)
+    `, [teacherId, currentAcademicYear]);
     
     res.json(rows);
   } catch (error) {
@@ -2238,7 +2299,10 @@ app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
     
     const realTeacherId = teacherRows[0].id;
     
-    // Obtener calificaciones de los estudiantes asignados al profesor
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Obtener calificaciones de los estudiantes asignados al profesor (filtradas por academic_year)
     const [rows] = await pool.query(`
       SELECT DISTINCT
         s.id as student_id, 
@@ -2254,10 +2318,12 @@ app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
       JOIN students s ON ts.student_id = s.id
       JOIN users u ON s.user_id = u.id
       JOIN courses c ON s.course_id = c.id
-      LEFT JOIN grades g ON s.id = g.student_id
-      WHERE ts.teacher_id = ?
+      LEFT JOIN grades g ON s.id = g.student_id 
+        AND (g.academic_year = ? OR g.academic_year IS NULL)
+      WHERE ts.teacher_id = ? 
+      AND (ts.academic_year = ? OR ts.academic_year IS NULL)
       ORDER BY u.name
-    `, [realTeacherId]);
+    `, [currentAcademicYear, realTeacherId, currentAcademicYear]);
     
     console.log(`📊 Calificaciones obtenidas para el profesor ${realTeacherId}:`, JSON.stringify(rows, null, 2));
     
@@ -2367,13 +2433,17 @@ app.get('/api/students/:studentId/grades', verifyToken, async (req, res) => {
     const { studentId } = req.params;
     console.log(`📊 Solicitud de notas para estudiante ${studentId}`);
     
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
     const [grades] = await pool.query(`
       SELECT g.*, q.title as questionnaire_title
       FROM grades g
       LEFT JOIN questionnaires q ON g.questionnaire_id = q.id
-      WHERE g.student_id = ?
+      WHERE g.student_id = ? 
+      AND (g.academic_year = ? OR g.academic_year IS NULL)
       ORDER BY g.created_at DESC
-    `, [studentId]);
+    `, [studentId, currentAcademicYear]);
     
     console.log(`📊 Notas obtenidas para estudiante ${studentId}:`, grades);
     res.json(grades);
@@ -2391,24 +2461,27 @@ app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
     
     console.log(`📝 Actualizando notas para estudiante ${studentId}:`, req.body);
     
-    // Buscar si ya existe un registro de notas para este estudiante
+    // Obtener año académico actual
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Buscar si ya existe un registro de notas para este estudiante (filtrado por academic_year)
     const [existingGrades] = await pool.query(`
-      SELECT id FROM grades WHERE student_id = ?
-    `, [studentId]);
+      SELECT id FROM grades WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)
+    `, [studentId, currentAcademicYear]);
     
     if (existingGrades.length > 0) {
-      // Actualizar notas existentes
+      // Actualizar notas existentes (asegurar academic_year)
       await pool.query(`
         UPDATE grades 
-        SET phase1 = ?, phase2 = ?, phase3 = ?, phase4 = ?, average = ?
-        WHERE student_id = ?
-      `, [phase1, phase2, phase3, phase4, average, studentId]);
+        SET phase1 = ?, phase2 = ?, phase3 = ?, phase4 = ?, average = ?, academic_year = COALESCE(academic_year, ?)
+        WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)
+      `, [phase1, phase2, phase3, phase4, average, currentAcademicYear, studentId, currentAcademicYear]);
     } else {
-      // Crear nuevo registro de notas
+      // Crear nuevo registro de notas (incluyendo academic_year)
       await pool.query(`
-        INSERT INTO grades (student_id, phase1, phase2, phase3, phase4, average, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, NOW())
-      `, [studentId, phase1, phase2, phase3, phase4, average]);
+        INSERT INTO grades (student_id, phase1, phase2, phase3, phase4, average, created_at, academic_year)
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
+      `, [studentId, phase1, phase2, phase3, phase4, average, currentAcademicYear]);
     }
     
     // Actualizar phase_averages si hay notas válidas
@@ -2602,8 +2675,11 @@ app.get('/api/student/evaluation-results/:studentId', async (req, res) => {
     }
 
     const realStudentId = studentRows[0].id;
+    
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
 
-    // Consulta para obtener los mejores resultados con información adicional
+    // Consulta para obtener los mejores resultados con información adicional (filtrados por academic_year)
     const [rows] = await pool.query(`
       SELECT 
         er.id,
@@ -2620,8 +2696,9 @@ app.get('/api/student/evaluation-results/:studentId', async (req, res) => {
       JOIN questionnaires q ON er.questionnaire_id = q.id
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       WHERE er.student_id = ?
+      AND (er.academic_year = ? OR er.academic_year IS NULL)
       ORDER BY er.phase, er.recorded_at DESC
-    `, [realStudentId]);
+    `, [realStudentId, currentAcademicYear]);
 
     // Agregar subject_name si es necesario
     const processedRows = rows.map(row => ({

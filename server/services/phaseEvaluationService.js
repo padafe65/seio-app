@@ -180,12 +180,15 @@ ${failedQuizzes.map(q => `• ${q.title} (Nota: ${q.best_score})`).join('\n')}
       console.log(`Plan de mejoramiento actualizado para ${student.student_name} en fase ${phase}`);
       return { created: false, updated: true };
     } else {
-      // Crear nuevo plan
+      // Obtener año académico actual
+      const currentAcademicYear = new Date().getFullYear();
+      
+      // Crear nuevo plan (incluyendo academic_year)
       await pool.query(`
         INSERT INTO improvement_plans 
         (student_id, teacher_id, title, subject, description, activities, deadline, 
-         failed_achievements, passed_achievements, completed, email_sent, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())
+         failed_achievements, passed_achievements, completed, email_sent, created_at, academic_year)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW(), ?)
       `, [
         student.student_id, 
         teacher.teacher_id, 
@@ -196,6 +199,7 @@ ${failedQuizzes.map(q => `• ${q.title} (Nota: ${q.best_score})`).join('\n')}
         deadline.toISOString().split('T')[0],
         failedAchievements,
         passedAchievements,
+        currentAcademicYear
       ]);
       
       console.log(`Plan de mejoramiento generado para ${student.student_name} en fase ${phase}`);

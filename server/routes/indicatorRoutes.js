@@ -851,8 +851,10 @@ router.get('/student/:userId', verifyToken, async (req, res) => {
     console.log(`✅ Estudiante encontrado: ${student.student_name} (Grado: ${student.grade})`);
     
     // 2. Obtener los indicadores asociados al estudiante a través de student_indicators
+    // Incluir si.id para tener una clave única por asignación
     const [indicatorRows] = await connection.query(`
       SELECT 
+        si.id as student_indicator_id,
         i.id,
         i.description,
         i.subject,
@@ -881,31 +883,44 @@ router.get('/student/:userId', verifyToken, async (req, res) => {
     
     console.log(`✅ Se encontraron ${indicatorRows.length} indicadores para el estudiante`);
     
-    // 3. Formatear la respuesta
-    const formattedIndicators = indicatorRows.map(row => ({
-      id: row.id,
-      description: row.description,
-      subject: row.subject,
-      phase: row.phase,
-      created_at: row.created_at,
-      achieved: row.achieved === 1, // Convertir a booleano
-      assigned_at: row.assigned_at,
-      teacher: {
-        id: row.teacher_id,
-        name: row.teacher_name,
-        subject: row.teacher_subject
-      },
-      questionnaire: row.questionnaire_id ? {
-        id: row.questionnaire_id,
-        title: row.questionnaire_title,
-        grade: row.questionnaire_grade,
-        phase: row.questionnaire_phase,
-        course: row.course_id ? {
-          id: row.course_id,
-          name: row.course_name
+    // 3. Formatear la respuesta y eliminar duplicados basándonos en i.id
+    // Si un indicador está asignado múltiples veces, tomamos solo el más reciente (el primero después del ORDER BY)
+    const seenIndicators = new Map();
+    const formattedIndicators = indicatorRows
+      .map(row => ({
+        student_indicator_id: row.student_indicator_id, // ID único de la asignación
+        id: row.id, // ID del indicador (puede repetirse)
+        description: row.description,
+        subject: row.subject,
+        phase: row.phase,
+        created_at: row.created_at,
+        achieved: row.achieved === 1, // Convertir a booleano
+        assigned_at: row.assigned_at,
+        teacher: {
+          id: row.teacher_id,
+          name: row.teacher_name,
+          subject: row.teacher_subject
+        },
+        questionnaire: row.questionnaire_id ? {
+          id: row.questionnaire_id,
+          title: row.questionnaire_title,
+          grade: row.questionnaire_grade,
+          phase: row.questionnaire_phase,
+          course: row.course_id ? {
+            id: row.course_id,
+            name: row.course_name
+          } : null
         } : null
-      } : null
-    }));
+      }))
+      .filter(indicator => {
+        // Eliminar duplicados: si ya vimos este indicador (por id), no lo incluimos
+        // Mantenemos solo el primero (más reciente por el ORDER BY)
+        if (seenIndicators.has(indicator.id)) {
+          return false;
+        }
+        seenIndicators.set(indicator.id, true);
+        return true;
+      });
     
     res.json({
       success: true,

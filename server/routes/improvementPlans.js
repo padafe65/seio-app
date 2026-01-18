@@ -81,8 +81,15 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
       LEFT JOIN courses c ON s.course_id = c.id
     `;
     
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
     const conditions = [];
     const params = [];
+    
+    // Filtrar por academic_year (año actual o NULL para datos históricos)
+    conditions.push(`(ip.academic_year = ? OR ip.academic_year IS NULL)`);
+    params.push(currentAcademicYear);
     
     // Agregar filtros si se proporcionan
     if (institution && hasInstitution) {
@@ -145,7 +152,10 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
     
     const studentId = students[0].id;
     
-    // Ahora obtenemos los planes de mejoramiento
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Ahora obtenemos los planes de mejoramiento (filtrados por academic_year)
     const [plans] = await pool.query(`
       SELECT ip.*, 
              t.user_id as teacher_user_id,
@@ -158,8 +168,9 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
       JOIN users ut ON t.user_id = ut.id
       LEFT JOIN courses c ON s.course_id = c.id
       WHERE ip.student_id = ?
+      AND (ip.academic_year = ? OR ip.academic_year IS NULL)
       ORDER BY ip.created_at DESC
-    `, [studentId]);
+    `, [studentId, currentAcademicYear]);
     
     res.json(plans);
   } catch (error) {
@@ -183,7 +194,10 @@ router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) =
     
     const teacherId = teachers[0].id;
     
-    // Ahora obtenemos los planes de mejoramiento
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Ahora obtenemos los planes de mejoramiento (filtrados por academic_year)
     const [plans] = await pool.query(`
       SELECT ip.*, 
              s.user_id as student_user_id,
@@ -195,8 +209,9 @@ router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) =
       JOIN users us ON s.user_id = us.id
       LEFT JOIN courses c ON s.course_id = c.id
       WHERE ip.teacher_id = ?
+      AND (ip.academic_year = ? OR ip.academic_year IS NULL)
       ORDER BY ip.created_at DESC
-    `, [teacherId]);
+    `, [teacherId, currentAcademicYear]);
     
     res.json(plans);
   } catch (error) {
@@ -510,7 +525,10 @@ router.post('/improvement-plans', async (req, res) => {
       return res.status(400).json({ message: 'El profesor no existe' });
     }
     
-    // Verificar si ya existe un plan similar para este estudiante
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Verificar si ya existe un plan similar para este estudiante (filtrado por academic_year)
     // Un plan se considera duplicado si tiene el mismo student_id, teacher_id, title y subject
     // y no está completado (o está pendiente/en progreso)
     const [existingPlans] = await pool.query(
@@ -520,8 +538,9 @@ router.post('/improvement-plans', async (req, res) => {
        AND teacher_id = ? 
        AND title = ? 
        AND subject = ?
+       AND (academic_year = ? OR academic_year IS NULL)
        AND (completed = 0 OR activity_status IN ('pending', 'in_progress'))`,
-      [student_id, teacher_id, title.trim(), subject]
+      [student_id, teacher_id, title.trim(), subject, currentAcademicYear]
     );
     
     if (existingPlans.length > 0) {
@@ -546,17 +565,18 @@ router.post('/improvement-plans', async (req, res) => {
     );
     const studentEmail = studentData[0]?.contact_email;
     
-    // Insertar el plan de mejoramiento
+    // Insertar el plan de mejoramiento (incluyendo academic_year)
     const [result] = await pool.query(
       `INSERT INTO improvement_plans 
        (student_id, teacher_id, title, subject, description, activities, deadline, 
         file_url, failed_achievements, passed_achievements, video_urls, resource_links,
         activity_status, teacher_notes, student_feedback, attempts_count, last_activity_date,
-        completed, email_sent, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW())`,
+        completed, email_sent, created_at, academic_year) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW(), ?)`,
       [student_id, teacher_id, title, subject, description, activities, deadline, 
        file_url, failed_achievements, passed_achievements, video_urls, resource_links,
-       activity_status || 'pending', teacher_notes, student_feedback, attempts_count || 0, last_activity_date]
+       activity_status || 'pending', teacher_notes, student_feedback, attempts_count || 0, last_activity_date,
+       currentAcademicYear]
     );
     
     // Si hay email, enviar notificación (implementar después)
@@ -704,7 +724,10 @@ router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
   try {
     const { studentId } = req.params;
     
-    // Obtener planes de mejoramiento usando directamente el student_id
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Obtener planes de mejoramiento usando directamente el student_id (filtrados por academic_year)
     const [plans] = await pool.query(`
       SELECT ip.*, 
              t.user_id as teacher_user_id,
@@ -717,8 +740,9 @@ router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
       JOIN users ut ON t.user_id = ut.id
       LEFT JOIN courses c ON s.course_id = c.id
       WHERE ip.student_id = ?
+      AND (ip.academic_year = ? OR ip.academic_year IS NULL)
       ORDER BY ip.created_at DESC
-    `, [studentId]);
+    `, [studentId, currentAcademicYear]);
     
     res.json(plans);
   } catch (error) {

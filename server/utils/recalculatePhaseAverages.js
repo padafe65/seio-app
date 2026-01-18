@@ -9,11 +9,14 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
   try {
     console.log(`🔄 Recalculando phase_averages para estudiante ${studentId}`);
     
-    // Si no se proporciona teacherId, buscarlo
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Si no se proporciona teacherId, buscarlo (filtrado por academic_year)
     if (!teacherId) {
       const [teacherData] = await pool.query(
-        'SELECT teacher_id FROM teacher_students WHERE student_id = ?',
-        [studentId]
+        'SELECT teacher_id FROM teacher_students WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+        [studentId, currentAcademicYear]
       );
       
       if (teacherData.length === 0) {
@@ -28,7 +31,7 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       console.log(`📚 Profesor encontrado para estudiante ${studentId}: ${teacherId}`);
     }
     
-    // 1. Obtener las mejores notas por cuestionario para cada fase
+    // 1. Obtener las mejores notas por cuestionario para cada fase (filtradas por academic_year)
     const [questionnairesByPhase] = await pool.query(`
       SELECT 
         q.id as questionnaire_id,
@@ -37,9 +40,11 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
         COALESCE(er.best_score, 0) as best_score,
         CASE WHEN er.id IS NOT NULL THEN 1 ELSE 0 END as has_evaluation
       FROM questionnaires q
-      LEFT JOIN evaluation_results er ON q.id = er.questionnaire_id AND er.student_id = ?
+      LEFT JOIN evaluation_results er ON q.id = er.questionnaire_id 
+        AND er.student_id = ? 
+        AND (er.academic_year = ? OR er.academic_year IS NULL)
       ORDER BY q.phase, q.id
-    `, [studentId]);
+    `, [studentId, currentAcademicYear]);
     
     // 2. Agrupar por fase y calcular promedios
     const phaseData = {};
@@ -93,10 +98,10 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       phaseGrades[`phase${phase.phase}`] = phase.avg_score;
     });
     
-    // Verificar si existe registro en grades
+    // Verificar si existe registro en grades (filtrado por academic_year)
     const [existingGrade] = await pool.query(
-      'SELECT * FROM grades WHERE student_id = ?',
-      [studentId]
+      'SELECT * FROM grades WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+      [studentId, currentAcademicYear]
     );
     
     if (existingGrade.length > 0) {
@@ -124,8 +129,9 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       
       if (phaseColumns.length > 0) {
         await pool.query(
-          `INSERT INTO grades (student_id, ${phaseColumns.join(', ')}, created_at) VALUES (?, ${placeholders}, NOW())`,
-          [studentId, ...phaseValues]
+          `INSERT INTO grades (student_id, ${phaseColumns.join(', ')}, created_at, academic_year) 
+           VALUES (?, ${placeholders}, NOW(), ?)`,
+          [studentId, ...phaseValues, currentAcademicYear]
         );
         console.log(`✅ Creado grades con fases:`, phaseGrades);
       }
@@ -145,8 +151,8 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       }
       
       await pool.query(
-        'UPDATE grades SET average = ? WHERE student_id = ?',
-        [overallAverage.toFixed(2), studentId]
+        'UPDATE grades SET average = ? WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+        [overallAverage.toFixed(2), studentId, currentAcademicYear]
       );
       
       console.log(`✅ Promedio general calculado: ${overallAverage.toFixed(2)} (${validPhases.length} fases válidas)`);

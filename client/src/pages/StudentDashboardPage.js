@@ -2,9 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+import axiosClient from '../api/axiosClient';
 
 const StudentDashboardPage = () => {
   const { user } = useAuth();
@@ -18,15 +16,15 @@ const StudentDashboardPage = () => {
       if (user && user.role === 'estudiante') {
         try {
           // Obtener datos del estudiante
-          const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
+          const studentResponse = await axiosClient.get(`/students/by-user/${user.id}`);
           setStudentData(studentResponse.data);
           
           // Obtener evaluaciones del estudiante
-          const evaluationsResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${user.id}`);
+          const evaluationsResponse = await axiosClient.get(`/quiz/evaluations-by-phase/${user.id}`);
           setEvaluations(evaluationsResponse.data);
           
           // Obtener intentos recientes
-          const attemptsResponse = await axios.get(`${API_URL}/api/student/attempts/${user.id}`);
+          const attemptsResponse = await axiosClient.get(`/student/attempts/${user.id}`);
           setRecentAttempts(attemptsResponse.data.slice(0, 3)); // Solo los 3 más recientes
           
           setLoading(false);
@@ -70,29 +68,55 @@ const StudentDashboardPage = () => {
       <div className="row mb-4">
         <div className="col-12">
           <h1 className="h3">Bienvenido, {user.name}</h1>
-          <p className="text-muted">Aquí puedes ver tu progreso académico</p>
+          <p className="text-muted">
+            {studentData?.institution || studentData?.user_institution ? (
+              <>
+                {studentData.institution || studentData.user_institution}
+                {evaluations.length > 0 && evaluations[0]?.academic_year && (
+                  <> • Período Académico {evaluations[0].academic_year}</>
+                )}
+              </>
+            ) : (
+              <>
+                Aquí puedes ver tu progreso académico
+                {evaluations.length > 0 && evaluations[0]?.academic_year && (
+                  <> • Período Académico {evaluations[0].academic_year}</>
+                )}
+              </>
+            )}
+          </p>
         </div>
       </div>
       
       {/* Tarjetas de resumen */}
       <div className="row mb-4">
-        <div className="col-md-4 mb-3">
+        <div className="col-md-3 mb-3">
           <div className="card h-100">
             <div className="card-body">
               <h5 className="card-title">Grado</h5>
-              <p className="card-text display-6">{studentData?.grade}°</p>
+              <p className="card-text display-6">{studentData?.grade || 'N/A'}°</p>
             </div>
           </div>
         </div>
-        <div className="col-md-4 mb-3">
+        <div className="col-md-3 mb-3">
           <div className="card h-100">
             <div className="card-body">
               <h5 className="card-title">Curso</h5>
-              <p className="card-text display-6">{studentData?.course_name}</p>
+              <p className="card-text display-6">{studentData?.course_name || 'N/A'}</p>
             </div>
           </div>
         </div>
-        <div className="col-md-4 mb-3">
+        <div className="col-md-3 mb-3">
+          <div className="card h-100">
+            <div className="card-body">
+              <h5 className="card-title">Institución</h5>
+              <p className="card-text display-6" style={{fontSize: '1.5rem'}}>
+                {studentData?.institution || studentData?.user_institution || 'N/A'}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="col-md-3 mb-3">
           <div className="card h-100">
             <div className="card-body">
               <h5 className="card-title">Promedio General</h5>
@@ -124,6 +148,8 @@ const StudentDashboardPage = () => {
                       <th>Fase</th>
                       <th>Evaluaciones Completadas</th>
                       <th>Promedio</th>
+                      <th>Docente</th>
+                      <th>Institución</th>
                       <th>Estado</th>
                     </tr>
                   </thead>
@@ -134,6 +160,8 @@ const StudentDashboardPage = () => {
                           <td>Fase {phase.phase}</td>
                           <td>{phase.total_evaluations}</td>
                           <td>{formatGrade(phase.phase_average)}</td>
+                          <td>{phase.teacher_name || 'N/A'}</td>
+                          <td>{phase.institution || studentData?.institution || studentData?.user_institution || 'N/A'}</td>
                           <td>
                             {phase.phase_average ? (
                               parseFloat(phase.phase_average) >= 3.0 ? (
@@ -149,7 +177,7 @@ const StudentDashboardPage = () => {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan="4" className="text-center">No hay evaluaciones registradas</td>
+                        <td colSpan="6" className="text-center">No hay evaluaciones registradas</td>
                       </tr>
                     )}
                   </tbody>
@@ -179,6 +207,8 @@ const StudentDashboardPage = () => {
                         <th>Evaluación</th>
                         <th>Fase</th>
                         <th>Calificación</th>
+                        <th>Docente</th>
+                        <th>Institución</th>
                         <th>Fecha</th>
                       </tr>
                     </thead>
@@ -192,6 +222,8 @@ const StudentDashboardPage = () => {
                               {formatGrade(attempt.score)}
                             </span>
                           </td>
+                          <td>{attempt.teacher_name || 'N/A'}</td>
+                          <td>{attempt.institution || studentData?.institution || studentData?.user_institution || 'N/A'}</td>
                           <td>{formatDate(attempt.attempted_at)}</td>
                         </tr>
                       ))}

@@ -272,12 +272,16 @@ export const getStudentsByGrade = async (req, res) => {
       WHERE ts.teacher_id = ? 
         AND s.grade = ? 
         AND u.estado = 'activo'
+        AND (ts.academic_year = ? OR ts.academic_year IS NULL)
       ORDER BY u.name ASC
     `;
     
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
     console.log('\n📝 Ejecutando consulta SQL:');
     console.log(query);
-    console.log('📌 Parámetros:', [teacherId, grade]);
+    console.log('📌 Parámetros:', [teacherId, grade, currentAcademicYear]);
     
     console.log('\n🔍 Verificando datos en la base de datos...');
     
@@ -299,8 +303,8 @@ export const getStudentsByGrade = async (req, res) => {
     );
     console.log(`📊 Total de estudiantes en el grado ${grade}: ${gradeStudents[0].count}`);
     
-    // Ejecutar la consulta principal
-    const [students] = await pool.query(query, [teacherId, grade]);
+    // Ejecutar la consulta principal (con academic_year)
+    const [students] = await pool.query(query, [teacherId, grade, currentAcademicYear]);
     
     console.log('\n📊 Resultados de la consulta:');
     console.log(`✅ Se encontraron ${students.length} estudiantes para el docente ${teacherId}, grado ${grade}`);

@@ -388,7 +388,10 @@ router.get('/:teacherId/students/by-grade/:grade', isTeacherOrAdmin, async (req,
             }
         }
         
-        // Obtener estudiantes del docente filtrados por grado
+        // Obtener año académico actual para filtrar
+        const currentAcademicYear = new Date().getFullYear();
+        
+        // Obtener estudiantes del docente filtrados por grado (filtrados por academic_year)
         console.log(`🔍 Ejecutando consulta para docente ${teacherId} y grado ${grade}`);
         const [students] = await pool.query(`
             SELECT DISTINCT s.*, u.name, u.email, u.phone, c.grade
@@ -397,8 +400,9 @@ router.get('/:teacherId/students/by-grade/:grade', isTeacherOrAdmin, async (req,
             JOIN teacher_students ts ON s.id = ts.student_id
             JOIN courses c ON s.course_id = c.id
             WHERE ts.teacher_id = ? AND c.grade = ?
+            AND (ts.academic_year = ? OR ts.academic_year IS NULL)
             ORDER BY u.name
-        `, [teacherId, grade]);
+        `, [teacherId, grade, currentAcademicYear]);
         
         console.log(`📊 Resultado de la consulta:`, students);
         

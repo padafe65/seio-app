@@ -421,11 +421,12 @@ export const createStudent = async (req, res) => {
       [userId, contact_phone, contact_email, age, grade, course_id, profileImage]
     );
 
-    // 3. Si se especificó un profesor, crear la relación
+    // 3. Si se especificó un profesor, crear la relación (con academic_year)
     if (teacher_id) {
+      const currentAcademicYear = new Date().getFullYear();
       await connection.query(
-        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-        [teacher_id, studentResult.insertId]
+        'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+        [teacher_id, studentResult.insertId, currentAcademicYear]
       );
     }
 

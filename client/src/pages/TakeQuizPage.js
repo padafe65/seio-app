@@ -1,13 +1,12 @@
 // src/pages/TakeQuizPage.js
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import axiosClient from '../api/axiosClient';
 import { useAuth } from '../context/AuthContext.js';
 import { useNavigate } from 'react-router-dom';
+import Swal from 'sweetalert2';
 // Importaciones para KaTeX
 import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const TakeQuizPage = () => {
   const [questionnaires, setQuestionnaires] = useState([]);
@@ -56,11 +55,11 @@ const TakeQuizPage = () => {
       if (user && user.role === 'estudiante') {
         try {
           // Obtener datos del estudiante
-          const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
+          const studentResponse = await axiosClient.get(`/students/by-user/${user.id}`);
           setStudentData(studentResponse.data);
           
           // Obtener evaluaciones del estudiante
-          const evaluationsResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${user.id}`);
+          const evaluationsResponse = await axiosClient.get(`/quiz/evaluations-by-phase/${user.id}`);
           setEvaluations(evaluationsResponse.data);
           console.log('Evaluaciones1:', evaluationsResponse.data);
           
@@ -78,16 +77,37 @@ const TakeQuizPage = () => {
 
   // Cargar cuestionarios al inicio
   useEffect(() => {
-    if (!studentId) return;
+    if (!user || user.role !== 'estudiante') return;
     
-    axios
-      .get(`/api/questionnaires?studentId=${studentId}`)
+    // Para estudiantes, el backend obtiene automáticamente el studentId del token
+    // No necesitamos pasar studentId en el query string
+    axiosClient
+      .get('/questionnaires')
       .then((res) => {
         console.log('Cuestionarios cargados:', res.data);
         setQuestionnaires(res.data);
+        
+        // Mostrar alerta si no hay cuestionarios disponibles
+        if (!res.data || res.data.length === 0) {
+          Swal.fire({
+            icon: 'info',
+            title: 'No hay evaluaciones disponibles',
+            text: 'No tienes evaluaciones pendientes en este momento. Por favor, contacta a tu docente.',
+            confirmButtonText: 'Entendido',
+            confirmButtonColor: '#3085d6'
+          });
+        }
       })
-      .catch((err) => console.error('Error al cargar cuestionarios:', err));
-  }, [studentId]);
+      .catch((err) => {
+        console.error('Error al cargar cuestionarios:', err);
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: 'No se pudieron cargar las evaluaciones. Por favor, intenta más tarde.',
+          confirmButtonText: 'Entendido'
+        });
+      });
+  }, [user]);
 
   // Cargar TODOS los intentos del estudiante para todos los cuestionarios
   useEffect(() => {
@@ -95,8 +115,8 @@ const TakeQuizPage = () => {
     
     console.log("Cargando todos los intentos para el estudiante ID:", studentId);
     
-    axios
-      .get(`/api/quiz/attempts/all/${studentId}`)
+    axiosClient
+      .get(`/quiz/attempts/all/${studentId}`)
       .then((res) => {
         console.log("Todos los intentos recibidos:", res.data+" estudentId:"+studentId);
         setAllAttempts(res.data.attempts || []);
@@ -112,8 +132,8 @@ const TakeQuizPage = () => {
     
     console.log("Cargando todos los intentos para el estudiante ID:", studentId);
     
-    axios
-      .get(`/api/intentos-por-fase/${studentId}`)
+    axiosClient
+      .get(`/quiz/intentos-por-fase/${studentId}`)
       .then((res) => {
         console.log("Todos los intentos recibidos API 2:", res.data+" estudentId:"+studentId);
         setIntentos(res.data || []);
@@ -127,8 +147,8 @@ const TakeQuizPage = () => {
   useEffect(() => {
     if (!studentId) return;
     
-    axios
-      .get(`/api/student/attempts/${studentId}`)
+    axiosClient
+      .get(`/student/attempts/${studentId}`)
       .then((res) => setDetailedAttempts(res.data || []))
       .catch((err) => console.error('Error al cargar intentos detallados:', err));
       
@@ -140,8 +160,8 @@ const TakeQuizPage = () => {
     
     console.log("API: "+studentId+ " QId: "+questionnaireId);
     
-    axios
-      .get(`/api/quiz/attempts/${studentId}/${questionnaireId}`)
+    axiosClient
+      .get(`/quiz/attempts/${studentId}/${questionnaireId}`)
       .then((res) => {
         setAttempts(res.data.attempts || []);
         setCount(res.data.count);
@@ -152,11 +172,18 @@ const TakeQuizPage = () => {
           setScore(null);
           setSubmitted(false);
           setCurrentQuestionnaire(null);
+          Swal.fire({
+            icon: 'warning',
+            title: 'Límite de intentos alcanzado',
+            text: 'Ya has completado los 2 intentos permitidos para esta evaluación.',
+            confirmButtonText: 'Entendido',
+            confirmButtonColor: '#3085d6'
+          });
         } else {
           setMaxAttemptsReached(false);
           setCurrentQuestionIndex(0); // Reiniciar el índice de pregunta
-          axios
-            .get(`/api/quiz/questions/${questionnaireId}`)
+          axiosClient
+            .get(`/quiz/questions/${questionnaireId}`)
             .then((res) => {
               setQuestions(res.data.questions || []);
               setCurrentQuestionnaire(res.data.questionnaire || null);
@@ -241,49 +268,55 @@ const TakeQuizPage = () => {
   
     try {
       // Enviar respuestas al servidor
-      const res = await axios.post('/api/quiz/submit', {
+      const res = await axiosClient.post('/quiz/submit', {
         student_id: studentId,
         questionnaire_id: questionnaireId,
         answers,
       });
-  
+      
       setScore(res.data.score);
       setPhaseAverage(res.data.phaseAverage); // Añadir esta línea para recibir el promedio de fase
       setSubmitted(true); // Marcar como enviado
-  
+      
       // Actualizar todos los intentos
-      const allUpdated = await axios.get(`/api/quiz/attempts/all/${studentId}`);
+      const allUpdated = await axiosClient.get(`/quiz/attempts/all/${studentId}`);
       setAllAttempts(allUpdated.data.attempts || []);
-  
+      
       // Actualizar la lista de intentos detallados
       try {
-        const detailedRes = await axios.get(`/api/student/attempts/${studentId}`);
+        const detailedRes = await axiosClient.get(`/student/attempts/${studentId}`);
         setDetailedAttempts(detailedRes.data || []);
         console.log("Intentos detallados actualizados:", detailedRes.data);
       } catch (err) {
         console.error('Error al actualizar intentos detallados:', err);
       }
-  
+      
       // Actualizar intentos por fase
       try {
-        const intentosRes = await axios.get(`/api/intentos-por-fase/${studentId}`);
+        const intentosRes = await axiosClient.get(`/quiz/intentos-por-fase/${studentId}`);
         setIntentos(intentosRes.data || []);
       } catch (err) {
         console.error('Error al actualizar intentos por fase:', err);
       }
-  
+      
       // Actualizar intentos
-      const updated = await axios.get(`/api/quiz/attempts/${studentId}/${questionnaireId}`);
+      const updated = await axiosClient.get(`/quiz/attempts/${studentId}/${questionnaireId}`);
       setAttempts(updated.data.attempts || []);
-  
+      
       if ((updated.data.count || 0) >= 2) {
         setMaxAttemptsReached(true);
       }
-  
-      // Mostrar mensaje de éxito con el promedio de fase
-      alert(`Tu calificación es: ${res.data.score}. 
-             Promedio actual de la fase: ${res.data.phaseAverage}.
-             La evaluación ha sido registrada correctamente.`);
+      
+      // Mostrar mensaje de éxito con el promedio de fase usando SweetAlert
+      await Swal.fire({
+        icon: 'success',
+        title: '¡Evaluación completada!',
+        html: `<p><strong>Tu calificación:</strong> ${res.data.score}</p>
+               ${res.data.phaseAverage ? `<p><strong>Promedio actual de la fase:</strong> ${res.data.phaseAverage}</p>` : ''}
+               <p>La evaluación ha sido registrada correctamente.</p>`,
+        confirmButtonText: 'Volver al Dashboard',
+        confirmButtonColor: '#3085d6'
+      });
       
       // Redirigir automáticamente al dashboard después de mostrar la alerta
       navigate('/student/dashboard');
@@ -291,7 +324,12 @@ const TakeQuizPage = () => {
     } catch (err) {
       console.error('Error al enviar respuestas:', err);
       setError(err.response?.data?.message || 'Error al enviar respuestas');
-      alert(err.response?.data?.message || 'Error al enviar respuestas');
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.response?.data?.message || 'Error al enviar respuestas',
+        confirmButtonText: 'Entendido'
+      });
     } finally {
       setLoading(false);
     }
@@ -307,7 +345,23 @@ const TakeQuizPage = () => {
         <select 
           className="form-select" 
           value={selectedPhase || ''} 
-          onChange={(e) => setSelectedPhase(e.target.value ? parseInt(e.target.value) : null)}
+          onChange={(e) => {
+            const phase = e.target.value ? parseInt(e.target.value) : null;
+            setSelectedPhase(phase);
+            setQuestionnaireId(''); // Limpiar selección de cuestionario al cambiar fase
+            
+            // Verificar si hay cuestionarios para la fase seleccionada
+            const filteredQuestionnaires = questionnaires.filter(q => phase ? q.phase === phase : true);
+            if (phase && filteredQuestionnaires.length === 0) {
+              Swal.fire({
+                icon: 'info',
+                title: 'No hay evaluaciones en esta fase',
+                text: `No tienes evaluaciones disponibles para la Fase ${phase}.`,
+                confirmButtonText: 'Entendido',
+                confirmButtonColor: '#3085d6'
+              });
+            }
+          }}
         >
           <option value="">Todas las fases</option>
           <option value="1">Fase 1</option>
@@ -321,7 +375,7 @@ const TakeQuizPage = () => {
         <label className="mr-2">Selecciona un cuestionario:</label>
         {questionnaires
           .filter(q => selectedPhase ? q.phase === selectedPhase : true)
-          .length > 0 && (
+          .length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {questionnaires
               .filter(q => selectedPhase ? q.phase === selectedPhase : true)
@@ -337,15 +391,17 @@ const TakeQuizPage = () => {
                       {q.title}
                     </h3>
 
-                    <p><strong>Materia:</strong> {q.subject_name || q.category?.split('_')[1] || ''}</p>
-                    <p><strong>Docente:</strong> {q.teacher_name || ''}</p>
-                    <p><strong>Curso:</strong> {q.course_name || ''}</p>
+                    <p><strong>Materia:</strong> {q.subject || q.category?.split('_')[1] || 'N/A'}</p>
+                    <p><strong>Docente:</strong> {q.created_by_name || 'N/A'}</p>
+                    <p><strong>Categoría:</strong> {q.category || 'N/A'}</p>
+                    <p><strong>Curso:</strong> {q.course_name || 'N/A'}</p>
+                    <p><strong>Institución:</strong> {q.teacher_institution || 'N/A'}</p>
                     <p><strong>Fase:</strong> {q.phase || 'No especificada'}</p>
                     
                     {/* Mostrar información de intentos por fase */}
                     {intentoInfo ? (
                       <div className="mt-2 p-2 bg-gray-100 rounded">
-                        <p><strong>Intentos realizados:</strong> {intentoInfo.attempt_number || intentoInfo.attempt_count || 0}/2</p>
+                        <p><strong>Intentos realizados:</strong> {intentoInfo.attempt_number || attemptCount || 0}/2</p>
                         <p><strong>Última calificación:</strong> {evaluations.map((e)=>e.phase1) || 'N/A'}</p>
                         
                         {/* Mostrar notas por fase según la fase del cuestionario */}
@@ -378,7 +434,7 @@ const TakeQuizPage = () => {
                         }}>
                           <div 
                             style={{ 
-                              width: intentoInfo && intentoInfo.attempt_number ? `${(intentoInfo.attempt_number / 2) * 100}%` : '0%',
+                              width: attemptCount ? `${(attemptCount / 2) * 100}%` : '0%',
                               backgroundColor: '#21808D',
                               height: '20px',
                               borderRadius: '9999px',
@@ -389,7 +445,7 @@ const TakeQuizPage = () => {
                             style={{ 
                               position: 'absolute',
                               top: '-15px',
-                              left: intentoInfo && intentoInfo.attempt_number ? `${(intentoInfo.attempt_number / 2) * 100}%` : '0%',
+                              left: attemptCount ? `${(attemptCount / 2) * 100}%` : '0%',
                               transform: 'translateX(-50%)',
                               fontSize: '24px',
                               transition: 'left 0.5s ease-in-out',
@@ -401,19 +457,31 @@ const TakeQuizPage = () => {
                         </div>
                       </div>
                     ) : (
-                      <p><strong>Intentos:</strong> {getAttemptCount(q.id)}/2</p>
+                      <div className="mt-2 p-2 bg-gray-100 rounded">
+                        <p><strong>Intentos:</strong> {attemptCount || 0}/2</p>
+                      </div>
                     )}
 
-                    {hasTwoAttempts ? (
+                    {q.question_count === 0 ? (
+                      <p className="text-warning font-semibold mt-2">⚠️ Este cuestionario no tiene preguntas disponibles</p>
+                    ) : hasTwoAttempts ? (
                       <p className="text-red-500 font-semibold mt-2">Ya alcanzaste los 2 intentos</p>
                     ) : (
                       <button onClick={() => setQuestionnaireId(q.id)} className="btn btn-primary mt-2">
-                        Presentar evaluación
+                        {attemptCount === 1 ? 'Realizar segundo intento' : 'Presentar evaluación'}
                       </button>
                     )}
                   </div>
                 );
               })}
+          </div>
+        ) : (
+          <div className="alert alert-info mt-3">
+            <p className="mb-0">
+              {selectedPhase 
+                ? `No hay evaluaciones disponibles para la Fase ${selectedPhase}.` 
+                : 'No hay evaluaciones disponibles en este momento.'}
+            </p>
           </div>
         )}
       </div>
@@ -439,8 +507,8 @@ const TakeQuizPage = () => {
               <h3 className="text-xl font-bold" style={{ backgroundColor: '#0D5EFF', color: '#F0F0F0', padding: '1%' }}>
                 {currentQuestionnaire.title}
               </h3>
-              <p><strong>Materia:</strong> {currentQuestionnaire.subject_name}</p>
-              <p><strong>Docente:</strong> {currentQuestionnaire.teacher_name}</p>
+              <p><strong>Materia:</strong> {currentQuestionnaire.subject || currentQuestionnaire.subject_name || currentQuestionnaire.category?.split('_')[1] || 'N/A'}</p>
+              <p><strong>Docente:</strong> {currentQuestionnaire.created_by_name || currentQuestionnaire.teacher_name || 'N/A'}</p>
               <p><strong>Curso:</strong> {currentQuestionnaire.course_name}</p>
               <p><strong>Fase:</strong> {currentQuestionnaire.phase}</p>
             </div>     
@@ -552,13 +620,42 @@ const TakeQuizPage = () => {
           
           {/* Botones de navegación */}
           <div className="flex justify-between mt-4">
-            <button 
-              onClick={handlePrevQuestion}
-              className="btn btn-secondary"
-              disabled={currentQuestionIndex === 0}
-            >
-              Anterior
-            </button>
+            <div>
+              <button 
+                onClick={handlePrevQuestion}
+                className="btn btn-secondary me-2"
+                disabled={currentQuestionIndex === 0}
+              >
+                Anterior
+              </button>
+              <button 
+                onClick={async () => {
+                  const result = await Swal.fire({
+                    icon: 'warning',
+                    title: '¿Cancelar evaluación?',
+                    text: 'Si cancelas, no se guardará ningún progreso. ¿Estás seguro?',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, cancelar',
+                    cancelButtonText: 'No, continuar',
+                    confirmButtonColor: '#d33',
+                    cancelButtonColor: '#3085d6'
+                  });
+                  
+                  if (result.isConfirmed) {
+                    // Limpiar estado y volver a selección de cuestionarios
+                    setQuestionnaireId('');
+                    setQuestions([]);
+                    setAnswers({});
+                    setCurrentQuestionIndex(0);
+                    setCurrentQuestionnaire(null);
+                    setError(null);
+                  }
+                }}
+                className="btn btn-danger"
+              >
+                Cancelar
+              </button>
+            </div>
             
             {currentQuestionIndex < questions.length - 1 ? (
               <button 
@@ -607,7 +704,7 @@ const TakeQuizPage = () => {
       )}
 
       {/* Estilos para la animación del personaje caminando */}
-      <style jsx>{`
+      <style>{`
         @keyframes walking {
           0% { transform: translateX(-50%) translateY(0) rotate(0deg); }
           25% { transform: translateX(-50%) translateY(-3px) rotate(5deg); }

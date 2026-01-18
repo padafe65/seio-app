@@ -148,13 +148,16 @@ const createAutomaticImprovementPlan = async ({ student, questionnaire, failedIn
     deadline.setDate(deadline.getDate() + 14);
     const deadlineStr = deadline.toISOString().split('T')[0];
     
-    // Insertar plan de mejoramiento
+    // Obtener año académico actual
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Insertar plan de mejoramiento (incluyendo academic_year)
     const [result] = await pool.query(`
       INSERT INTO improvement_plans (
         student_id, teacher_id, title, subject, description, activities,
         deadline, failed_achievements, activity_status, teacher_notes,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW())
+        created_at, academic_year
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NOW(), ?)
     `, [
       student.student_id,
       questionnaire.teacher_id,
@@ -164,7 +167,8 @@ const createAutomaticImprovementPlan = async ({ student, questionnaire, failedIn
       activities,
       deadlineStr,
       failedAchievements,
-      `Plan generado automáticamente el ${new Date().toLocaleDateString('es-CO')} debido a indicadores no alcanzados en el cuestionario "${questionnaire.title}".`
+      `Plan generado automáticamente el ${new Date().toLocaleDateString('es-CO')} debido a indicadores no alcanzados en el cuestionario "${questionnaire.title}".`,
+      currentAcademicYear
     ]);
     
     const improvementPlanId = result.insertId;

@@ -32,8 +32,9 @@ router.get('/', verifyToken, async (req, res) => {
       // Ignorar error
     }
     
-    const institutionField = hasInstitution ? ', u.institution' : '';
+    const institutionField = hasInstitution ? ', u.institution as teacher_institution' : '';
     
+    // Construir la consulta base
     let query = `
       SELECT 
         q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
@@ -46,8 +47,9 @@ router.get('/', verifyToken, async (req, res) => {
       JOIN courses c ON q.course_id = c.id
     `;
     
-    // Si hay un studentId, filtrar por el grado del estudiante
-    if (studentId) {
+    // Si hay un studentId en el query string (para otros roles que consultan por estudiante)
+    // Pero si el usuario autenticado ES estudiante, se maneja en la lógica de roles
+    if (studentId && userRole !== 'estudiante') {
       // Obtener el grado y course_id del estudiante
       const [studentRows] = await pool.query(
         'SELECT grade, course_id FROM students WHERE user_id = ?',
@@ -66,7 +68,7 @@ router.get('/', verifyToken, async (req, res) => {
       }
     }
     
-    // Lógica de roles: super_administrador ve todos, docente solo los suyos
+    // Lógica de roles: super_administrador ve todos, docente solo los suyos, estudiante solo los de sus docentes
     if (userRole === 'super_administrador') {
       // Super administrador puede ver todos los cuestionarios
       // Si hay created_by en el query, respetarlo; si no, mostrar todos
@@ -101,8 +103,108 @@ router.get('/', verifyToken, async (req, res) => {
         console.warn(`⚠️ Docente ${userId} no tiene registro en teachers`);
         return res.json([]);
       }
+    } else if (userRole === 'estudiante') {
+      // Estudiante solo puede ver cuestionarios de sus docentes asignados
+      // Obtener el student_id del usuario autenticado
+      const [studentRows] = await pool.query(
+        'SELECT id, course_id, grade FROM students WHERE user_id = ?',
+        [userId]
+      );
+      
+      if (studentRows.length === 0) {
+        console.warn(`⚠️ Estudiante ${userId} no tiene registro en students`);
+        return res.json([]);
+      }
+      
+      const studentId = studentRows[0].id;
+      const studentCourseId = studentRows[0].course_id;
+      const studentGrade = studentRows[0].grade;
+      
+      // Obtener año académico actual para filtrar
+      const currentAcademicYear = new Date().getFullYear();
+      
+      // Obtener cuestionarios que el estudiante ya ha intentado (filtrados por academic_year)
+      const [attemptedQuestionnaires] = await pool.query(
+        'SELECT DISTINCT questionnaire_id FROM quiz_attempts WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+        [studentId, currentAcademicYear]
+      );
+      const attemptedQuestionnaireIds = attemptedQuestionnaires.map(aq => aq.questionnaire_id);
+      
+      // Obtener los teacher_id de los docentes asignados a este estudiante (filtrados por academic_year)
+      const [teacherStudentRows] = await pool.query(
+        'SELECT teacher_id FROM teacher_students WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+        [studentId, currentAcademicYear]
+      );
+      
+      const teacherIds = teacherStudentRows.length > 0 
+        ? teacherStudentRows.map(ts => ts.teacher_id)
+        : [];
+      
+      // Si no hay docentes asignados ni cuestionarios intentados, devolver vacío
+      if (teacherIds.length === 0 && attemptedQuestionnaireIds.length === 0) {
+        console.warn(`⚠️ Estudiante ${studentId} no tiene docentes asignados ni cuestionarios intentados`);
+        return res.json([]);
+      }
+      
+      if (teacherIds.length === 0 && attemptedQuestionnaireIds.length > 0) {
+        console.log(`ℹ️ Estudiante ${studentId} no tiene docentes asignados, pero tiene ${attemptedQuestionnaireIds.length} cuestionario(s) intentado(s): ${attemptedQuestionnaireIds.join(', ')}`);
+      }
+      
+      // Construir la condición base: cuestionarios de docentes asignados con filtros O cuestionarios ya intentados (sin filtros restrictivos)
+      let mainCondition = '';
+      
+      // Condición para cuestionarios de docentes asignados (con filtros de curso/grado/institución)
+      if (teacherIds.length > 0) {
+        let teacherFilterCondition = `q.created_by IN (${teacherIds.map(() => '?').join(',')})`;
+        const teacherFilterParams = [...teacherIds];
+        
+        // Filtrar por curso del estudiante (solo para cuestionarios de docentes asignados)
+        if (studentCourseId) {
+          teacherFilterCondition += ' AND q.course_id = ?';
+          teacherFilterParams.push(studentCourseId);
+        }
+        
+        // Filtrar por grado del estudiante (solo para cuestionarios de docentes asignados)
+        if (studentGrade) {
+          teacherFilterCondition += ' AND q.grade = ?';
+          teacherFilterParams.push(studentGrade);
+        }
+        
+        // Filtrar por institución si existe (solo para cuestionarios de docentes asignados)
+        if (hasInstitution) {
+          const [studentUserRows] = await pool.query(
+            'SELECT institution FROM users WHERE id = ?',
+            [userId]
+          );
+          
+          if (studentUserRows.length > 0 && studentUserRows[0].institution) {
+            const studentInstitution = studentUserRows[0].institution;
+            teacherFilterCondition += ' AND (u.institution = ? OR u.institution IS NULL)';
+            teacherFilterParams.push(studentInstitution);
+          }
+        }
+        
+        mainCondition = `${teacherFilterCondition}`;
+        params.push(...teacherFilterParams);
+      }
+      
+      // Agregar cuestionarios ya intentados (sin filtros restrictivos - el estudiante debe poder verlos para hacer el segundo intento)
+      if (attemptedQuestionnaireIds.length > 0) {
+        if (mainCondition) {
+          mainCondition += ` OR q.id IN (${attemptedQuestionnaireIds.map(() => '?').join(',')})`;
+        } else {
+          mainCondition = `q.id IN (${attemptedQuestionnaireIds.map(() => '?').join(',')})`;
+        }
+        params.push(...attemptedQuestionnaireIds);
+      }
+      
+      if (mainCondition) {
+        conditions.push(`(${mainCondition})`);
+      }
+      
+      console.log(`🔒 Filtrando cuestionarios para estudiante ${studentId} (docentes: ${teacherIds.join(', ')}, cuestionarios intentados: ${attemptedQuestionnaireIds.join(', ') || 'ninguno'}, curso: ${studentCourseId}, grado: ${studentGrade})`);
     } else {
-      // Otros roles (estudiante, etc.) no pueden ver cuestionarios aquí
+      // Otros roles no pueden ver cuestionarios aquí
       return res.status(403).json({ 
         success: false,
         message: 'No tienes permiso para ver cuestionarios' 
@@ -115,19 +217,24 @@ router.get('/', verifyToken, async (req, res) => {
       console.log('⚠️ Parámetro created_by ignorado para usuario no administrador');
     }
     
+    // Para estudiantes, los filtros de phase/grade del query string son opcionales
+    // y solo afectan a cuestionarios NO intentados (los intentados ya están incluidos)
+    // Para otros roles, aplicar filtros normalmente
     if (phase) {
       conditions.push('q.phase = ?');
       params.push(phase);
     }
     
-    if (grade) {
+    if (grade && userRole !== 'estudiante') {
+      // Para estudiantes, el filtro de grado ya se aplicó arriba en teacherFilterCondition
+      // Solo aplicar aquí para otros roles
       conditions.push('q.grade = ?');
       params.push(grade);
     }
 
     if (description) {
       conditions.push('q.description = ?');
-      params.push(grade);
+      params.push(description);
     }
     
     if (conditions.length > 0) {

@@ -87,6 +87,9 @@ router.get('/:id', async (req, res) => {
 // Obtener resultados de un estudiante específico (por student_id de la tabla students)
 router.get('/student/:id', async (req, res) => {
   try {
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
     const [results] = await db.query(`
       SELECT er.*, 
              q.title as questionnaire_title,
@@ -96,8 +99,9 @@ router.get('/student/:id', async (req, res) => {
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       WHERE qa.student_id = ?
+      AND (er.academic_year = ? OR er.academic_year IS NULL)
       ORDER BY er.recorded_at DESC
-    `, [req.params.id]);
+    `, [req.params.id, currentAcademicYear]);
     res.json(results);
   } catch (error) {
     console.error('Error al obtener resultados del estudiante:', error);
@@ -119,7 +123,10 @@ router.get('/user/:userId', async (req, res) => {
     
     const studentId = students[0].id;
     
-    // Ahora obtenemos los resultados usando el student_id
+    // Obtener año académico actual para filtrar
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Ahora obtenemos los resultados usando el student_id (filtrados por academic_year)
     const [results] = await db.query(`
       SELECT er.*, 
              q.title as questionnaire_title,
@@ -129,8 +136,9 @@ router.get('/user/:userId', async (req, res) => {
       JOIN quiz_attempts qa ON er.selected_attempt_id = qa.id
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       WHERE qa.student_id = ?
+      AND (er.academic_year = ? OR er.academic_year IS NULL)
       ORDER BY er.recorded_at DESC
-    `, [studentId]);
+    `, [studentId, currentAcademicYear]);
     
     res.json(results);
   } catch (error) {
