@@ -1,22 +1,37 @@
 // routes/usersRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
-import { verifyToken } from '../middleware/authMiddleware.js';
+import { verifyToken, isAdmin, isSuperAdmin } from '../middleware/authMiddleware.js';
 import bcrypt from 'bcrypt';
 
 const router = express.Router();
 
-// Middleware para verificar si el usuario es super_administrador
-const isSuperAdmin = (req, res, next) => {
-  if (req.user && req.user.role === 'super_administrador') {
+// Middleware para verificar si el usuario es administrador o super_administrador
+const isAdminOrSuperAdmin = (req, res, next) => {
+  if (req.user && (req.user.role === 'administrador' || req.user.role === 'super_administrador')) {
     return next();
   }
   return res.status(403).json({
     success: false,
-    message: 'Acceso denegado. Se requieren privilegios de super administrador.',
-    code: 'SUPER_ADMIN_ACCESS_REQUIRED',
+    message: 'Acceso denegado. Se requieren privilegios de administrador o super administrador.',
+    code: 'ADMIN_ACCESS_REQUIRED',
     userRole: req.user?.role
   });
+};
+
+// Función para validar permisos de asignación de roles
+const validateRoleAssignment = (userRole, assignedRole) => {
+  // Super administrador puede asignar todos los roles
+  if (userRole === 'super_administrador') {
+    return true;
+  }
+  
+  // Administrador solo puede asignar 'estudiante' y 'docente'
+  if (userRole === 'administrador') {
+    return assignedRole === 'estudiante' || assignedRole === 'docente';
+  }
+  
+  return false;
 };
 
 // Aplicar verificación de token a todas las rutas
@@ -133,10 +148,11 @@ router.get('/users/:id', isSuperAdmin, async (req, res) => {
   }
 });
 
-// Crear un nuevo usuario (solo super_administrador)
-router.post('/users', isSuperAdmin, async (req, res) => {
+// Crear un nuevo usuario (administrador o super_administrador)
+router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
   try {
     const { name, email, phone, password, role, institution } = req.body;
+    const userRole = req.user.role; // Rol del usuario que está creando
     
     // Validar campos requeridos
     if (!name || !email || !password || !role) {
@@ -152,6 +168,17 @@ router.post('/users', isSuperAdmin, async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `Rol inválido. Los roles válidos son: ${validRoles.join(', ')}`
+      });
+    }
+    
+    // 🔒 Validar permisos: administrador solo puede asignar estudiante/docente
+    if (!validateRoleAssignment(userRole, role)) {
+      return res.status(403).json({
+        success: false,
+        message: `No tienes permisos para asignar el rol '${role}'. Los administradores solo pueden asignar roles de 'estudiante' o 'docente'.`,
+        code: 'ROLE_ASSIGNMENT_DENIED',
+        yourRole: userRole,
+        attemptedRole: role
       });
     }
     
@@ -235,11 +262,12 @@ router.post('/users', isSuperAdmin, async (req, res) => {
   }
 });
 
-// Actualizar un usuario (solo super_administrador)
-router.put('/users/:id', isSuperAdmin, async (req, res) => {
+// Actualizar un usuario (administrador o super_administrador)
+router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, email, phone, role, estado, password, institution } = req.body;
+    const userRole = req.user.role; // Rol del usuario que está haciendo la actualización
     
     // Verificar que el usuario existe
     const [existingUsers] = await pool.query(
@@ -284,13 +312,24 @@ router.put('/users/:id', isSuperAdmin, async (req, res) => {
       }
     }
     
-    // Validar rol si se proporciona
+    // Validar rol si se proporciona (con verificación de permisos)
     if (role) {
       const validRoles = ['estudiante', 'docente', 'administrador', 'super_administrador'];
       if (!validRoles.includes(role)) {
         return res.status(400).json({
           success: false,
           message: `Rol inválido. Los roles válidos son: ${validRoles.join(', ')}`
+        });
+      }
+      
+      // 🔒 Validar permisos: administrador solo puede asignar estudiante/docente
+      if (!validateRoleAssignment(userRole, role)) {
+        return res.status(403).json({
+          success: false,
+          message: `No tienes permisos para asignar el rol '${role}'. Los administradores solo pueden asignar roles de 'estudiante' o 'docente'.`,
+          code: 'ROLE_ASSIGNMENT_DENIED',
+          yourRole: userRole,
+          attemptedRole: role
         });
       }
     }
@@ -365,10 +404,13 @@ router.put('/users/:id', isSuperAdmin, async (req, res) => {
       updates.push('estado = ?');
       values.push(estadoValue);
     }
+    // SEGURIDAD: No permitir cambiar contraseña desde este endpoint
+    // Los usuarios deben usar el sistema de recuperación de contraseña
     if (password !== undefined && password !== '') {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      updates.push('password = ?');
-      values.push(hashedPassword);
+      return res.status(403).json({
+        success: false,
+        message: 'No se puede cambiar la contraseña desde aquí. Usa el sistema de recuperación de contraseña en /reset-password'
+      });
     }
     
     if (updates.length === 0) {

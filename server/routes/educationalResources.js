@@ -19,7 +19,8 @@ router.get('/', verifyToken, async (req, res) => {
   
   try {
     const { 
-      subject, 
+      subject,
+      subjects, // Para múltiples materias separadas por comas
       area, 
       grade_level, 
       phase, 
@@ -53,7 +54,17 @@ router.get('/', verifyToken, async (req, res) => {
     const params = [];
     
     // Filtros opcionales
-    if (subject) {
+    // Manejar múltiples materias: puede venir como 'subject' (una sola) o 'subjects' (múltiples separadas por comas)
+    if (subjects) {
+      // Parsear string separado por comas: "Matemáticas,Español"
+      const subjectArray = subjects.split(',').map(s => s.trim()).filter(s => s);
+      if (subjectArray.length > 0) {
+        const subjectPlaceholders = subjectArray.map(() => '?').join(',');
+        query += ` AND er.subject IN (${subjectPlaceholders})`;
+        params.push(...subjectArray);
+      }
+    } else if (subject) {
+      // Una sola materia
       query += ` AND er.subject = ?`;
       params.push(subject);
     }
@@ -64,8 +75,17 @@ router.get('/', verifyToken, async (req, res) => {
     }
     
     if (grade_level) {
-      query += ` AND (er.grade_level = ? OR er.grade_level = 'Todos')`;
-      params.push(grade_level);
+      // Manejar rangos de grados (ej: '6-9', '10-11') y valores exactos
+      query += ` AND (
+        er.grade_level = ? 
+        OR er.grade_level = 'Todos'
+        OR (
+          er.grade_level LIKE '%-%'
+          AND CAST(SUBSTRING_INDEX(er.grade_level, '-', 1) AS UNSIGNED) <= ?
+          AND CAST(SUBSTRING_INDEX(er.grade_level, '-', -1) AS UNSIGNED) >= ?
+        )
+      )`;
+      params.push(grade_level, grade_level, grade_level);
     }
     
     if (phase) {
@@ -160,6 +180,19 @@ router.get('/recommended/:studentId', verifyToken, async (req, res) => {
     
     const student = students[0];
     
+    // Obtener las materias de los docentes asignados al estudiante
+    const [teacherSubjectsRows] = await connection.query(`
+      SELECT DISTINCT t.subject
+      FROM teacher_students ts
+      JOIN teachers t ON ts.teacher_id = t.id
+      WHERE ts.student_id = ?
+        AND t.subject IS NOT NULL
+        AND t.subject != ''
+    `, [studentId]);
+    
+    const teacherSubjects = teacherSubjectsRows.map(row => row.subject);
+    console.log(`📚 Materias de los docentes del estudiante ${studentId}:`, teacherSubjects);
+    
     // Obtener fases donde el estudiante tiene bajas calificaciones
     // La tabla grades tiene columnas phase1, phase2, phase3, phase4, no "phase"
     const [gradesRows] = await connection.query(
@@ -190,6 +223,31 @@ router.get('/recommended/:studentId', verifyToken, async (req, res) => {
     }
     
     // Obtener recursos recomendados
+    // Construir condición para grade_level que maneje rangos (ej: "6-9", "10-11", "Todos")
+    const studentGrade = student.grade ? parseInt(student.grade) : null;
+    let gradeCondition = '';
+    const params = [];
+    
+    if (studentGrade) {
+      // Manejar rangos como "6-9", "10-11", etc., y también valores exactos como "7" o "Todos"
+      // Si grade_level es "6-9" y el estudiante tiene grado 7, debe incluirse
+      // Si grade_level es "7" y el estudiante tiene grado 7, debe incluirse
+      // Si grade_level es "Todos", siempre debe incluirse
+      gradeCondition = ` AND (
+        er.grade_level = 'Todos' 
+        OR er.grade_level = ?
+        OR (
+          er.grade_level LIKE '%-%' 
+          AND CAST(SUBSTRING_INDEX(er.grade_level, '-', 1) AS UNSIGNED) <= ?
+          AND CAST(SUBSTRING_INDEX(er.grade_level, '-', -1) AS UNSIGNED) >= ?
+        )
+      )`;
+      params.push(studentGrade.toString(), studentGrade, studentGrade);
+    } else {
+      // Si no hay grado, mostrar recursos para "Todos"
+      gradeCondition = ` AND (er.grade_level = 'Todos' OR er.grade_level IS NULL)`;
+    }
+    
     let query = `
       SELECT 
         er.id,
@@ -207,10 +265,20 @@ router.get('/recommended/:studentId', verifyToken, async (req, res) => {
         er.rating
       FROM educational_resources er
       WHERE er.is_active = TRUE
-        AND (er.grade_level = ? OR er.grade_level = 'Todos')
+        ${gradeCondition}
     `;
     
-    const params = [student.grade?.toString() || 'Todos'];
+    // Filtrar por materias de los docentes del estudiante si hay materias disponibles
+    if (teacherSubjects.length > 0) {
+      const subjectPlaceholders = teacherSubjects.map(() => '?').join(',');
+      query += ` AND er.subject IN (${subjectPlaceholders})`;
+      params.push(...teacherSubjects);
+      console.log(`📌 Filtrando recursos por materias: ${teacherSubjects.join(', ')}`);
+      console.log(`📊 Grado del estudiante: ${studentGrade || 'No especificado'}`);
+    } else {
+      console.log('⚠️ El estudiante no tiene docentes con materias asignadas - mostrando recursos generales');
+      console.log(`📊 Grado del estudiante: ${studentGrade || 'No especificado'}`);
+    }
     
     // Si hay fases con bajas calificaciones, priorizar recursos de esas fases
     if (phases.length > 0) {
@@ -218,15 +286,48 @@ router.get('/recommended/:studentId', verifyToken, async (req, res) => {
       params.push(...phases);
     }
     
-    query += ` ORDER BY 
-      CASE WHEN er.phase IN (${phases.map(() => '?').join(',')}) THEN 0 ELSE 1 END,
-      er.views_count DESC,
-      er.rating DESC
-      LIMIT 10`;
+    // Construir ORDER BY: si hay fases, priorizar recursos de esas fases
+    if (phases.length > 0) {
+      query += ` ORDER BY 
+        CASE WHEN er.phase IN (${phases.map(() => '?').join(',')}) THEN 0 ELSE 1 END,
+        er.views_count DESC,
+        er.rating DESC
+        LIMIT 10`;
+      params.push(...phases);
+    } else {
+      // Si no hay fases, ordenar solo por views_count y rating
+      query += ` ORDER BY 
+        er.views_count DESC,
+        er.rating DESC
+        LIMIT 10`;
+    }
     
-    params.push(...phases);
+    console.log(`🔍 Query SQL: ${query}`);
+    console.log(`📋 Parámetros:`, params);
     
     const [resources] = await connection.query(query, params);
+    
+    console.log(`✅ Recursos encontrados: ${resources.length}`);
+    if (resources.length > 0) {
+      console.log(`📚 Primeros recursos:`, resources.slice(0, 3).map(r => ({ id: r.id, title: r.title, subject: r.subject, grade_level: r.grade_level })));
+    } else {
+      console.log(`⚠️ No se encontraron recursos. Verificando si hay recursos en la base de datos...`);
+      // Consulta de depuración: verificar si hay recursos en la base de datos
+      const [allResources] = await connection.query(
+        `SELECT COUNT(*) as total FROM educational_resources WHERE is_active = TRUE`
+      );
+      console.log(`📊 Total de recursos activos en BD: ${allResources[0]?.total || 0}`);
+      
+      // Verificar recursos por materia
+      if (teacherSubjects.length > 0) {
+        const [resourcesBySubject] = await connection.query(
+          `SELECT COUNT(*) as total FROM educational_resources 
+           WHERE is_active = TRUE AND subject IN (${teacherSubjects.map(() => '?').join(',')})`,
+          teacherSubjects
+        );
+        console.log(`📊 Recursos activos para materias ${teacherSubjects.join(', ')}: ${resourcesBySubject[0]?.total || 0}`);
+      }
+    }
     
     res.json({
       success: true,

@@ -1,16 +1,20 @@
 // src/pages/StudentDashboardPage.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import LearningResourcesSection from '../components/educational-resources/LearningResourcesSection';
+import Swal from 'sweetalert2';
 
 const StudentDashboardPage = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [studentData, setStudentData] = useState(null);
   const [evaluations, setEvaluations] = useState([]);
   const [recentAttempts, setRecentAttempts] = useState([]);
+  const [teachers, setTeachers] = useState([]); // Docentes/materias del estudiante
+  const [selectedTeacherId, setSelectedTeacherId] = useState(null); // Filtro por docente/materia
   
   useEffect(() => {
     const fetchData = async () => {
@@ -18,7 +22,45 @@ const StudentDashboardPage = () => {
         try {
           // Obtener datos del estudiante
           const studentResponse = await axiosClient.get(`/students/by-user/${user.id}`);
+          
+          // Si el estudiante no existe (404), redirigir a completar registro
+          if (!studentResponse.data || !studentResponse.data.id) {
+            console.log('⚠️ Estudiante no tiene registro completo, redirigiendo a CompleteStudent...');
+            
+            // Guardar user_id en localStorage para que CompleteStudent lo use
+            localStorage.setItem('user_id', user.id);
+            
+            Swal.fire({
+              icon: 'info',
+              title: 'Completar Registro',
+              html: `<p>Necesitas completar tu información de estudiante para acceder al dashboard.</p>`,
+              confirmButtonText: 'Ir a completar registro',
+              confirmButtonColor: '#3085d6'
+            }).then(() => {
+              navigate('/CompleteStudent');
+            });
+            
+            setLoading(false);
+            return;
+          }
+          
           setStudentData(studentResponse.data);
+          
+          // Obtener docentes/materias del estudiante
+          try {
+            const teachersResponse = await axiosClient.get(`/students/by-user/${user.id}/teachers`);
+            const teachersList = teachersResponse.data.data || [];
+            setTeachers(teachersList);
+            
+            // Si hay docentes, seleccionar el primero por defecto (o mostrar todos)
+            if (teachersList.length > 0) {
+              // No seleccionar ninguno por defecto, mostrar todos
+              setSelectedTeacherId(null);
+            }
+          } catch (teacherError) {
+            console.error('Error al cargar docentes del estudiante:', teacherError);
+            setTeachers([]);
+          }
           
           // Obtener evaluaciones del estudiante
           const evaluationsResponse = await axiosClient.get(`/quiz/evaluations-by-phase/${user.id}`);
@@ -31,13 +73,32 @@ const StudentDashboardPage = () => {
           setLoading(false);
         } catch (error) {
           console.error('Error al cargar datos del estudiante:', error);
+          
+          // Si es error 404 (estudiante no encontrado), redirigir a completar registro
+          if (error.response?.status === 404) {
+            console.log('⚠️ Estudiante no tiene registro completo (404), redirigiendo a CompleteStudent...');
+            
+            // Guardar user_id en localStorage para que CompleteStudent lo use
+            localStorage.setItem('user_id', user.id);
+            
+            Swal.fire({
+              icon: 'info',
+              title: 'Completar Registro',
+              html: `<p>Necesitas completar tu información de estudiante para acceder al dashboard.</p>`,
+              confirmButtonText: 'Ir a completar registro',
+              confirmButtonColor: '#3085d6'
+            }).then(() => {
+              navigate('/CompleteStudent');
+            });
+          }
+          
           setLoading(false);
         }
       }
     };
     
     fetchData();
-  }, [user]);
+  }, [user, navigate]);
   
   // Función auxiliar para formatear calificaciones
   const formatGrade = (value) => {
@@ -64,6 +125,15 @@ const StudentDashboardPage = () => {
     );
   }
 
+  // Filtrar evaluaciones e intentos por docente seleccionado
+  const filteredEvaluations = selectedTeacherId 
+    ? evaluations.filter(e => e.teacher_id === selectedTeacherId)
+    : evaluations;
+  
+  const filteredRecentAttempts = selectedTeacherId
+    ? recentAttempts.filter(a => a.teacher_id === selectedTeacherId)
+    : recentAttempts;
+
   return (
     <div className="container py-4">
       <div className="row mb-4">
@@ -88,6 +158,52 @@ const StudentDashboardPage = () => {
           </p>
         </div>
       </div>
+      
+      {/* Sección de materias/docentes */}
+      {teachers.length > 0 && (
+        <div className="row mb-4">
+          <div className="col-12">
+            <div className="card">
+              <div className="card-header">
+                <h5 className="mb-0">Mis Materias y Docentes</h5>
+              </div>
+              <div className="card-body">
+                <div className="mb-3">
+                  <label htmlFor="teacherFilter" className="form-label">
+                    Filtrar por materia/docente:
+                  </label>
+                  <select
+                    id="teacherFilter"
+                    className="form-select"
+                    value={selectedTeacherId || ''}
+                    onChange={(e) => setSelectedTeacherId(e.target.value ? parseInt(e.target.value) : null)}
+                  >
+                    <option value="">Todas las materias</option>
+                    {teachers.map(teacher => (
+                      <option key={teacher.id} value={teacher.id}>
+                        {teacher.subject} - {teacher.name}
+                        {teacher.institution && ` (${teacher.institution})`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="d-flex flex-wrap gap-2">
+                  {teachers.map(teacher => (
+                    <button
+                      key={teacher.id}
+                      type="button"
+                      className={`btn btn-sm ${selectedTeacherId === teacher.id ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => setSelectedTeacherId(selectedTeacherId === teacher.id ? null : teacher.id)}
+                    >
+                      {teacher.subject} - {teacher.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Tarjetas de resumen */}
       <div className="row mb-4">
@@ -155,8 +271,8 @@ const StudentDashboardPage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {evaluations.length > 0 ? (
-                      evaluations.map((phase, index) => (
+                    {filteredEvaluations.length > 0 ? (
+                      filteredEvaluations.map((phase, index) => (
                         <tr key={index}>
                           <td>Fase {phase.phase}</td>
                           <td>{phase.total_evaluations}</td>
@@ -174,11 +290,15 @@ const StudentDashboardPage = () => {
                               <span className="badge bg-secondary">Sin datos</span>
                             )}
                           </td>
-                        </tr>
-                      ))
+                      </tr>
+                    ))
                     ) : (
                       <tr>
-                        <td colSpan="6" className="text-center">No hay evaluaciones registradas</td>
+                        <td colSpan="6" className="text-center">
+                          {selectedTeacherId 
+                            ? 'No hay evaluaciones registradas para esta materia' 
+                            : 'No hay evaluaciones registradas'}
+                        </td>
                       </tr>
                     )}
                   </tbody>
@@ -200,7 +320,7 @@ const StudentDashboardPage = () => {
               </Link>
             </div>
             <div className="card-body">
-              {recentAttempts.length > 0 ? (
+              {filteredRecentAttempts.length > 0 ? (
                 <div className="table-responsive">
                   <table className="table table-hover">
                     <thead>
@@ -214,7 +334,7 @@ const StudentDashboardPage = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {recentAttempts.map((attempt, index) => (
+                      {filteredRecentAttempts.map((attempt, index) => (
                         <tr key={index}>
                           <td>{attempt.title}</td>
                           <td>Fase {attempt.phase}</td>
@@ -232,7 +352,11 @@ const StudentDashboardPage = () => {
                   </table>
                 </div>
               ) : (
-                <p className="text-center text-muted">No hay intentos recientes</p>
+                <p className="text-center text-muted">
+                  {selectedTeacherId 
+                    ? 'No hay intentos recientes para esta materia' 
+                    : 'No hay intentos recientes'}
+                </p>
               )}
             </div>
           </div>

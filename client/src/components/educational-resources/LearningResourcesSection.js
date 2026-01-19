@@ -2,13 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import axiosClient from '../../api/axiosClient';
-import { BookOpen, ExternalLink, Star, Clock, Filter, Search, Star as StarIcon } from 'lucide-react';
+import { BookOpen, ExternalLink, Star, Clock, Filter, Search, Star as StarIcon, X } from 'lucide-react';
 
 const LearningResourcesSection = ({ studentId, grade }) => {
   const { user } = useAuth();
   const [resources, setResources] = useState([]);
   const [recommendedResources, setRecommendedResources] = useState([]);
   const [bookmarkedResources, setBookmarkedResources] = useState([]);
+  const [teacherSubjects, setTeacherSubjects] = useState([]); // Materias de los docentes del estudiante
+  const [teachers, setTeachers] = useState([]); // Información completa de los docentes (nombre, materia, etc.)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
@@ -21,41 +23,82 @@ const LearningResourcesSection = ({ studentId, grade }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState('all'); // 'all', 'recommended', 'bookmarked'
   
+  // Cargar materias de docentes cuando se monta el componente
+  useEffect(() => {
+    if (studentId && user?.id) {
+      fetchTeacherSubjects();
+    }
+  }, [studentId, user?.id]);
+  
+  // Cargar recursos cuando cambian los filtros o las materias de docentes
   useEffect(() => {
     if (studentId) {
       fetchResources();
       fetchRecommendedResources();
       fetchBookmarkedResources();
     }
-  }, [studentId, selectedSubject, selectedArea, selectedPhase, selectedDifficulty, selectedResourceType]);
+  }, [studentId, selectedSubject, selectedArea, selectedPhase, selectedDifficulty, selectedResourceType, teacherSubjects]);
+  
+  // Auto-seleccionar pestaña de recomendados si hay recursos recomendados y no hay recursos generales
+  useEffect(() => {
+    if (recommendedResources.length > 0 && resources.length === 0 && activeTab === 'all') {
+      console.log('🔄 Auto-seleccionando pestaña de recomendados...');
+      setActiveTab('recommended');
+    }
+  }, [recommendedResources.length, resources.length]);
   
   const fetchResources = async () => {
     try {
       const params = new URLSearchParams();
-      if (selectedSubject !== 'all') params.append('subject', selectedSubject);
+      
+      // Si no hay materia seleccionada específicamente, filtrar por materias de los docentes del estudiante
+      if (selectedSubject === 'all') {
+        // Si hay materias de docentes, filtrar por ellas; si no, no aplicar filtro de materia
+        if (teacherSubjects.length > 0) {
+          // Enviar materias como string separado por comas (el backend las parseará)
+          params.append('subjects', teacherSubjects.join(','));
+          console.log(`📚 Filtrando por materias de docentes: ${teacherSubjects.join(', ')}`);
+        }
+      } else {
+        // Si hay una materia específica seleccionada, usar esa
+        params.append('subject', selectedSubject);
+      }
+      
       if (selectedArea !== 'all') params.append('area', selectedArea);
       if (selectedPhase !== 'all') params.append('phase', selectedPhase);
       if (selectedDifficulty !== 'all') params.append('difficulty', selectedDifficulty);
       if (selectedResourceType !== 'all') params.append('resource_type', selectedResourceType);
       if (grade) params.append('grade_level', grade.toString());
       
+      console.log(`📚 Cargando todos los recursos con filtros: ${params.toString()}`);
       const response = await axiosClient.get(`/educational-resources?${params.toString()}`);
-      setResources(response.data.data || []);
+      const resources = response.data.data || [];
+      console.log(`✅ Recursos recibidos: ${resources.length}`, resources);
+      setResources(resources);
       setLoading(false);
     } catch (error) {
-      console.error('Error al cargar recursos:', error);
+      console.error('❌ Error al cargar recursos:', error);
+      console.error('Detalles del error:', error.response?.data || error.message);
       setError('Error al cargar recursos educativos');
       setLoading(false);
     }
   };
   
   const fetchRecommendedResources = async () => {
-    if (!studentId) return;
+    if (!studentId) {
+      console.log('⚠️ LearningResourcesSection: No hay studentId, no se pueden cargar recursos recomendados');
+      return;
+    }
     try {
+      console.log(`📚 Cargando recursos recomendados para estudiante ${studentId}...`);
       const response = await axiosClient.get(`/educational-resources/recommended/${studentId}`);
-      setRecommendedResources(response.data.data || []);
+      const resources = response.data.data || [];
+      console.log(`✅ Recursos recomendados recibidos: ${resources.length}`, resources);
+      setRecommendedResources(resources);
     } catch (error) {
-      console.error('Error al cargar recursos recomendados:', error);
+      console.error('❌ Error al cargar recursos recomendados:', error);
+      console.error('Detalles del error:', error.response?.data || error.message);
+      setRecommendedResources([]);
     }
   };
   
@@ -66,6 +109,25 @@ const LearningResourcesSection = ({ studentId, grade }) => {
       setBookmarkedResources(response.data.data || []);
     } catch (error) {
       console.error('Error al cargar recursos favoritos:', error);
+    }
+  };
+  
+  // Obtener las materias de los docentes asociados al estudiante
+  const fetchTeacherSubjects = async () => {
+    if (!user?.id) return;
+    try {
+      const response = await axiosClient.get(`/students/by-user/${user.id}/teachers`);
+      const teachersData = response.data.data || [];
+      // Guardar información completa de docentes
+      setTeachers(teachersData);
+      // Extraer materias únicas de los docentes
+      const subjects = [...new Set(teachersData.map(t => t.subject).filter(Boolean))];
+      console.log(`📚 Materias de docentes del estudiante:`, subjects);
+      setTeacherSubjects(subjects);
+    } catch (error) {
+      console.error('❌ Error al cargar materias de docentes:', error);
+      setTeacherSubjects([]);
+      setTeachers([]);
     }
   };
   
@@ -129,6 +191,7 @@ const LearningResourcesSection = ({ studentId, grade }) => {
   
   // Filtrar recursos por término de búsqueda
   const filteredResources = (resourcesToFilter) => {
+    if (!resourcesToFilter || !Array.isArray(resourcesToFilter)) return [];
     if (!searchTerm) return resourcesToFilter;
     const term = searchTerm.toLowerCase();
     return resourcesToFilter.filter(r =>
@@ -141,7 +204,27 @@ const LearningResourcesSection = ({ studentId, grade }) => {
   };
   
   // Obtener materias y áreas únicas para los filtros
-  const subjects = [...new Set(resources.map(r => r.subject))].filter(Boolean).sort();
+  // Combinar materias de recursos cargados con materias de docentes del estudiante
+  const subjectsFromResources = [...new Set(resources.map(r => r.subject))].filter(Boolean);
+  const allSubjects = [...new Set([...subjectsFromResources, ...teacherSubjects])].sort();
+  const subjects = allSubjects; // Usar todas las materias (recursos + docentes)
+  
+  // Función para obtener el nombre del docente por materia
+  const getTeacherNameBySubject = (subject) => {
+    const teacher = teachers.find(t => t.subject === subject);
+    return teacher ? teacher.name : null;
+  };
+  
+  // Función para limpiar todos los filtros
+  const clearAllFilters = () => {
+    setSelectedSubject('all');
+    setSelectedArea('all');
+    setSelectedPhase('all');
+    setSelectedDifficulty('all');
+    setSelectedResourceType('all');
+    setSearchTerm('');
+  };
+  
   const areasBySubject = resources.reduce((acc, r) => {
     if (!acc[r.subject]) acc[r.subject] = new Set();
     if (r.area) acc[r.subject].add(r.area);
@@ -155,6 +238,20 @@ const LearningResourcesSection = ({ studentId, grade }) => {
     : resources;
   
   const resourcesToShow = filteredResources(displayResources);
+  
+  // Logs de depuración
+  useEffect(() => {
+    console.log(`🔍 LearningResourcesSection - Estado actual:`, {
+      activeTab,
+      resourcesCount: resources.length,
+      recommendedCount: recommendedResources.length,
+      bookmarkedCount: bookmarkedResources.length,
+      displayResourcesCount: displayResources.length,
+      resourcesToShowCount: resourcesToShow.length,
+      searchTerm,
+      loading
+    });
+  }, [activeTab, resources.length, recommendedResources.length, bookmarkedResources.length, displayResources.length, resourcesToShow.length, searchTerm, loading]);
   
   if (loading) {
     return (
@@ -240,9 +337,22 @@ const LearningResourcesSection = ({ studentId, grade }) => {
           {/* Filtros */}
           {activeTab === 'all' && (
             <div className="card mb-4">
-              <div className="card-header">
-                <Filter className="me-2" size={18} />
-                Filtros
+              <div className="card-header d-flex justify-content-between align-items-center">
+                <div>
+                  <Filter className="me-2" size={18} />
+                  Filtros
+                </div>
+                {(selectedSubject !== 'all' || selectedArea !== 'all' || selectedPhase !== 'all' || 
+                  selectedDifficulty !== 'all' || selectedResourceType !== 'all' || searchTerm) && (
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={clearAllFilters}
+                    title="Limpiar todos los filtros"
+                  >
+                    <X size={16} className="me-1" />
+                    Limpiar Filtros
+                  </button>
+                )}
               </div>
               <div className="card-body">
                 <div className="row g-3">
@@ -257,10 +367,20 @@ const LearningResourcesSection = ({ studentId, grade }) => {
                       }}
                     >
                       <option value="all">Todas</option>
-                      {subjects.map(subject => (
-                        <option key={subject} value={subject}>{subject}</option>
-                      ))}
+                      {subjects.map(subject => {
+                        const teacherName = getTeacherNameBySubject(subject);
+                        return (
+                          <option key={subject} value={subject}>
+                            {subject}{teacherName ? ` - ${teacherName}` : ''}
+                          </option>
+                        );
+                      })}
                     </select>
+                    {selectedSubject !== 'all' && getTeacherNameBySubject(selectedSubject) && (
+                      <small className="text-muted d-block mt-1">
+                        Docente: {getTeacherNameBySubject(selectedSubject)}
+                      </small>
+                    )}
                   </div>
                   <div className="col-12 col-sm-6 col-md-3">
                     <label className="form-label">Área</label>
@@ -324,7 +444,7 @@ const LearningResourcesSection = ({ studentId, grade }) => {
             </div>
           )}
           
-          {/* Lista de recursos */}
+          {/* Lista de recursos - Tabla */}
           {resourcesToShow.length === 0 ? (
             <div className="alert alert-info">
               {activeTab === 'recommended' 
@@ -334,75 +454,83 @@ const LearningResourcesSection = ({ studentId, grade }) => {
                 : 'No se encontraron recursos con los filtros seleccionados.'}
             </div>
           ) : (
-            <div className="row">
-              {resourcesToShow.map((resource) => (
-                <div key={resource.id} className="col-md-6 col-lg-4 mb-4">
-                  <div className="card h-100">
-                    <div className="card-body">
-                      <div className="d-flex justify-content-between align-items-start mb-2">
-                        <div className="d-flex align-items-center">
-                          <span className="me-2" style={{ fontSize: '1.5rem' }}>
-                            {getResourceTypeIcon(resource.resource_type)}
-                          </span>
-                          <span className={`badge ${getDifficultyBadgeClass(resource.difficulty)}`}>
-                            {getDifficultyText(resource.difficulty)}
-                          </span>
-                        </div>
-                        <button
-                          className="btn btn-sm btn-link p-0"
-                          onClick={() => handleBookmark(resource.id, resource.is_bookmarked)}
-                          title={resource.is_bookmarked ? 'Quitar de favoritos' : 'Agregar a favoritos'}
-                        >
-                          <StarIcon
-                            size={20}
-                            fill={resource.is_bookmarked ? '#ffc107' : 'none'}
-                            color={resource.is_bookmarked ? '#ffc107' : '#6c757d'}
-                          />
-                        </button>
-                      </div>
-                      
-                      <h5 className="card-title">{resource.title}</h5>
-                      
-                      <div className="mb-2">
-                        <small className="text-muted">
-                          <strong>{resource.subject}</strong>
-                          {resource.area && ` • ${resource.area}`}
-                          {resource.phase && ` • Fase ${resource.phase}`}
-                        </small>
-                      </div>
-                      
-                      {resource.description && (
-                        <p className="card-text small text-muted">
-                          {resource.description.length > 100
-                            ? `${resource.description.substring(0, 100)}...`
-                            : resource.description}
-                        </p>
-                      )}
-                      
-                      {resource.views_count > 0 && (
-                        <div className="mb-2">
-                          <small className="text-muted">
-                            <Clock size={14} className="me-1" />
-                            {resource.views_count} visualizaciones
-                          </small>
-                        </div>
-                      )}
-                    </div>
-                    <div className="card-footer bg-transparent">
-                      <a
-                        href={resource.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-primary btn-sm w-100"
-                        onClick={() => handleResourceClick(resource.id)}
-                      >
-                        <ExternalLink size={16} className="me-1" />
-                        Abrir Recurso
-                      </a>
-                    </div>
-                  </div>
+            <div className="card">
+              <div className="card-body">
+                <div className="table-responsive">
+                  <table className="table table-hover">
+                    <thead>
+                      <tr>
+                        <th>Tipo</th>
+                        <th>Título</th>
+                        <th>Materia</th>
+                        <th>Área</th>
+                        <th>Fase</th>
+                        <th>Grado</th>
+                        <th>Dificultad</th>
+                        <th>Visualizaciones</th>
+                        <th>Favorito</th>
+                        <th>Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resourcesToShow.map((resource) => (
+                        <tr key={resource.id}>
+                          <td>
+                            <span style={{ fontSize: '1.5rem' }}>
+                              {getResourceTypeIcon(resource.resource_type)}
+                            </span>
+                          </td>
+                          <td>
+                            <div>
+                              <strong>{resource.title}</strong>
+                              {resource.description && (
+                                <div className="small text-muted" style={{ maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {resource.description}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td>{resource.subject}</td>
+                          <td>{resource.area || '-'}</td>
+                          <td>{resource.phase || 'Todas'}</td>
+                          <td>{resource.grade_level || 'Todos'}</td>
+                          <td>
+                            <span className={`badge ${getDifficultyBadgeClass(resource.difficulty)}`}>
+                              {getDifficultyText(resource.difficulty)}
+                            </span>
+                          </td>
+                          <td>{resource.views_count || 0}</td>
+                          <td>
+                            <button
+                              className="btn btn-sm btn-link p-0"
+                              onClick={() => handleBookmark(resource.id, resource.is_bookmarked)}
+                              title={resource.is_bookmarked ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+                            >
+                              <StarIcon
+                                size={20}
+                                fill={resource.is_bookmarked ? '#ffc107' : 'none'}
+                                color={resource.is_bookmarked ? '#ffc107' : '#6c757d'}
+                              />
+                            </button>
+                          </td>
+                          <td>
+                            <a
+                              href={resource.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleResourceClick(resource.id)}
+                              title="Abrir recurso"
+                            >
+                              <ExternalLink size={16} />
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
+              </div>
             </div>
           )}
         </div>

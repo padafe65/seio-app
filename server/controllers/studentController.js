@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
+import { syncTeacherStudentData } from '../utils/syncTeacherStudentData.js';
 
 // Asegurarse de que el directorio de subidas exista
 const uploadsDir = path.join(process.cwd(), 'uploads', 'students');
@@ -340,15 +341,31 @@ export const updateStudent = async (req, res) => {
         [id]
       );
 
-      // Crear nueva asignación usando el id de la tabla teachers
+      // Obtener año académico actual
+      const currentAcademicYear = new Date().getFullYear();
+
+      // Crear nueva asignación usando el id de la tabla teachers (incluyendo academic_year)
       await connection.query(
-        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-        [teacher_id, id]
+        'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+        [teacher_id, id, currentAcademicYear]
       );
     }
 
     // Confirmar la transacción
     await connection.commit();
+    
+    // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
+    // Hacerlo después del commit para no afectar la transacción principal
+    if (teacher_id) {
+      try {
+        const currentAcademicYear = new Date().getFullYear();
+        await syncTeacherStudentData(teacher_id, id, currentAcademicYear);
+        console.log(`✅ Sincronización automática completada en updateStudent`);
+      } catch (syncError) {
+        console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
+        // No fallar la actualización si hay error en la sincronización
+      }
+    }
 
     console.log('=== FIN updateStudent (éxito) ===');
     

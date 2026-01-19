@@ -24,7 +24,8 @@ const UserForm = () => {
   useEffect(() => {
     if (!isAuthReady) return;
     
-    if (!user || user.role !== 'super_administrador') {
+    // Permitir acceso a super_administrador y administrador
+    if (!user || (user.role !== 'super_administrador' && user.role !== 'administrador')) {
       navigate('/');
       return;
     }
@@ -35,6 +36,21 @@ const UserForm = () => {
       setLoading(false);
     }
   }, [id, user, isAuthReady, navigate]);
+  
+  // Determinar roles permitidos según el nivel de acceso del usuario
+  const getAllowedRoles = () => {
+    if (!user) return [];
+    
+    if (user.role === 'super_administrador') {
+      // Super administrador puede asignar todos los roles
+      return ['estudiante', 'docente', 'administrador', 'super_administrador'];
+    } else if (user.role === 'administrador') {
+      // Administrador solo puede asignar estudiante y docente
+      return ['estudiante', 'docente'];
+    }
+    
+    return [];
+  };
 
   const [studentContactData, setStudentContactData] = useState({
     contact_phone: '',
@@ -296,11 +312,20 @@ const UserForm = () => {
                   required
                 >
                   <option value="">Seleccione un rol</option>
-                  <option value="estudiante">Estudiante</option>
-                  <option value="docente">Docente</option>
-                  <option value="administrador">Administrador</option>
-                  <option value="super_administrador">Super Administrador</option>
+                  {getAllowedRoles().map(role => (
+                    <option key={role} value={role}>
+                      {role === 'estudiante' ? 'Estudiante' :
+                       role === 'docente' ? 'Docente' :
+                       role === 'administrador' ? 'Administrador' :
+                       role === 'super_administrador' ? 'Super Administrador' : role}
+                    </option>
+                  ))}
                 </select>
+                {user?.role === 'administrador' && (
+                  <small className="form-text text-muted">
+                    ⚠️ Como administrador solo puedes asignar roles de Estudiante o Docente
+                  </small>
+                )}
               </div>
             </div>
 

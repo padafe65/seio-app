@@ -28,7 +28,7 @@ import Swal from 'sweetalert2';
 import { 
   Home, Users, FileText, BarChart2, 
   PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen,
-  Shield, UserPlus, Database, Activity, GraduationCap
+  Shield, UserPlus, Database, Activity, GraduationCap, CreditCard, Mail
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -44,6 +44,7 @@ import QuestionnaireForm from './pages/questionnaires/QuestionnaireForm.js';
 import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
 import StudentIndicators from './pages/indicators/StudentIndicators';
+import StudentEducationalResources from './pages/students/StudentEducationalResources.js';
 import ImprovementPlansList from './pages/improvement-plans/ImprovementPlansList.js';
 import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.js';
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
@@ -56,6 +57,8 @@ import UsersManagement from './pages/users/UsersManagement.js';
 import UserForm from './pages/users/UserForm.js';
 import EducationalResourcesList from './pages/educational-resources/EducationalResourcesList.js';
 import EducationalResourceForm from './pages/educational-resources/EducationalResourceForm.js';
+import LicensesManagement from './pages/licenses/LicensesManagement.js';
+import MessagesPage from './pages/messages/MessagesPage.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -193,8 +196,18 @@ function AppContent() {
   // Componente Layout para rutas protegidas con Sidebar para docentes
   function TeacherDashboardLayout() {
     const [show, setShow] = useState(false);
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const handleClose = () => setShow(false);
     const handleShow = () => setShow(true);
+    
+    useEffect(() => {
+      const handleResize = () => {
+        setIsMobile(window.innerWidth < 768);
+      };
+      
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
     
     return (
       <div>
@@ -208,7 +221,7 @@ function AppContent() {
         </button>
         
         {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
+        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: 'calc(100vh - 56px)', position: 'fixed', left: 0, top: '56px', overflowY: 'auto', zIndex: 999 }}>
           <div className="p-3">
             <h5 className="mb-3">Panel de Control</h5>
             <ul className="nav flex-column">
@@ -263,7 +276,11 @@ function AppContent() {
                   <BookOpen size={18} className="me-2" /> Mis Cursos
                 </Link>
               </li>
-
+              <li className="nav-item mb-2">
+                <Link to="/messages" className="nav-link text-white d-flex align-items-center">
+                  <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
 
               <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
@@ -312,6 +329,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/messages" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/planes-mejoramiento" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <Award size={18} className="me-2" /> Planes de Mejoramiento
                 </Link>
@@ -332,10 +354,12 @@ function AppContent() {
         
         {/* Contenido principal */}
         <div style={{ 
-          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
-          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
+          marginLeft: !isMobile ? '250px' : '0', 
+          width: !isMobile ? 'calc(100% - 250px)' : '100%', 
           padding: '20px', 
-          marginTop: '56px' 
+          minHeight: 'calc(100vh - 56px)',
+          marginTop: '56px',
+          transition: 'margin-left 0.3s ease'
         }}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
@@ -384,6 +408,8 @@ function AppContent() {
             <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
             
+            {/* Ruta para mensajería */}
+            <Route path="/messages" element={<MessagesPage />} />
 
           </Routes>
         </div>
@@ -421,6 +447,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/admin/users" className="nav-link text-warning d-flex align-items-center">
                   <Shield size={18} className="me-2" /> Usuarios
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/admin/licenses" className="nav-link text-info d-flex align-items-center">
+                  <CreditCard size={18} className="me-2" /> Licencias
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -483,6 +514,11 @@ function AppContent() {
                   <GraduationCap size={18} className="me-2" /> Recursos Educativos
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/messages" className="nav-link text-white d-flex align-items-center">
+                  <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
@@ -505,6 +541,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/admin/licenses" className="nav-link text-info d-flex align-items-center" onClick={handleClose}>
+                  <CreditCard size={18} className="me-2" /> Licencias
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/estudiantes" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <Users size={18} className="me-2" /> Estudiantes
                 </Link>
@@ -522,6 +563,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BarChart2 size={18} className="me-2" /> Resultados
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/messages" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Mail size={18} className="me-2" /> Mensajes
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -575,6 +621,7 @@ function AppContent() {
             <Route path="/admin/users" element={<UsersManagement />} />
             <Route path="/admin/users/new" element={<UserForm />} />
             <Route path="/admin/users/:id/edit" element={<UserForm />} />
+            <Route path="/admin/licenses" element={<LicensesManagement />} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
             <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
             <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
@@ -620,6 +667,9 @@ function AppContent() {
             <Route path="/recursos-educativos" element={<EducationalResourcesList />} />
             <Route path="/recursos-educativos/nuevo" element={<EducationalResourceForm />} />
             <Route path="/recursos-educativos/:id/editar" element={<EducationalResourceForm />} />
+            
+            {/* Ruta para mensajería */}
+            <Route path="/messages" element={<MessagesPage />} />
           </Routes>
         </div>
       </div>
@@ -673,6 +723,16 @@ function AppContent() {
                   <BarChart2 size={18} className="me-2" /> Plan de Mejora
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/messages" className="nav-link text-white d-flex align-items-center">
+                  <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/educational-resources" className="nav-link text-white d-flex align-items-center">
+                  <BookOpen size={18} className="me-2" /> Recursos Educativos
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
@@ -709,6 +769,16 @@ function AppContent() {
                   <BarChart2 size={18} className="me-2" /> Plan de Mejora
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/messages" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/educational-resources" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <BookOpen size={18} className="me-2" /> Recursos Educativos
+                </Link>
+              </li>
             </ul>
           </Offcanvas.Body>
         </Offcanvas>
@@ -726,6 +796,8 @@ function AppContent() {
             <Route path="/results" element={<ResultsPage />} />
             <Route path="/indicators" element={<StudentIndicators />} />
             <Route path="/improvement" element={<ImprovementPage />} />
+            <Route path="/messages" element={<MessagesPage />} />
+            <Route path="/educational-resources" element={<StudentEducationalResources />} />
             <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
           </Routes>
         </div>

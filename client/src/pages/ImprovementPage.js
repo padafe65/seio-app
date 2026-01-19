@@ -1,11 +1,9 @@
 // pages/ImprovementPage.js
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Eye, FileText, Download } from 'lucide-react';
-import axios from 'axios';
+import axiosClient from '../api/axiosClient';
 import { useAuth } from '../context/AuthContext';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const ImprovementPage = () => {
   const [plans, setPlans] = useState([]);
@@ -13,6 +11,7 @@ const ImprovementPage = () => {
   const [error, setError] = useState(null);
   const [indicators, setIndicators] = useState([]);
   const { user } = useAuth();
+  const navigate = useNavigate();
   
   useEffect(() => {
     const fetchData = async () => {
@@ -20,7 +19,7 @@ const ImprovementPage = () => {
         setLoading(true);
         
         // Obtener el student_id asociado al user_id actual
-        const studentResponse = await axios.get(`${API_URL}/api/students/by-user/${user.id}`);
+        const studentResponse = await axiosClient.get(`/students/by-user/${user.id}`);
         if (!studentResponse.data || !studentResponse.data.id) {
           throw new Error('No se pudo obtener la información del estudiante');
         }
@@ -28,12 +27,12 @@ const ImprovementPage = () => {
         const studentId = studentResponse.data.id;
         
         // Obtener planes de mejoramiento para este estudiante usando student_id, no user.id
-        const plansResponse = await axios.get(`${API_URL}/api/improvement-plans/student-id/${studentId}`);
+        const plansResponse = await axiosClient.get(`/improvement-plans/student-id/${studentId}`);
         setPlans(plansResponse.data || []);
         
         // Obtener indicadores no alcanzados para este estudiante
-        const indicatorsResponse = await axios.get(
-          `${API_URL}/api/improvement-plans/indicators/failed/${studentId}/${studentResponse.data.grade}/1`
+        const indicatorsResponse = await axiosClient.get(
+          `/improvement-plans/indicators/failed/${studentId}/${studentResponse.data.grade}/1`
         );
         setIndicators(indicatorsResponse.data || []);
         
@@ -185,7 +184,7 @@ const ImprovementPage = () => {
                     Material de Estudio
                   </h5>
                   <p className="card-text">Accede a material complementario para mejorar tu desempeño académico.</p>
-                  <a href="#" className="btn btn-outline-primary">Ver Materiales</a>
+                  <Link to="/student/educational-resources" className="btn btn-outline-primary">Ver Materiales</Link>
                 </div>
               </div>
             </div>
@@ -197,7 +196,7 @@ const ImprovementPage = () => {
                     Ejercicios Prácticos
                   </h5>
                   <p className="card-text">Practica con ejercicios adicionales para reforzar tus conocimientos.</p>
-                  <button type="button" className="btn btn-outline-primary">Ver Ejercicios</button>
+                  <Link to="/student/educational-resources" className="btn btn-outline-primary">Ver Ejercicios</Link>
                 </div>
               </div>
             </div>

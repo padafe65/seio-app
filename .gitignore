@@ -1,59 +1,127 @@
-# Node modules (backend y frontend)
+# ===========================================
+# GITIGNORE - Archivos que NO se suben a GitHub
+# ===========================================
+
+# ===========================================
+# NODE MODULES
+# ===========================================
 node_modules/
 client/node_modules/
 server/node_modules/
+backend-rifa/node_modules/
+frontend-rifa/node_modules/
 
-
-
-# Logs
-npm-debug.log*
-yarn-debug.log*
-
-# .env files
-.env
-client/.env
-server/.env
-
-# === GENERAL ===
-.DS_Store
-Thumbs.db
-*.log
-*.tmp
-*.bak
-*.zip
-
-# === NODE / BACKEND ===
-/backend-rifa/node_modules/
-backend-rifa/.env
-backend-rifa/logs/
-backend-rifa/tmp/
-backend-rifa/*.log
-
-# === FRONTEND (React) ===
-/frontend-rifa/node_modules/
-frontend-rifa/build/
-frontend-rifa/dist/
-frontend-rifa/.env
-frontend-rifa/.env.local
-frontend-rifa/.env.development.local
-frontend-rifa/.env.test.local
-frontend-rifa/.env.production.local
-
-# === COMMON ENVS ===
+# ===========================================
+# ARCHIVOS DE CONFIGURACIÓN SENSIBLES
+# ===========================================
+# NUNCA subir archivos .env con datos reales
 .env
 .env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.development
+.env.production
+.env.*
+!.env.example
+!**/.env.example
 
-# === TESTING ===
-/coverage
+# Archivos de configuración con información sensible
+CONFIGURAR_CORREO.txt
+EJEMPLO_ENV_CORREO.txt
 
-# === PACKAGE MANAGER LOGS ===
+# ===========================================
+# LOGS Y ARCHIVOS TEMPORALES
+# ===========================================
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+logs/
+*.tmp
+*.temp
+temp_*
+*_temp.*
 
-# === VSCODE ===
+# ===========================================
+# ARCHIVOS DE BACKUP
+# ===========================================
+*.backup
+*.bak
+server.js.backup*
+*.backup.*
+*.backup
+
+# ===========================================
+# BASE DE DATOS LOCALES
+# ===========================================
+*.db
+*.sqlite
+*.sqlite3
+
+# ===========================================
+# CLAVES Y CERTIFICADOS
+# ===========================================
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+
+# ===========================================
+# ARCHIVOS DEL SISTEMA OPERATIVO
+# ===========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===========================================
+# ARCHIVOS DE IDE
+# ===========================================
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ===========================================
+# ARCHIVOS DE BUILD Y DIST
+# ===========================================
+client/build/
+client/dist/
+frontend-rifa/build/
+frontend-rifa/dist/
+build/
+dist/
+
+# ===========================================
+# COVERAGE Y TESTING
+# ===========================================
+coverage/
+.nyc_output/
+*.lcov
+
+# ===========================================
+# ARCHIVOS COMPRIMIDOS
+# ===========================================
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# ===========================================
+# ARCHIVOS DE UPLOAD (si contienen datos sensibles)
+# ===========================================
+# Descomenta si no quieres subir archivos subidos por usuarios
+# server/uploads/
+# client/public/uploads/

@@ -130,7 +130,7 @@ export const isSuperAdmin = (req, res, next) => {
  * Middleware para verificar si el usuario es administrador o super_administrador
  */
 export const isAdmin = (req, res, next) => {
-  if (req.user.role === 'admin' || req.user.role === 'super_administrador') {
+  if (req.user.role === 'admin' || req.user.role === 'administrador' || req.user.role === 'super_administrador') {
     return next();
   }
   
@@ -207,4 +207,71 @@ export const isAssignedTeacherOrAdmin = (teacherId) => {
       });
     }
   };
+};
+
+/**
+ * Middleware para validar que un docente solo puede crear contenido de SU materia asignada
+ * Previene préstamo de licencias y uso de materias no autorizadas
+ */
+export const validateTeacherSubject = async (req, res, next) => {
+  try {
+    // Si no es docente, permitir (admins pueden crear cualquier contenido)
+    if (req.user.role !== 'docente') {
+      return next();
+    }
+
+    const userId = req.user.id;
+    const requestedSubject = req.body.subject;
+
+    // Obtener la materia asignada al docente
+    const [teacherRows] = await pool.query(
+      'SELECT id, subject FROM teachers WHERE user_id = ?',
+      [userId]
+    );
+
+    if (teacherRows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: 'No eres un docente registrado. Solo los docentes pueden crear este tipo de contenido.',
+        code: 'TEACHER_NOT_REGISTERED',
+        userRole: req.user.role
+      });
+    }
+
+    const teacherSubject = teacherRows[0].subject;
+    const teacherId = teacherRows[0].id;
+
+    // Si no se proporciona subject en el body, usar la materia del docente
+    if (!requestedSubject) {
+      req.body.subject = teacherSubject;
+      req.body.teacher_id = teacherId;
+      console.log(`✅ Subject asignado automáticamente: ${teacherSubject} para docente ${userId}`);
+      return next();
+    }
+
+    // Validar que el subject solicitado coincide con la materia del docente
+    if (requestedSubject !== teacherSubject) {
+      return res.status(403).json({
+        success: false,
+        message: `Solo puedes crear contenido de tu materia asignada: "${teacherSubject}". Intentaste crear contenido de: "${requestedSubject}".`,
+        code: 'SUBJECT_MISMATCH',
+        yourSubject: teacherSubject,
+        attemptedSubject: requestedSubject
+      });
+    }
+
+    // Asegurar que teacher_id está en el body para referencias futuras
+    req.body.teacher_id = teacherId;
+    req.body.subject = teacherSubject; // Forzar el subject correcto
+
+    console.log(`✅ Validación de materia exitosa: docente ${userId} creando contenido de ${teacherSubject}`);
+    next();
+  } catch (error) {
+    console.error('❌ Error en validateTeacherSubject:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Error al validar la materia del docente.',
+      code: 'SUBJECT_VALIDATION_ERROR'
+    });
+  }
 };

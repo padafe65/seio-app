@@ -2,7 +2,7 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
-import { verifyToken } from '../middleware/authMiddleware.js';
+import { verifyToken, validateTeacherSubject } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
@@ -302,43 +302,36 @@ router.get('/:id', async (req, res) => {
 });
 
 // Crear un nuevo cuestionario
-router.post('/', async (req, res) => {
+// 🔒 Validación: Docentes solo pueden crear contenido de SU materia
+router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
   try {
-    const { title, subject, category, grade, phase, course_id, created_by, description } = req.body;
+    // created_by debe ser el user_id del docente autenticado
+    const created_by = req.user.id;
+    const { title, subject, category, grade, phase, course_id, description } = req.body;
     
     console.log('Datos recibidos para crear cuestionario:', req.body);
     
     // Validar que todos los campos necesarios estén presentes
-    if (!title || !grade || !phase || !course_id || !created_by || !description) {
-      console.log('Faltan campos requeridos:', { title, subject, category, grade, phase, course_id, created_by, description });
+    if (!title || !grade || !phase || !course_id || !description) {
+      console.log('Faltan campos requeridos:', { title, subject, category, grade, phase, course_id, description });
       return res.status(400).json({ 
         message: 'Faltan campos requeridos', 
-        received: { title, subject, category, grade, phase, course_id, created_by, description } 
+        received: { title, subject, category, grade, phase, course_id, description } 
       });
     }
     
-    // Obtener el ID del profesor si se proporciona el ID de usuario (users.id = teachers.user_id)
-    let teacherId = created_by;
-    
-    // Verificar si created_by es un ID de usuario
-    if (created_by > 0) {
-      const [teacherRows] = await pool.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
-        [created_by]
-      );
-      
-      if (teacherRows.length > 0) {
-        teacherId = teacherRows[0].id; // teachers.id = questionnaires.created_by
-      }
-    }
+    // El subject ya está validado y forzado por validateTeacherSubject
+    // Obtener el ID del profesor (teacher_id ya está en req.body por el middleware)
+    const teacherId = req.body.teacher_id;
+    const finalSubject = req.body.subject; // Subject validado por middleware
     
     // Asegurar que la combinación subject-category existe en subject_categories
-    await ensureSubjectCategoryExists(subject, category);
+    await ensureSubjectCategoryExists(finalSubject, category);
     
     const [result] = await pool.query(
       `INSERT INTO questionnaires (title, subject, category, grade, phase, course_id, created_by, description) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [title, subject || null, category || null, grade, phase, course_id, teacherId, description]
+      [title, finalSubject || null, category || null, grade, phase, course_id, teacherId, description]
     );
     
     res.status(201).json({ 

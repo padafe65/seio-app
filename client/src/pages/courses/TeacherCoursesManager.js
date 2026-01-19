@@ -1,6 +1,6 @@
 // pages/courses/TeacherCoursesManager.js
 import React, { useState, useEffect } from 'react';
-import axios from '../../api/axiosClient';
+import axiosClient from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
 import { Trash2, PlusCircle, Edit3, Calendar, RefreshCw, Award, Building2, User } from 'lucide-react';
 import Swal from 'sweetalert2';
@@ -19,6 +19,7 @@ const TeacherCoursesManager = () => {
   const [editSelectedCourse, setEditSelectedCourse] = useState('');
   const [editSelectedTeacher, setEditSelectedTeacher] = useState('');
   const [editSelectedRole, setEditSelectedRole] = useState('');
+  const [teacherInstitutions, setTeacherInstitutions] = useState([]); // Instituciones del docente basadas en sus licencias
   
   const isSuperAdminOrAdmin = user?.role === 'super_administrador' || user?.role === 'administrador';
   
@@ -27,13 +28,17 @@ const TeacherCoursesManager = () => {
       try {
         if (user && !isSuperAdminOrAdmin) {
           // Si es docente, obtener su teacher_id
-          const response = await axios.get(`/teacher-courses/teacher-id/${user.id}`);
-          setTeacherId(response.data.teacherId);
-          setSelectedTeacher(response.data.teacherId.toString());
-          fetchAssignedCourses(response.data.teacherId);
+          const response = await axiosClient.get(`/teacher-courses/teacher-id/${user.id}`);
+          const tid = response.data.teacherId;
+          setTeacherId(tid);
+          setSelectedTeacher(tid.toString());
+          fetchAssignedCourses(tid);
+          // Obtener instituciones del docente basadas en sus licencias
+          fetchTeacherInstitutions(tid);
         } else if (isSuperAdminOrAdmin && selectedTeacher) {
           // Si es super admin/admin y hay un docente seleccionado
           fetchAssignedCourses(parseInt(selectedTeacher));
+          fetchTeacherInstitutions(parseInt(selectedTeacher));
         } else if (isSuperAdminOrAdmin && teachers.length > 0 && !selectedTeacher) {
           // Si es super admin/admin y hay docentes pero no se ha seleccionado ninguno
           // No cargar cursos hasta que se seleccione un docente
@@ -51,9 +56,30 @@ const TeacherCoursesManager = () => {
       }
     };
     
+    const fetchTeacherInstitutions = async (tid) => {
+      if (!tid) return;
+      try {
+        const response = await axiosClient.get(`/teacher-licenses/teacher/${tid}/licenses`);
+        if (response.data.success && response.data.data) {
+          // Obtener instituciones únicas de las licencias activas
+          const institutions = [...new Set(
+            response.data.data
+              .filter(license => license.license_status === 'active')
+              .map(license => license.institution)
+          )];
+          setTeacherInstitutions(institutions);
+        } else {
+          setTeacherInstitutions([]);
+        }
+      } catch (error) {
+        console.error('Error al obtener instituciones del docente:', error);
+        setTeacherInstitutions([]);
+      }
+    };
+    
     const fetchCourses = async () => {
       try {
-        const response = await axios.get('/courses');
+        const response = await axiosClient.get('/courses');
         setCourses(Array.isArray(response.data) ? response.data : []);
       } catch (error) {
         console.error('Error al obtener cursos:', error);
@@ -63,7 +89,7 @@ const TeacherCoursesManager = () => {
     const fetchTeachers = async () => {
       if (isSuperAdminOrAdmin) {
         try {
-          const response = await axios.get('/teachers/list/all');
+          const response = await axiosClient.get('/teachers/list/all');
           setTeachers(Array.isArray(response.data) ? response.data : []);
         } catch (error) {
           console.error('Error al obtener docentes:', error);
@@ -74,14 +100,14 @@ const TeacherCoursesManager = () => {
     fetchCourses();
     fetchTeachers();
     fetchTeacherId();
-  }, [user, selectedTeacher, isSuperAdminOrAdmin]);
+  }, [user, selectedTeacher, isSuperAdminOrAdmin, teachers.length]);
   
   const fetchAssignedCourses = async (id) => {
     if (!id) return;
     
     try {
       setLoading(true);
-      const response = await axios.get(`/teacher-courses/teacher/${id}`);
+      const response = await axiosClient.get(`/teacher-courses/teacher/${id}`);
       setAssignedCourses(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Error al obtener cursos asignados:', error);
@@ -125,6 +151,16 @@ const TeacherCoursesManager = () => {
     return colors[role] || 'secondary';
   };
   
+  // Filtrar cursos por instituciones del docente (si no es super admin/admin)
+  const filteredCourses = isSuperAdminOrAdmin 
+    ? courses 
+    : courses.filter(course => {
+        // Si el docente no tiene instituciones definidas, mostrar todos los cursos
+        if (teacherInstitutions.length === 0) return true;
+        // Filtrar cursos que pertenecen a las instituciones del docente
+        return course.institution && teacherInstitutions.includes(course.institution);
+      });
+  
   const handleAssignCourse = async () => {
     if (!selectedCourse) {
       Swal.fire({
@@ -157,7 +193,7 @@ const TeacherCoursesManager = () => {
         payload.role = selectedRole;
       }
       
-      await axios.post('/teacher-courses', payload);
+      await axiosClient.post('/teacher-courses', payload);
       
       Swal.fire({
         icon: 'success',
@@ -207,7 +243,7 @@ const TeacherCoursesManager = () => {
         payload.role = editSelectedRole;
       }
       
-      await axios.put(`/teacher-courses/${editingCourse.id}`, payload);
+      await axiosClient.put(`/teacher-courses/${editingCourse.id}`, payload);
       
       Swal.fire({
         icon: 'success',
@@ -248,7 +284,7 @@ const TeacherCoursesManager = () => {
     
     if (result.isConfirmed) {
       try {
-        await axios.delete(`/teacher-courses/${id}`);
+        await axiosClient.delete(`/teacher-courses/${id}`);
         
         Swal.fire({
           icon: 'success',
@@ -272,7 +308,7 @@ const TeacherCoursesManager = () => {
   
   const handleFixDates = async () => {
     try {
-      await axios.patch('/teacher-courses/fix-dates');
+      await axiosClient.patch('/teacher-courses/fix-dates');
       
       Swal.fire({
         icon: 'success',
@@ -387,12 +423,17 @@ const TeacherCoursesManager = () => {
                 onChange={(e) => setSelectedCourse(e.target.value)}
               >
                 <option value="">Seleccionar curso...</option>
-                {courses.map(course => (
+                {filteredCourses.map(course => (
                   <option key={course.id} value={course.id}>
                     {course.name} - Grado {course.grade} {course.institution ? `(${course.institution})` : ''}
                   </option>
                 ))}
               </select>
+              {!isSuperAdminOrAdmin && teacherInstitutions.length > 0 && (
+                <small className="text-muted d-block mt-1">
+                  Mostrando cursos de: {teacherInstitutions.join(', ')}
+                </small>
+              )}
             </div>
             {isSuperAdminOrAdmin && (
               <div className="col-md-2">
@@ -453,7 +494,7 @@ const TeacherCoursesManager = () => {
                   <tr>
                     <th>Curso</th>
                     <th>Grado</th>
-                    {isSuperAdminOrAdmin && <th>Institución</th>}
+                    <th>Institución</th>
                     {isSuperAdminOrAdmin && <th>Rol</th>}
                     <th>Fecha Asignación</th>
                     <th className="text-end">Acciones</th>
@@ -470,9 +511,9 @@ const TeacherCoursesManager = () => {
                             onChange={(e) => setEditSelectedCourse(e.target.value)}
                           >
                             <option value="">Seleccionar curso...</option>
-                            {courses.map(c => (
+                            {filteredCourses.map(c => (
                               <option key={c.id} value={c.id}>
-                                {c.name} - Grado {c.grade}
+                                {c.name} - Grado {c.grade} {c.institution ? `(${c.institution})` : ''}
                               </option>
                             ))}
                           </select>
@@ -485,18 +526,16 @@ const TeacherCoursesManager = () => {
                           Grado {course.grade}
                         </span>
                       </td>
-                      {isSuperAdminOrAdmin && (
-                        <td>
-                          {course.institution ? (
-                            <span className="d-flex align-items-center">
-                              <Building2 size={16} className="me-1 text-muted" />
-                              {course.institution}
-                            </span>
-                          ) : (
-                            <span className="text-muted">-</span>
-                          )}
-                        </td>
-                      )}
+                      <td>
+                        {course.institution ? (
+                          <span className="d-flex align-items-center">
+                            <Building2 size={16} className="me-1 text-muted" />
+                            {course.institution}
+                          </span>
+                        ) : (
+                          <span className="text-muted">-</span>
+                        )}
+                      </td>
                       {isSuperAdminOrAdmin && (
                         <td>
                           {editingCourse?.id === course.id ? (

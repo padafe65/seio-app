@@ -559,7 +559,7 @@ const TakeQuizPage = () => {
           {/* Mostrar solo la pregunta actual */}
           {questions.length > 0 && (
             <div className="mb-4 p-4 border rounded bg-white shadow">
-              <p className="font-semibold text-lg mb-3" style={{fontSize:'18px', color:'#0060C1'}}>
+              <div className="font-semibold text-lg mb-3" style={{fontSize:'18px', color:'#0060C1'}}>
                 <strong>
                   {currentQuestionIndex + 1}. 
                   {containsLatex(questions[currentQuestionIndex].question_text) ? (
@@ -568,7 +568,7 @@ const TakeQuizPage = () => {
                     questions[currentQuestionIndex].question_text
                   )}
                 </strong>
-              </p>
+              </div>
               
               {questions[currentQuestionIndex].image_url && (
                 <div className="text-center mb-4">
@@ -582,7 +582,9 @@ const TakeQuizPage = () => {
                     />
                   </div>
                   <img 
-                    src={questions[currentQuestionIndex].image_url} 
+                    src={questions[currentQuestionIndex].image_url.startsWith('http') 
+                      ? questions[currentQuestionIndex].image_url 
+                      : `${process.env.REACT_APP_API_URL || 'http://localhost:5000'}${questions[currentQuestionIndex].image_url}`} 
                     alt="Imagen pregunta" 
                     className="my-2 img-fluid mx-auto" 
                     style={{ maxWidth: '300px' }} 

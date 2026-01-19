@@ -12,6 +12,8 @@ const Dashboard = () => {
   const [teacherQuestions, setTeacherQuestions] = useState([]); // Nuevo estado para preguntas del docente
   const [teacherQuestionnaires, setTeacherQuestionnaires] = useState([]); // Nuevo estado para cuestionarios del docente
   const [teacherSubject, setTeacherSubject] = useState(''); // Nuevo estado para la materia del docente
+  const [teacherLicenses, setTeacherLicenses] = useState([]); // Estado para licencias del docente
+  const [teacherId, setTeacherId] = useState(null); // ID del docente (teacher_id)
   const [studentFilters, setStudentFilters] = useState({
     name: '',
     email: '',
@@ -51,10 +53,30 @@ const Dashboard = () => {
           const gradesResponse = await axiosClient.get(`/teacher/student-grades/${user.id}`);
           setStudentGrades(gradesResponse.data);
           
-          // Obtener la materia del docente
+          // Obtener la materia del docente y teacher_id
           const subjectResponse = await axiosClient.get(`/teacher/subject/${user.id}`);
           const subject = subjectResponse.data.subject || '';
           setTeacherSubject(subject);
+          
+          // Obtener teacher_id del docente
+          try {
+            const teacherDataResponse = await axiosClient.get(`/teachers/by-user/${user.id}`);
+            const teacherData = teacherDataResponse.data?.data || teacherDataResponse.data;
+            if (teacherData && teacherData.id) {
+              setTeacherId(teacherData.id);
+              
+              // Obtener licencias del docente
+              try {
+                const licensesResponse = await axiosClient.get(`/teacher-licenses/teacher/${teacherData.id}/licenses`);
+                const licenses = licensesResponse.data?.data || [];
+                setTeacherLicenses(licenses);
+              } catch (error) {
+                console.error('Error al cargar licencias del docente:', error);
+              }
+            }
+          } catch (error) {
+            console.error('Error al obtener teacher_id:', error);
+          }
           
           // Obtener cuestionarios creados por este docente
           try {
@@ -147,6 +169,74 @@ const Dashboard = () => {
           <div className="text-2xl font-bold text-gray-800">{stats.completedPhases}</div>
         </div>
       </div>
+
+      {/* Información de Licencia - Nueva sección para docentes */}
+      {user.role === 'docente' && teacherLicenses.length > 0 && (
+        <div className="card mb-4 border-primary">
+          <div className="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 className="mb-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="me-2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              Mis Licencias
+            </h5>
+          </div>
+          <div className="card-body">
+            {teacherLicenses.map((license, index) => {
+              const getStatusBadge = (status) => {
+                const badges = {
+                  active: { class: 'bg-success', text: 'Activa' },
+                  suspended: { class: 'bg-warning text-dark', text: 'Suspendida' },
+                  expired: { class: 'bg-danger', text: 'Expirada' }
+                };
+                const badge = badges[status] || { class: 'bg-secondary', text: status };
+                return <span className={`badge ${badge.class}`}>{badge.text}</span>;
+              };
+
+              const calculateDaysRemaining = (expirationDate) => {
+                if (!expirationDate) return 'Sin expiración';
+                const today = new Date();
+                const expiry = new Date(expirationDate);
+                const diffTime = expiry - today;
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                return diffDays >= 0 ? `${diffDays} días restantes` : 'Expirada';
+              };
+
+              return (
+                <div key={license.id || index} className="mb-3 pb-3 border-bottom">
+                  <div className="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                      <h6 className="mb-1">
+                        <strong>{license.institution}</strong>
+                      </h6>
+                      {getStatusBadge(license.license_status)}
+                    </div>
+                  </div>
+                  <div className="row g-2 text-sm">
+                    <div className="col-md-6">
+                      <small className="text-muted">Fecha de inicio:</small>
+                      <div><strong>{license.purchased_date ? new Date(license.purchased_date).toLocaleDateString('es-ES') : 'N/A'}</strong></div>
+                    </div>
+                    <div className="col-md-6">
+                      <small className="text-muted">Fecha de vencimiento:</small>
+                      <div><strong>{license.expiration_date ? new Date(license.expiration_date).toLocaleDateString('es-ES') : 'Sin expiración'}</strong></div>
+                    </div>
+                    {license.license_status === 'active' && license.expiration_date && (
+                      <div className="col-12 mt-2">
+                        <small className="text-muted">Días restantes:</small>
+                        <div><strong className={calculateDaysRemaining(license.expiration_date).includes('Expirada') ? 'text-danger' : ''}>
+                          {calculateDaysRemaining(license.expiration_date)}
+                        </strong></div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Botones de acción para docentes */}
       {user.role === 'docente' && (

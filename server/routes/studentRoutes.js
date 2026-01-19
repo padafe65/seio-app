@@ -9,6 +9,7 @@ import {
   deleteStudent,
   getStudentStats
 } from '../controllers/studentController.js';
+import { validateTeacherStudentInstitution } from '../utils/validateTeacherStudentInstitution.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import multer from 'multer';
@@ -220,6 +221,24 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
         
         console.log(`🔍 Ejecutando consulta para estudiantes del docente ${teacherId}`);
         const [students] = await pool.query(query, [teacherId]);
+        
+        // Validar y sincronizar institution para cada relación teacher_students
+        if (students.length > 0) {
+            console.log(`🔄 Validando concordancia de institution para ${students.length} estudiantes...`);
+            const validationPromises = students.map(async (student) => {
+                try {
+                    await validateTeacherStudentInstitution(teacherId, student.id);
+                } catch (validationError) {
+                    console.error(`⚠️ Error al validar institution para estudiante ${student.id}:`, validationError.message);
+                    // No fallar la consulta si hay error en validación
+                }
+            });
+            
+            // Ejecutar validaciones en paralelo (pero no esperar si fallan)
+            Promise.allSettled(validationPromises).then(() => {
+                console.log(`✅ Validación de institution completada`);
+            });
+        }
         
         console.log(`✅ Se encontraron ${students.length} estudiantes para el docente ${teacherId}`);
         res.json({
@@ -488,18 +507,20 @@ router.get('/:id/teachers', isTeacherOrAdmin, async (req, res) => {
             }
         }
 
-        // Obtener los docentes del estudiante
+        // Obtener los docentes del estudiante (incluyendo subject e institution)
         const [teachers] = await pool.query(`
             SELECT 
                 t.id,
+                t.subject,
                 u.name,
                 u.email,
-                u.phone
+                u.phone,
+                u.institution
             FROM teacher_students ts
             JOIN teachers t ON ts.teacher_id = t.id
             JOIN users u ON t.user_id = u.id
             WHERE ts.student_id = ?
-            ORDER BY u.name
+            ORDER BY t.subject, u.name
         `, [studentId]);
 
         console.log(`📊 Docentes encontrados para el estudiante ${studentId}:`, teachers);

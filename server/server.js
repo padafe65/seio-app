@@ -25,11 +25,14 @@ import educationalResourcesRoutes from './routes/educationalResources.js';
 // Middleware imports
 import { verifyToken, isAdmin, isSuperAdmin } from './middleware/authMiddleware.js';
 import { recalculatePhaseAverages, recalculateAllStudentsPhaseAverages } from './utils/recalculatePhaseAverages.js';
+import { syncTeacherStudentData } from './utils/syncTeacherStudentData.js';
 import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
+import teacherLicensesRoutes from './routes/teacherLicensesRoutes.js';
 import teachers from './routes/teachers.js';
 import teacherRoutes from './routes/teacherRoutes.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
 import usersRoutes from './routes/usersRoutes.js';
+import messageRoutes from './routes/messageRoutes.js';
 import pool from './config/db.js';
 import { syncSubjectCategories } from './utils/syncSubjectCategories.js';
 
@@ -207,6 +210,15 @@ app.post('/api/students', async (req, res) => {
         );
         
         console.log(`✅ Relación teacher_students creada exitosamente`);
+        
+        // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
+        try {
+          await syncTeacherStudentData(teacher_id, studentId, currentAcademicYear);
+          console.log(`✅ Sincronización automática completada`);
+        } catch (syncError) {
+          console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
+          // No fallar la creación si hay error en la sincronización
+        }
       } catch (relError) {
         console.error('❌ Error al crear relación teacher_students:', relError);
         // Si es error de duplicado, no es crítico - continuar
@@ -327,11 +339,13 @@ app.use('/api/phase-evaluation', phaseEvaluationRoutes);
 app.use('/api/teachers', teachers);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/teacher-courses', teacherCoursesRoutes);
+app.use('/api/teacher-licenses', teacherLicensesRoutes);
 app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
 app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
 app.use('/api', improvementPlansRoutes);
 app.use('/api/educational-resources', educationalResourcesRoutes);
+app.use('/api/messages', messageRoutes);
 
 // ⚠️ usersRoutes DEBE ir DESPUÉS de definir las rutas de auth
 // porque usersRoutes aplica verifyToken a todas las rutas que empiezan con /api
@@ -502,6 +516,14 @@ app.post('/api/auth/register', async (req, res) => {
     const { name, phone, email, password, role } = req.body;
     console.log("📥 Datos recibidos:", req.body);
 
+    // 🔒 SEGURIDAD: Forzar role='estudiante' para registros públicos
+    // Solo administradores pueden asignar otros roles
+    const finalRole = 'estudiante';
+    
+    if (role && role !== 'estudiante') {
+      console.log(`⚠️ Intento de registro con rol '${role}' bloqueado. Forzando 'estudiante'.`);
+    }
+
     // Verificar si el usuario ya existe
     const [existingUser] = await db.query('SELECT * FROM users WHERE name = ? OR email = ?', [name, email]);
     
@@ -524,10 +546,10 @@ app.post('/api/auth/register', async (req, res) => {
     // Encriptar contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Guardar en la base de datos
+    // Guardar en la base de datos (siempre como 'estudiante' para registros públicos)
     const [result] = await db.query(
       "INSERT INTO users (name, phone, email, password, role) VALUES (?, ?, ?, ?, ?)",
-      [name, phone, email, hashedPassword, role]
+      [name, phone, email, hashedPassword, finalRole]
     );
 
     console.log("✅ Usuario registrado", result);
@@ -559,6 +581,7 @@ app.use('/api/phase-evaluation', phaseEvaluationRoutes);
 app.use('/api/teachers', teachers);
 app.use('/api/teacher', teacherRoutes);
 app.use('/api/teacher-courses', teacherCoursesRoutes);
+app.use('/api/teacher-licenses', teacherLicensesRoutes);
 app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
 app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
@@ -583,27 +606,277 @@ const verificarToken = (req, res, next) => {
   });
 };
 
-app.post('/api/auth/reestablecer-password', async (req, res) => {
-  const { email, nuevaPassword } = req.body;
+// =====================================================
+// SISTEMA SEGURO DE RECUPERACIÓN DE CONTRASEÑA
+// =====================================================
 
+// Solicitar recuperación de contraseña (envía correo con token)
+app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    // Verifica si el usuario existe
-    const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Se requiere el correo electrónico" 
+      });
+    }
+
+    // Verificar si la tabla password_reset_tokens existe, si no, crearla
+    try {
+      await pool.query("SELECT 1 FROM password_reset_tokens LIMIT 1");
+    } catch (tableError) {
+      if (tableError.code === 'ER_NO_SUCH_TABLE') {
+        console.log('📋 Creando tabla password_reset_tokens...');
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            token VARCHAR(255) NOT NULL UNIQUE,
+            expires_at TIMESTAMP NOT NULL,
+            used BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_token (token),
+            INDEX idx_user_id (user_id),
+            INDEX idx_expires_at (expires_at),
+            INDEX idx_used (used),
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        console.log('✅ Tabla password_reset_tokens creada exitosamente');
+      } else {
+        throw tableError;
+      }
+    }
+
+    // Verificar si el usuario existe
+    const [rows] = await pool.query("SELECT id, name, email FROM users WHERE email = ?", [email]);
     if (rows.length === 0) {
-      return res.status(404).json({ error: "Usuario no encontrado" });
+      // Por seguridad, no revelar si el usuario existe o no
+      return res.json({ 
+        success: true,
+        message: "Si el correo existe, se enviará un enlace de recuperación" 
+      });
+    }
+
+    const user = rows[0];
+
+    // Generar token único y seguro
+    const crypto = await import('crypto');
+    const token = crypto.default.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 1); // Token válido por 1 hora
+
+    // Eliminar tokens previos del usuario
+    await pool.query(
+      "DELETE FROM password_reset_tokens WHERE user_id = ?",
+      [user.id]
+    );
+
+    // Guardar token en la base de datos
+    await pool.query(
+      "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
+      [user.id, token, expiresAt]
+    );
+
+    // Generar URL de recuperación
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${token}`;
+
+    // Enviar correo electrónico con el enlace
+    const { sendPasswordResetEmail, isEmailConfigured } = await import('./utils/emailService.js');
+    
+    if (isEmailConfigured()) {
+      const emailResult = await sendPasswordResetEmail(user.email, user.name, resetUrl);
+      if (!emailResult.success) {
+        console.warn('⚠️ No se pudo enviar el correo, pero el token fue generado');
+        // En desarrollo, mostrar el link en consola
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`📧 [DEV] Link de recuperación para ${email}:`);
+          console.log(`🔗 ${resetUrl}`);
+        }
+      }
+    } else {
+      // Si no hay configuración de correo, mostrar en consola (solo desarrollo)
+      console.log(`📧 [DEV] No hay configuración de correo. Link de recuperación para ${email}:`);
+      console.log(`🔐 Token: ${token}`);
+      console.log(`🔗 URL: ${resetUrl}`);
+    }
+
+    res.json({ 
+      success: true,
+      message: "Si el correo existe, se enviará un enlace de recuperación" 
+    });
+
+  } catch (error) {
+    console.error("❌ Error al solicitar recuperación de contraseña:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Error en el servidor" 
+    });
+  }
+});
+
+// Verificar token de recuperación
+app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    const [rows] = await pool.query(
+      `SELECT prt.user_id, prt.expires_at, prt.used, u.email, u.name
+       FROM password_reset_tokens prt
+       JOIN users u ON prt.user_id = u.id
+       WHERE prt.token = ?`,
+      [token]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: "Token inválido o no encontrado" 
+      });
+    }
+
+    const tokenData = rows[0];
+
+    // Verificar si el token ha expirado
+    if (new Date() > new Date(tokenData.expires_at)) {
+      return res.status(400).json({ 
+        success: false,
+        error: "El token ha expirado. Solicita uno nuevo." 
+      });
+    }
+
+    // Verificar si el token ya fue usado
+    if (tokenData.used) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Este token ya fue utilizado. Solicita uno nuevo." 
+      });
+    }
+
+    res.json({ 
+      success: true,
+      email: tokenData.email,
+      name: tokenData.name
+    });
+
+  } catch (error) {
+    console.error("❌ Error al verificar token:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Error en el servidor" 
+    });
+  }
+});
+
+// Restablecer contraseña con token válido
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Se requiere el token y la nueva contraseña" 
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ 
+        success: false,
+        error: "La contraseña debe tener al menos 6 caracteres" 
+      });
+    }
+
+    // Verificar si la tabla existe
+    try {
+      await pool.query("SELECT 1 FROM password_reset_tokens LIMIT 1");
+    } catch (tableError) {
+      if (tableError.code === 'ER_NO_SUCH_TABLE') {
+        return res.status(500).json({ 
+          success: false,
+          error: "Sistema de recuperación no configurado. Contacta al administrador." 
+        });
+      }
+      throw tableError;
+    }
+
+    // Verificar token
+    const [tokenRows] = await pool.query(
+      `SELECT prt.user_id, prt.expires_at, prt.used
+       FROM password_reset_tokens prt
+       WHERE prt.token = ?`,
+      [token]
+    );
+
+    if (tokenRows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: "Token inválido o no encontrado" 
+      });
+    }
+
+    const tokenData = tokenRows[0];
+
+    // Verificar si el token ha expirado
+    if (new Date() > new Date(tokenData.expires_at)) {
+      return res.status(400).json({ 
+        success: false,
+        error: "El token ha expirado. Solicita uno nuevo." 
+      });
+    }
+
+    // Verificar si el token ya fue usado
+    if (tokenData.used) {
+      return res.status(400).json({ 
+        success: false,
+        error: "Este token ya fue utilizado. Solicita uno nuevo." 
+      });
     }
 
     // Hashear la nueva contraseña
-    const hashedPassword = await bcrypt.hash(nuevaPassword, 10);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Actualiza la contraseña
-    await db.query("UPDATE users SET password = ? WHERE email = ?", [hashedPassword, email]);
+    // Actualizar contraseña y marcar token como usado
+    await pool.query("BEGIN");
+    
+    try {
+      await pool.query(
+        "UPDATE users SET password = ? WHERE id = ?",
+        [hashedPassword, tokenData.user_id]
+      );
 
-    res.json({ message: "Contraseña actualizada correctamente" });
+      await pool.query(
+        "UPDATE password_reset_tokens SET used = TRUE WHERE token = ?",
+        [token]
+      );
+
+      await pool.query("COMMIT");
+
+      res.json({ 
+        success: true,
+        message: "Contraseña actualizada correctamente" 
+      });
+    } catch (error) {
+      await pool.query("ROLLBACK");
+      throw error;
+    }
+
   } catch (error) {
-    console.error("❌ Error al reestablecer la contraseña:", error);
-    res.status(500).json({ error: "Error en el servidor" });
+    console.error("❌ Error al restablecer la contraseña:", error);
+    res.status(500).json({ 
+      success: false,
+      error: "Error en el servidor" 
+    });
   }
+});
+
+// Mantener el endpoint antiguo por compatibilidad (pero deshabilitado)
+app.post('/api/auth/reestablecer-password', async (req, res) => {
+  res.status(410).json({ 
+    success: false,
+    error: "Este endpoint está deshabilitado por seguridad. Usa /api/auth/forgot-password y /api/auth/reset-password" 
+  });
 });
 
 // Ruta para obtener todos los cursos (actualizada para incluir institution y teacher_id si existen)
@@ -1691,6 +1964,9 @@ app.put('/api/students/:id', async (req, res) => {
     
     // Si se proporcionó un teacher_id, actualizar la relación en teacher_students
     if (teacher_id) {
+      // Obtener año académico actual
+      const currentAcademicYear = new Date().getFullYear();
+      
       // Verificar si ya existe una relación
       const [existingRelation] = await db.query(
         'SELECT * FROM teacher_students WHERE student_id = ?',
@@ -1698,17 +1974,26 @@ app.put('/api/students/:id', async (req, res) => {
       );
       
       if (existingRelation.length > 0) {
-        // Actualizar la relación existente
+        // Actualizar la relación existente (asegurar academic_year)
         await db.query(
-          'UPDATE teacher_students SET teacher_id = ? WHERE student_id = ?',
-          [teacher_id, id]
+          'UPDATE teacher_students SET teacher_id = ?, academic_year = COALESCE(academic_year, ?) WHERE student_id = ?',
+          [teacher_id, currentAcademicYear, id]
         );
       } else {
-        // Crear una nueva relación
+        // Crear una nueva relación (incluyendo academic_year)
         await db.query(
-          'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-          [teacher_id, id]
+          'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+          [teacher_id, id, currentAcademicYear]
         );
+      }
+      
+      // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
+      try {
+        await syncTeacherStudentData(teacher_id, id, currentAcademicYear);
+        console.log(`✅ Sincronización automática completada`);
+      } catch (syncError) {
+        console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
+        // No fallar la actualización si hay error en la sincronización
       }
     }
     
@@ -1819,6 +2104,80 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Error al obtener estudiante',
+      error: error.message
+    });
+  }
+});
+
+// Endpoint para que los estudiantes obtengan sus docentes con materias
+app.get('/api/students/by-user/:userId/teachers', verifyToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const authenticatedUserId = req.user.id;
+    const userRole = req.user.role;
+    
+    // Verificar que el usuario solo pueda ver sus propios datos (si es estudiante)
+    if (userRole === 'estudiante' && parseInt(userId) !== authenticatedUserId) {
+      return res.status(403).json({ 
+        success: false,
+        message: 'No tienes permiso para ver esta información',
+        error: 'FORBIDDEN'
+      });
+    }
+    
+    // Obtener el student_id a partir del user_id
+    const [studentRows] = await pool.query(
+      'SELECT id FROM students WHERE user_id = ?',
+      [userId]
+    );
+    
+    if (studentRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Estudiante no encontrado'
+      });
+    }
+    
+    const studentId = studentRows[0].id;
+    
+    // Obtener los docentes del estudiante con sus materias e instituciones
+    const [teachers] = await pool.query(`
+      SELECT 
+        t.id,
+        t.subject,
+        u.name,
+        u.email,
+        u.phone,
+        u.institution
+      FROM teacher_students ts
+      JOIN teachers t ON ts.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      WHERE ts.student_id = ?
+      ORDER BY t.subject, u.name
+    `, [studentId]);
+    
+    // Validar y sincronizar institution para cada relación teacher_students
+    if (teachers.length > 0) {
+      const { validateTeacherStudentInstitution } = await import('./utils/validateTeacherStudentInstitution.js');
+      const validationPromises = teachers.map(async (teacher) => {
+        try {
+          await validateTeacherStudentInstitution(teacher.id, studentId);
+        } catch (validationError) {
+          console.error(`⚠️ Error al validar institution para docente ${teacher.id}:`, validationError.message);
+        }
+      });
+      await Promise.allSettled(validationPromises);
+    }
+    
+    res.json({
+      success: true,
+      data: teachers
+    });
+  } catch (error) {
+    console.error('❌ Error al obtener docentes del estudiante:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener docentes del estudiante',
       error: error.message
     });
   }
@@ -1943,8 +2302,8 @@ app.get('/api/categories/:subject', async (req, res) => {
   }
 });
 
-// Ruta para crear una nueva materia
-app.post('/api/subjects', async (req, res) => {
+// Ruta para crear una nueva materia (solo administradores/super_administradores)
+app.post('/api/subjects', verifyToken, isSuperAdmin, async (req, res) => {
   try {
     const { subject } = req.body;
     
@@ -2068,8 +2427,8 @@ app.get('/api/subject-categories/:subject', async (req, res) => {
   }
 });
 
-// Ruta para crear una nueva categoría
-app.post('/api/subject-categories', async (req, res) => {
+// Ruta para crear una nueva categoría (solo administradores/super_administradores)
+app.post('/api/subject-categories', verifyToken, isSuperAdmin, async (req, res) => {
   try {
     const { subject, category } = req.body;
     
@@ -2277,6 +2636,19 @@ app.get('/api/teacher/students/:userId', async (req, res) => {
       WHERE ts.teacher_id = ? 
       AND (ts.academic_year = ? OR ts.academic_year IS NULL)
     `, [teacherId, currentAcademicYear]);
+    
+    // Validar y sincronizar institution para cada relación teacher_students
+    if (rows.length > 0) {
+      const { validateTeacherStudentInstitution } = await import('./utils/validateTeacherStudentInstitution.js');
+      const validationPromises = rows.map(async (student) => {
+        try {
+          await validateTeacherStudentInstitution(teacherId, student.id);
+        } catch (validationError) {
+          console.error(`⚠️ Error al validar institution para estudiante ${student.id}:`, validationError.message);
+        }
+      });
+      await Promise.allSettled(validationPromises);
+    }
     
     res.json(rows);
   } catch (error) {
@@ -2575,7 +2947,7 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, async (req, res) => {
 });
 
 // Asignar estudiante a profesor - MODIFICADA
-app.post('/api/teacher/assign-student', async (req, res) => {
+app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
   try {
     let { teacher_id, student_id, user_id } = req.body;
     
@@ -2593,6 +2965,20 @@ app.post('/api/teacher/assign-student', async (req, res) => {
       teacher_id = teacherRows[0].id;
     }
     
+    // Si el usuario es docente, verificar que esté asignando a sí mismo
+    if (req.user.role === 'docente' && !teacher_id) {
+      const [teacherRows] = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [req.user.id]
+      );
+      if (teacherRows.length > 0) {
+        teacher_id = teacherRows[0].id;
+      }
+    }
+    
+    // Obtener año académico actual
+    const currentAcademicYear = new Date().getFullYear();
+    
     // Verificar si ya existe la relación
     const [existingRows] = await pool.query(
       'SELECT * FROM teacher_students WHERE student_id = ?',
@@ -2602,21 +2988,228 @@ app.post('/api/teacher/assign-student', async (req, res) => {
     if (existingRows.length > 0) {
       // Actualizar la relación existente
       await pool.query(
-        'UPDATE teacher_students SET teacher_id = ? WHERE student_id = ?',
-        [teacher_id, student_id]
+        'UPDATE teacher_students SET teacher_id = ?, academic_year = COALESCE(academic_year, ?) WHERE student_id = ?',
+        [teacher_id, currentAcademicYear, student_id]
       );
     } else {
       // Crear la relación
       await pool.query(
-        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-        [teacher_id, student_id]
+        'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+        [teacher_id, student_id, currentAcademicYear]
       );
     }
     
-    res.status(201).json({ message: 'Estudiante asignado correctamente al profesor' });
+    // Sincronizar datos automáticamente
+    try {
+      await syncTeacherStudentData(teacher_id, student_id, currentAcademicYear);
+      console.log(`✅ Sincronización automática completada para estudiante ${student_id}`);
+    } catch (syncError) {
+      console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
+    }
+    
+    res.status(201).json({ 
+      success: true,
+      message: 'Estudiante asignado correctamente al profesor' 
+    });
   } catch (error) {
     console.error('❌ Error al asignar estudiante:', error);
-    res.status(500).json({ message: 'Error al asignar estudiante' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al asignar estudiante',
+      error: error.message 
+    });
+  }
+});
+
+// Obtener estudiantes sin profesor asignado (filtrados por institución del docente)
+app.get('/api/students/unassigned', verifyToken, async (req, res) => {
+  try {
+    const { institution, grade, course_id } = req.query;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    // Obtener instituciones del docente si es docente
+    let teacherInstitutions = [];
+    if (userRole === 'docente') {
+      const [teacherRows] = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+      
+      if (teacherRows.length > 0) {
+        const teacherId = teacherRows[0].id;
+        // Obtener instituciones activas del docente desde teacher_institutions
+        const [institutionRows] = await pool.query(
+          `SELECT DISTINCT institution 
+           FROM teacher_institutions 
+           WHERE teacher_id = ? AND license_status = 'active'`,
+          [teacherId]
+        );
+        teacherInstitutions = institutionRows.map(row => row.institution);
+      }
+    }
+    
+    // Construir query base
+    let query = `
+      SELECT DISTINCT
+        s.id,
+        s.user_id,
+        s.grade,
+        s.course_id,
+        s.institution,
+        u.name,
+        u.email,
+        u.phone,
+        c.name as course_name,
+        c.grade as course_grade
+      FROM students s
+      INNER JOIN users u ON s.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+      LEFT JOIN teacher_students ts ON s.id = ts.student_id
+      WHERE ts.student_id IS NULL
+    `;
+    
+    const params = [];
+    
+    // Filtrar por institución si es docente o si se proporciona
+    if (userRole === 'docente' && teacherInstitutions.length > 0) {
+      query += ` AND (s.institution IN (${teacherInstitutions.map(() => '?').join(',')}) OR u.institution IN (${teacherInstitutions.map(() => '?').join(',')}))`;
+      params.push(...teacherInstitutions, ...teacherInstitutions);
+    } else if (institution) {
+      query += ` AND (s.institution = ? OR u.institution = ?)`;
+      params.push(institution, institution);
+    }
+    
+    // Filtrar por grado si se proporciona
+    if (grade) {
+      query += ` AND s.grade = ?`;
+      params.push(grade);
+    }
+    
+    // Filtrar por curso si se proporciona
+    if (course_id) {
+      query += ` AND s.course_id = ?`;
+      params.push(course_id);
+    }
+    
+    query += ` ORDER BY u.name ASC`;
+    
+    const [students] = await pool.query(query, params);
+    
+    res.json({
+      success: true,
+      count: students.length,
+      data: students
+    });
+  } catch (error) {
+    console.error('❌ Error al obtener estudiantes sin profesor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener estudiantes sin profesor',
+      error: error.message
+    });
+  }
+});
+
+// Asignar curso completo a docente (todos los estudiantes de un curso)
+app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) => {
+  try {
+    const { teacher_id, course_id } = req.body;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    
+    // Si el usuario es docente, usar su teacher_id
+    let finalTeacherId = teacher_id;
+    if (userRole === 'docente' && !teacher_id) {
+      const [teacherRows] = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+      if (teacherRows.length > 0) {
+        finalTeacherId = teacherRows[0].id;
+      } else {
+        return res.status(404).json({ 
+          success: false,
+          message: 'Profesor no encontrado' 
+        });
+      }
+    }
+    
+    if (!finalTeacherId || !course_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere teacher_id y course_id'
+      });
+    }
+    
+    // Obtener año académico actual
+    const currentAcademicYear = new Date().getFullYear();
+    
+    // Obtener todos los estudiantes del curso que no tengan profesor asignado
+    const [students] = await pool.query(
+      `SELECT s.id, s.user_id
+       FROM students s
+       LEFT JOIN teacher_students ts ON s.id = ts.student_id
+       WHERE s.course_id = ? AND ts.student_id IS NULL`,
+      [course_id]
+    );
+    
+    if (students.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No hay estudiantes sin profesor asignado en este curso',
+        assigned: 0
+      });
+    }
+    
+    // Asignar cada estudiante al docente
+    let assignedCount = 0;
+    const errors = [];
+    
+    for (const student of students) {
+      try {
+        // Verificar si ya existe relación
+        const [existing] = await pool.query(
+          'SELECT id FROM teacher_students WHERE student_id = ?',
+          [student.id]
+        );
+        
+        if (existing.length === 0) {
+          // Crear relación
+          await pool.query(
+            'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+            [finalTeacherId, student.id, currentAcademicYear]
+          );
+          
+          // Sincronizar datos
+          try {
+            await syncTeacherStudentData(finalTeacherId, student.id, currentAcademicYear);
+          } catch (syncError) {
+            console.error(`⚠️ Error en sincronización para estudiante ${student.id}:`, syncError.message);
+          }
+          
+          assignedCount++;
+        }
+      } catch (error) {
+        console.error(`❌ Error al asignar estudiante ${student.id}:`, error);
+        errors.push({ student_id: student.id, error: error.message });
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Se asignaron ${assignedCount} estudiantes al docente`,
+      assigned: assignedCount,
+      total: students.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('❌ Error al asignar curso completo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al asignar curso completo',
+      error: error.message
+    });
   }
 });
 
@@ -2917,6 +3510,9 @@ app.post('/api/teacher/update-student-teacher', async (req, res) => {
   try {
     const { teacher_id, student_id } = req.body;
     
+    // Obtener año académico actual
+    const currentAcademicYear = new Date().getFullYear();
+    
     // Verificar si ya existe la relación
     const [existingRows] = await pool.query(
       'SELECT * FROM teacher_students WHERE student_id = ?',
@@ -2924,17 +3520,26 @@ app.post('/api/teacher/update-student-teacher', async (req, res) => {
     );
     
     if (existingRows.length > 0) {
-      // Actualizar la relación existente
+      // Actualizar la relación existente (asegurar academic_year)
       await pool.query(
-        'UPDATE teacher_students SET teacher_id = ? WHERE student_id = ?',
-        [teacher_id, student_id]
+        'UPDATE teacher_students SET teacher_id = ?, academic_year = COALESCE(academic_year, ?) WHERE student_id = ?',
+        [teacher_id, currentAcademicYear, student_id]
       );
     } else {
-      // Crear la relación
+      // Crear la relación (incluyendo academic_year)
       await pool.query(
-        'INSERT INTO teacher_students (teacher_id, student_id) VALUES (?, ?)',
-        [teacher_id, student_id]
+        'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
+        [teacher_id, student_id, currentAcademicYear]
       );
+    }
+    
+    // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
+    try {
+      await syncTeacherStudentData(teacher_id, student_id, currentAcademicYear);
+      console.log(`✅ Sincronización automática completada`);
+    } catch (syncError) {
+      console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
+      // No fallar la actualización si hay error en la sincronización
     }
     
     res.json({ message: 'Relación estudiante-profesor actualizada correctamente' });

@@ -13,26 +13,9 @@ const isTeacherOrAdmin = (req, res, next) => {
     next();
 };
 
-// Aplicar middleware de verificación de token a todas las rutas
-router.use(verifyToken);
-
-// Obtener todos los profesores con sus datos de usuario (solo admin)
-router.get('/', isTeacherOrAdmin, async (req, res) => {
-  try {
-    const [rows] = await pool.query(`
-      SELECT t.*, u.name, u.email, u.phone, u.role 
-      FROM teachers t
-      JOIN users u ON t.user_id = u.id
-    `);
-    res.json(rows);
-  } catch (error) {
-    console.error('❌ Error al obtener profesores:', error);
-    res.status(500).json({ message: 'Error al obtener profesores' });
-  }
-});
-
-// Obtener lista de profesores (filtrada por curso/grado/institución)
-// IMPORTANTE: Esta ruta debe ir ANTES de /:id para que /list no sea capturado como id
+// ⚠️ IMPORTANTE: Esta ruta debe estar ANTES de router.use(verifyToken)
+// para que sea pública y permita que estudiantes recién registrados puedan ver profesores
+// Obtener lista de profesores (filtrada por curso/grado/institución) - PÚBLICA
 router.get('/list', async (req, res) => {
   try {
     const { course_id, grade, institution } = req.query;
@@ -185,6 +168,24 @@ router.get('/list', async (req, res) => {
   }
 });
 
+// Aplicar middleware de verificación de token a las rutas restantes (después de /list)
+router.use(verifyToken);
+
+// Obtener todos los profesores con sus datos de usuario (solo admin)
+router.get('/', isTeacherOrAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT t.*, u.name, u.email, u.phone, u.role 
+      FROM teachers t
+      JOIN users u ON t.user_id = u.id
+    `);
+    res.json(rows);
+  } catch (error) {
+    console.error('❌ Error al obtener profesores:', error);
+    res.status(500).json({ message: 'Error al obtener profesores' });
+  }
+});
+
 // Obtener un profesor por ID
 router.get('/:id', async (req, res) => {
   try {
@@ -282,6 +283,57 @@ router.put('/:id', isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { subject, institution } = req.body;
+    
+    // Obtener la materia actual del docente
+    const [currentTeacher] = await pool.query(
+      'SELECT subject FROM teachers WHERE id = ?',
+      [id]
+    );
+    
+    if (currentTeacher.length === 0) {
+      return res.status(404).json({ message: 'Profesor no encontrado' });
+    }
+    
+    const currentSubject = currentTeacher[0].subject;
+    
+    // Si se intenta cambiar la materia, verificar que no tenga contenido creado
+    if (subject && subject !== currentSubject) {
+      // Verificar si el docente ya tiene cuestionarios creados
+      const [questionnaires] = await pool.query(
+        'SELECT COUNT(*) as count FROM questionnaires WHERE created_by = ?',
+        [id]
+      );
+      
+      if (questionnaires[0].count > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `No puedes cambiar la materia de "${currentSubject}" a "${subject}" porque ya has creado ${questionnaires[0].count} cuestionario(s). Contacta al administrador si necesitas cambiar tu materia asignada.`,
+          code: 'SUBJECT_CHANGE_BLOCKED',
+          currentSubject,
+          attemptedSubject: subject,
+          contentCount: questionnaires[0].count
+        });
+      }
+      
+      // También verificar preguntas, recursos educativos, etc.
+      const [questions] = await pool.query(
+        `SELECT COUNT(*) as count FROM questions q
+         INNER JOIN questionnaires qu ON q.questionnaire_id = qu.id
+         WHERE qu.created_by = ?`,
+        [id]
+      );
+      
+      if (questions[0].count > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `No puedes cambiar la materia porque ya has creado ${questions[0].count} pregunta(s). Contacta al administrador.`,
+          code: 'SUBJECT_CHANGE_BLOCKED',
+          currentSubject,
+          attemptedSubject: subject,
+          contentCount: questions[0].count
+        });
+      }
+    }
     
     const [result] = await pool.query(
       'UPDATE teachers SET subject = ?, institution = ? WHERE id = ?',

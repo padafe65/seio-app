@@ -9,7 +9,7 @@ const notiMySwal = withReactContent(Swal);
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const Registro = () => {
-  const [user, setUser] = useState({ name: '', phone: '', email: '', password: '', role: '' });
+  const [user, setUser] = useState({ name: '', phone: '', email: '', password: '', role: 'estudiante' });
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -34,13 +34,8 @@ const Registro = () => {
         imageHeight: 100,
         confirmButtonColor: '#3085d6'
       }).then(() => {
-        if (user.role === 'estudiante') {
-          navigate('/CompleteStudent');
-        } else if (user.role === 'docente') {
-          navigate('/CompleteTeacher');
-        } else {
-          navigate('/');
-        }
+        // Todos los registros públicos son estudiantes, redirigir siempre a CompleteStudent
+        navigate('/CompleteStudent');
       });
 
     } catch (error) {
@@ -99,15 +94,19 @@ const Registro = () => {
           required 
         />
 
+        {/* El rol se asigna automáticamente como 'estudiante' por seguridad */}
+        <label htmlFor="role" className="form-label mt-2">
+          Rol <span className="text-muted">(Asignado automáticamente)</span>
+        </label>
         <select 
           name="role" 
-          onChange={handleChange} 
+          id="role"
+          value="estudiante"
+          disabled
           className="form-control mb-3" 
-          required
+          style={{ backgroundColor: '#e9ecef', cursor: 'not-allowed' }}
         >
-          <option value="">Seleccione su Rol</option>
           <option value="estudiante">Estudiante</option>
-          <option value="docente">Docente</option>
         </select>
 
         <button type="submit" className="btn btn-success w-100">Registrar</button>

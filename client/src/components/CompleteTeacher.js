@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -18,6 +18,50 @@ const CompletarDocente = () => {
     institution: '',
     user_id: userId
   });
+  const [subjects, setSubjects] = useState([]); // Lista de materias disponibles
+  const [categories, setCategories] = useState([]); // Categorías/subcategorías de la materia seleccionada
+  const [loading, setLoading] = useState(true);
+
+  // Cargar materias disponibles al montar el componente
+  useEffect(() => {
+    const fetchSubjects = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/subject-categories-list/subjects`);
+        const subjectsList = response.data || [];
+        // Extraer materias únicas
+        const uniqueSubjects = [...new Set(subjectsList.map(s => s.subject))];
+        setSubjects(uniqueSubjects);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error al cargar materias:', error);
+        setLoading(false);
+      }
+    };
+
+    fetchSubjects();
+  }, []);
+
+  // Cargar categorías automáticamente cuando se selecciona una materia
+  useEffect(() => {
+    const fetchCategories = async () => {
+      if (!teacher.subject) {
+        setCategories([]);
+        return;
+      }
+
+      try {
+        const response = await axios.get(`${API_URL}/api/subject-categories/${encodeURIComponent(teacher.subject)}`);
+        const categoriesList = response.data || [];
+        setCategories(categoriesList);
+        console.log(`📚 Categorías cargadas para ${teacher.subject}:`, categoriesList);
+      } catch (error) {
+        console.error('Error al cargar categorías:', error);
+        setCategories([]);
+      }
+    };
+
+    fetchCategories();
+  }, [teacher.subject]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -71,28 +115,111 @@ const CompletarDocente = () => {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="container mt-5 text-center">
+        <div className="spinner-border text-primary" role="status">
+          <span className="visually-hidden">Cargando...</span>
+        </div>
+        <p className="mt-2">Cargando materias disponibles...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="container mt-5">
-      <h2>Completar Datos de Docente</h2>
-      <form onSubmit={handleSubmit}>
-        <input
-          type="text"
-          name="subject"
-          placeholder="Asignatura"
-          onChange={handleChange}
-          className="form-control mb-2"
-          required
-        />
-        <input
-          type="text"
-          name="institution"
-          placeholder="Institución"
-          onChange={handleChange}
-          className="form-control mb-2"
-          required
-        />
-        <button type="submit" className="btn btn-success">Guardar</button>
-      </form>
+      <div className="card">
+        <div className="card-header bg-primary text-white">
+          <h2 className="mb-0">Completar Datos de Docente</h2>
+        </div>
+        <div className="card-body">
+          <form onSubmit={handleSubmit}>
+            <div className="mb-3">
+              <label htmlFor="subject" className="form-label">
+                Materia <span className="text-danger">*</span>
+              </label>
+              <select
+                id="subject"
+                name="subject"
+                value={teacher.subject}
+                onChange={handleChange}
+                className="form-select"
+                required
+              >
+                <option value="">Selecciona tu materia</option>
+                {subjects.map((subject) => (
+                  <option key={subject} value={subject}>
+                    {subject}
+                  </option>
+                ))}
+              </select>
+              <small className="form-text text-muted">
+                Selecciona la materia principal que vas a enseñar
+              </small>
+            </div>
+
+            {/* Mostrar categorías disponibles cuando se selecciona una materia */}
+            {teacher.subject && categories.length > 0 && (
+              <div className="mb-3">
+                <label className="form-label">Categorías/Subcategorías disponibles:</label>
+                <div className="alert alert-info">
+                  <strong>Tu materia "{teacher.subject}" incluye las siguientes categorías:</strong>
+                  <ul className="mb-0 mt-2">
+                    {categories.map((cat) => (
+                      <li key={cat.id || cat.category}>
+                        {cat.category}
+                      </li>
+                    ))}
+                  </ul>
+                  <small className="text-muted mt-2 d-block">
+                    ⓘ Podrás crear contenido usando estas categorías. Solo los administradores pueden crear nuevas categorías.
+                  </small>
+                </div>
+              </div>
+            )}
+
+            {teacher.subject && categories.length === 0 && (
+              <div className="mb-3">
+                <div className="alert alert-warning">
+                  <strong>No hay categorías disponibles aún para "{teacher.subject}"</strong>
+                  <p className="mb-0">
+                    Un administrador deberá crear las categorías para tu materia. 
+                    Mientras tanto, puedes completar tu registro.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="mb-3">
+              <label htmlFor="institution" className="form-label">
+                Institución <span className="text-danger">*</span>
+              </label>
+              <input
+                type="text"
+                id="institution"
+                name="institution"
+                value={teacher.institution}
+                placeholder="Ej: Colegio La Chucua"
+                onChange={handleChange}
+                className="form-control"
+                required
+              />
+              <small className="form-text text-muted">
+                Institución educativa donde trabajas
+              </small>
+            </div>
+
+            <div className="d-grid gap-2">
+              <button type="submit" className="btn btn-success">
+                Guardar y Completar Registro
+              </button>
+              <button type="button" className="btn btn-outline-secondary" onClick={() => navigate('/')}>
+                Cancelar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   );
 };
