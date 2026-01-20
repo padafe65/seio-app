@@ -1,20 +1,37 @@
 // services/phaseEvaluationService.js
 import pool from '../config/db.js';
+import { sendPhaseResultsEmail, sendFinalGradeEmail } from '../utils/emailService.js';
+import { generatePhaseResultsPDF, generateFinalGradePDF } from '../utils/pdfGenerator.js';
 
 // Función principal para evaluar estudiantes al final de una fase
 export const evaluatePhaseResults = async (phase) => {
   try {
     console.log(`Iniciando evaluación de resultados para la fase ${phase}`);
     
+    // Obtener año académico actual para el período
+    const currentYear = new Date().getFullYear();
+    const currentMonth = new Date().getMonth() + 1; // 1-12
+    let academicPeriod = `${currentYear}`;
+    
+    // Determinar período académico (semestre o trimestre)
+    if (currentMonth >= 1 && currentMonth <= 6) {
+      academicPeriod = `Primer Semestre ${currentYear}`;
+    } else {
+      academicPeriod = `Segundo Semestre ${currentYear}`;
+    }
+
     // 1. Obtener todos los estudiantes con sus calificaciones para esta fase
+    // Incluir datos del docente e institución
     const [students] = await pool.query(`
       SELECT 
         s.id as student_id, 
         s.user_id,
         s.grade,
         s.course_id,
+        s.contact_email,
         u.name as student_name,
         u.email as student_email,
+        u.institution as student_institution,
         c.name as course_name,
         CASE 
           WHEN ${phase} = 1 THEN g.phase1
@@ -22,27 +39,101 @@ export const evaluatePhaseResults = async (phase) => {
           WHEN ${phase} = 3 THEN g.phase3
           WHEN ${phase} = 4 THEN g.phase4
         END as phase_score,
-        g.average as overall_average
+        g.phase1,
+        g.phase2,
+        g.phase3,
+        g.phase4,
+        g.average as overall_average,
+        t.id as teacher_id,
+        ut.name as teacher_name,
+        t.subject as teacher_subject,
+        COALESCE(ut.institution, u.institution) as institution
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN grades g ON s.id = g.student_id
       LEFT JOIN courses c ON s.course_id = c.id
+      LEFT JOIN teacher_students ts ON s.id = ts.student_id
+      LEFT JOIN teachers t ON ts.teacher_id = t.id
+      LEFT JOIN users ut ON t.user_id = ut.id
       WHERE g.phase${phase} IS NOT NULL
     `);
     
     console.log(`Encontrados ${students.length} estudiantes con calificaciones para la fase ${phase}`);
     
-    // 2. Para cada estudiante con nota < 3.5, generar plan de mejoramiento
+    // 2. Para cada estudiante, procesar resultados y enviar emails
     let plansCreated = 0;
     let plansUpdated = 0;
     let studentsProcessed = 0;
+    let emailsSent = 0;
+    let emailsFailed = 0;
     
     for (const student of students) {
       studentsProcessed++;
+      
+      // Obtener indicadores no alcanzados para esta fase
+      // Buscar indicadores del estudiante que no alcanzó en esta fase
+      const [failedIndicators] = await pool.query(`
+        SELECT DISTINCT
+          i.id,
+          i.description,
+          i.subject,
+          i.category
+        FROM student_indicators si
+        JOIN indicators i ON si.indicator_id = i.id
+        WHERE si.student_id = ? 
+        AND si.achieved = 0
+        AND i.phase = ?
+        AND (i.grade = ? OR i.grade IS NULL)
+        ORDER BY i.subject, i.category
+      `, [student.student_id, phase, student.grade]);
+      
+      let improvementPlan = null;
+      
+      // Si nota < 3.5, generar o actualizar plan de mejoramiento
       if (student.phase_score < 3.5) {
         const result = await generateImprovementPlan(student, phase);
         if (result.created) plansCreated++;
         if (result.updated) plansUpdated++;
+        
+        // Obtener el plan de mejoramiento generado para esta fase
+        // Buscar el plan más reciente del estudiante que coincida con la fase
+        const [plans] = await pool.query(`
+          SELECT ip.* 
+          FROM improvement_plans ip
+          WHERE ip.student_id = ? 
+          AND (ip.title LIKE ? OR ip.title LIKE ? OR ip.title LIKE ?)
+          ORDER BY ip.created_at DESC, ip.updated_at DESC
+          LIMIT 1
+        `, [
+          student.student_id, 
+          `%Fase ${phase}%`,
+          `%fase ${phase}%`,
+          `%FASE ${phase}%`
+        ]);
+        
+        if (plans.length > 0) {
+          improvementPlan = plans[0];
+        }
+      } else {
+        // Si aprobó, buscar si hay planes anteriores para informar
+        const [existingPlans] = await pool.query(`
+          SELECT ip.* 
+          FROM improvement_plans ip
+          WHERE ip.student_id = ? 
+          AND (ip.title LIKE ? OR ip.title LIKE ? OR ip.title LIKE ?)
+          AND ip.completed = 0
+          ORDER BY ip.created_at DESC
+          LIMIT 1
+        `, [
+          student.student_id, 
+          `%Fase ${phase}%`,
+          `%fase ${phase}%`,
+          `%FASE ${phase}%`
+        ]);
+        
+        if (existingPlans.length > 0) {
+          improvementPlan = existingPlans[0];
+        }
       }
       
       // Si es la fase final (4) y el promedio general es < 3.0, marcar como materia perdida
@@ -51,14 +142,133 @@ export const evaluatePhaseResults = async (phase) => {
         if (result && result.created) plansCreated++;
         if (result && result.updated) plansUpdated++;
       }
+      
+      // Preparar datos del estudiante para el email y PDF
+      const studentData = {
+        id: student.student_id,
+        name: student.student_name,
+        email: student.student_email,
+        contact_email: student.contact_email,
+        grade: student.grade,
+        course_name: student.course_name
+      };
+
+      // Preparar datos para el PDF
+      const pdfData = {
+        studentName: student.student_name,
+        studentGrade: student.grade,
+        courseName: student.course_name,
+        phase: phase,
+        phaseScore: student.phase_score,
+        teacherName: student.teacher_name || 'N/A',
+        teacherSubject: student.teacher_subject || 'N/A',
+        institution: student.institution || student.student_institution || 'N/A',
+        academicPeriod: academicPeriod,
+        failedIndicators: failedIndicators,
+        improvementPlan: improvementPlan
+      };
+      
+      // Generar PDF antes de enviar email
+      let pdfBuffer = null;
+      try {
+        pdfBuffer = await generatePhaseResultsPDF(pdfData);
+        console.log(`✅ PDF generado para ${student.student_name} (fase ${phase})`);
+      } catch (pdfError) {
+        console.error(`❌ Error al generar PDF para ${student.student_name}:`, pdfError);
+        // Continuar sin PDF si hay error
+      }
+      
+      // Enviar email con resultados de fase (incluyendo PDF si se generó)
+      try {
+        if (student.student_email || student.contact_email) {
+          const emailResult = await sendPhaseResultsEmail(
+            studentData,
+            phase,
+            student.phase_score,
+            improvementPlan,
+            failedIndicators,
+            pdfBuffer // Pasar PDF como adjunto
+          );
+          
+          if (emailResult.success) {
+            emailsSent++;
+            console.log(`✅ Email enviado a ${student.student_name} (fase ${phase})`);
+            
+            // Si hay plan, marcar como enviado
+            if (improvementPlan) {
+              await pool.query(
+                'UPDATE improvement_plans SET email_sent = 1 WHERE id = ?',
+                [improvementPlan.id]
+              );
+            }
+          } else {
+            emailsFailed++;
+            console.warn(`⚠️ Error al enviar email a ${student.student_name}:`, emailResult.error);
+          }
+        } else {
+          console.warn(`⚠️ Estudiante ${student.student_name} no tiene email configurado`);
+        }
+      } catch (emailError) {
+        emailsFailed++;
+        console.error(`❌ Error al enviar email a ${student.student_name}:`, emailError);
+      }
+      
+      // Si es fase 4, enviar también email con nota final
+      if (phase === 4 && (student.student_email || student.contact_email)) {
+        try {
+          const phaseGrades = {
+            phase1: student.phase1,
+            phase2: student.phase2,
+            phase3: student.phase3,
+            phase4: student.phase4
+          };
+
+          // Generar PDF de nota final
+          let finalPdfBuffer = null;
+          try {
+            const finalPdfData = {
+              studentName: student.student_name,
+              studentGrade: student.grade,
+              courseName: student.course_name,
+              finalGrade: student.overall_average || 0,
+              phaseGrades: phaseGrades,
+              teacherName: student.teacher_name || 'N/A',
+              teacherSubject: student.teacher_subject || 'N/A',
+              institution: student.institution || student.student_institution || 'N/A',
+              academicPeriod: academicPeriod
+            };
+            finalPdfBuffer = await generateFinalGradePDF(finalPdfData);
+            console.log(`✅ PDF de nota final generado para ${student.student_name}`);
+          } catch (pdfError) {
+            console.error(`❌ Error al generar PDF de nota final para ${student.student_name}:`, pdfError);
+          }
+          
+          const finalEmailResult = await sendFinalGradeEmail(
+            studentData,
+            student.overall_average || 0,
+            phaseGrades,
+            finalPdfBuffer // Pasar PDF como adjunto
+          );
+          
+          if (finalEmailResult.success) {
+            console.log(`✅ Email de nota final enviado a ${student.student_name}`);
+          } else {
+            console.warn(`⚠️ Error al enviar email de nota final a ${student.student_name}:`, finalEmailResult.error);
+          }
+        } catch (finalEmailError) {
+          console.error(`❌ Error al enviar email de nota final a ${student.student_name}:`, finalEmailError);
+        }
+      }
     }
     
     return { 
       success: true, 
-      message: `Evaluación de fase ${phase} completada. ${studentsProcessed} estudiantes procesados. ${plansCreated} planes creados, ${plansUpdated} planes actualizados.`,
+      message: `Evaluación de fase ${phase} completada. ${studentsProcessed} estudiantes procesados. ${plansCreated} planes creados, ${plansUpdated} planes actualizados. ${emailsSent} emails enviados exitosamente, ${emailsFailed} fallos.`,
       studentsProcessed,
       plansCreated,
-      plansUpdated
+      plansUpdated,
+      emailsSent,
+      emailsFailed
     };
   } catch (error) {
     console.error('Error en evaluación de fase:', error);
