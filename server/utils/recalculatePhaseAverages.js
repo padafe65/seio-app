@@ -32,6 +32,7 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
     }
     
     // 1. Obtener las mejores notas por cuestionario para cada fase (filtradas por academic_year)
+    // EXCLUIR cuestionarios tipo Prueba Saber del cálculo de promedios
     const [questionnairesByPhase] = await pool.query(`
       SELECT 
         q.id as questionnaire_id,
@@ -43,6 +44,7 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       LEFT JOIN evaluation_results er ON q.id = er.questionnaire_id 
         AND er.student_id = ? 
         AND (er.academic_year = ? OR er.academic_year IS NULL)
+      WHERE (q.is_prueba_saber = FALSE OR q.is_prueba_saber IS NULL)
       ORDER BY q.phase, q.id
     `, [studentId, currentAcademicYear]);
     

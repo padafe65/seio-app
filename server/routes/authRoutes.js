@@ -1,4 +1,4 @@
-// backend-rifa/routes/authRoutes.js
+// server/routes/authRoutes.js
 import express from 'express';
 import { register, login, checkTeacher } from '../controllers/authController.js';
 import { verifyToken } from '../middleware/authMiddleware.js';

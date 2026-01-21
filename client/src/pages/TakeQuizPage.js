@@ -24,6 +24,8 @@ const TakeQuizPage = () => {
   const [currentQuestionnaire, setCurrentQuestionnaire] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
+  const [remainingSeconds, setRemainingSeconds] = useState(null);
   const [count, setCount] = useState();
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedPhase, setSelectedPhase] = useState(null);
@@ -187,16 +189,59 @@ const TakeQuizPage = () => {
             .then((res) => {
               setQuestions(res.data.questions || []);
               setCurrentQuestionnaire(res.data.questionnaire || null);
+              setSessionId(res.data.session?.id || null);
+              setRemainingSeconds(
+                typeof res.data.session?.remaining_seconds === 'number' ? res.data.session.remaining_seconds : null
+              );
               setAnswers({});
               setScore(null);
               setSubmitted(false);
               console.log("Api/quiz/question: "+questionnaireId);
             })
-            .catch((err) => console.error('Error al cargar preguntas:', err));
+            .catch((err) => {
+              console.error('Error al cargar preguntas:', err);
+              const msg = err.response?.data?.error || err.response?.data?.message || 'Error al cargar preguntas';
+              setError(msg);
+              Swal.fire({
+                icon: 'error',
+                title: 'Error',
+                text: msg,
+                confirmButtonText: 'Entendido'
+              });
+            });
         }
       })
       .catch((err) => console.error('Error al verificar intentos:', err));
   }, [questionnaireId, studentId]);
+
+  // Contador regresivo de tiempo (si aplica)
+  useEffect(() => {
+    if (remainingSeconds === null) return;
+    if (submitted) return;
+    if (maxAttemptsReached) return;
+    if (remainingSeconds <= 0) return;
+
+    const interval = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev === null) return null;
+        return prev > 0 ? prev - 1 : 0;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [remainingSeconds, submitted, maxAttemptsReached]);
+
+  // Auto-entrega al expirar el tiempo
+  useEffect(() => {
+    if (remainingSeconds === null) return;
+    if (submitted) return;
+    if (maxAttemptsReached) return;
+    if (remainingSeconds !== 0) return;
+
+    // Auto-enviar con lo respondido (no bloquear por faltantes)
+    handleSubmit({ forceSubmit: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remainingSeconds, submitted, maxAttemptsReached]);
 
   const getAttemptCount = (questionnaireId) => {
     // Convertir a números para asegurar una comparación correcta
@@ -249,11 +294,17 @@ const TakeQuizPage = () => {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async ({ forceSubmit = false } = {}) => {
     // Verificar que haya respuestas seleccionadas
     const answeredQuestions = Object.keys(answers).length;
-    if (answeredQuestions === 0) {
-      alert('Por favor, responde al menos una pregunta antes de enviar.');
+    if (!forceSubmit && answeredQuestions === 0) {
+      alert('Por favor, responde las preguntas antes de enviar.');
+      return;
+    }
+    
+    // Exigir que responda todas las preguntas que el sistema le mostró
+    if (!forceSubmit && answeredQuestions < questions.length) {
+      alert(`Debes responder todas las preguntas antes de enviar. Te faltan ${questions.length - answeredQuestions}.`);
       return;
     }
   
@@ -272,6 +323,7 @@ const TakeQuizPage = () => {
         student_id: studentId,
         questionnaire_id: questionnaireId,
         answers,
+        session_id: sessionId
       });
       
       setScore(res.data.score);
@@ -312,6 +364,7 @@ const TakeQuizPage = () => {
         icon: 'success',
         title: '¡Evaluación completada!',
         html: `<p><strong>Tu calificación:</strong> ${res.data.score}</p>
+               ${typeof res.data.percentage !== 'undefined' ? `<p><strong>Porcentaje:</strong> ${res.data.percentage}% (${res.data.correctCount}/${res.data.totalQuestions})</p>` : ''}
                ${res.data.phaseAverage ? `<p><strong>Promedio actual de la fase:</strong> ${res.data.phaseAverage}</p>` : ''}
                <p>La evaluación ha sido registrada correctamente.</p>`,
         confirmButtonText: 'Volver al Dashboard',
@@ -339,6 +392,12 @@ const TakeQuizPage = () => {
   return (
     <div className="p-4">
       <h2 className="text-xl mb-4">Presentar evaluación: 👩‍💻 {user?.name}</h2>
+      
+      {remainingSeconds !== null && questions.length > 0 && !submitted && (
+        <div className="alert alert-warning">
+          <strong>Tiempo restante:</strong> {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, '0')}
+        </div>
+      )}
 
       <div className="mb-4">
         <label className="mr-2">Filtrar por fase:</label>
@@ -349,6 +408,8 @@ const TakeQuizPage = () => {
             const phase = e.target.value ? parseInt(e.target.value) : null;
             setSelectedPhase(phase);
             setQuestionnaireId(''); // Limpiar selección de cuestionario al cambiar fase
+            setSessionId(null);
+            setRemainingSeconds(null);
             
             // Verificar si hay cuestionarios para la fase seleccionada
             const filteredQuestionnaires = questionnaires.filter(q => phase ? q.phase === phase : true);
@@ -650,6 +711,8 @@ const TakeQuizPage = () => {
                     setAnswers({});
                     setCurrentQuestionIndex(0);
                     setCurrentQuestionnaire(null);
+                    setSessionId(null);
+                    setRemainingSeconds(null);
                     setError(null);
                   }
                 }}

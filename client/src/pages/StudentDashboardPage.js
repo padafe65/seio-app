@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { Link, useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import LearningResourcesSection from '../components/educational-resources/LearningResourcesSection';
+import StudentGuidesPanel from '../components/educational-resources/StudentGuidesPanel';
 import Swal from 'sweetalert2';
 
 const StudentDashboardPage = () => {
@@ -381,11 +382,23 @@ const StudentDashboardPage = () => {
                 <Link to="/student/improvement" className="btn btn-success">
                   Plan de Mejora
                 </Link>
+                <Link to="/student/prueba-saber/resultados" className="btn btn-warning">
+                  Resultados Prueba Saber
+                </Link>
               </div>
             </div>
           </div>
         </div>
       </div>
+      
+      {/* Guías de Estudio */}
+      {studentData?.id && (
+        <div className="row mb-4">
+          <div className="col-12">
+            <StudentGuidesPanel studentData={studentData} />
+          </div>
+        </div>
+      )}
       
       {/* Recursos de Aprendizaje */}
       {studentData?.id && (

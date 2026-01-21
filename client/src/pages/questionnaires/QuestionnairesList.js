@@ -216,7 +216,8 @@ const QuestionnairesList = () => {
                     <th>Grado</th>
                     <th>Fase</th>
                     <th>Curso</th>
-                    <th>Preguntas</th>
+                    <th>Total preguntas</th>
+                    <th>A responder</th>
                     <th>Creado por</th>
                     <th>Fecha</th>
                     <th className="text-end">Acciones</th>
@@ -240,6 +241,15 @@ const QuestionnairesList = () => {
                           <span className={`badge bg-${getQuestionCountColor(questionnaire.question_count)}`}>
                             {questionnaire.question_count}
                           </span>
+                        </td>
+                        <td>
+                          {questionnaire.questions_to_answer ? (
+                            <span className="badge bg-info">
+                              {questionnaire.questions_to_answer}
+                            </span>
+                          ) : (
+                            <span className="text-muted">Todas</span>
+                          )}
                         </td>
                         <td>{questionnaire.created_by_name}</td>
                         <td>{new Date(questionnaire.created_at).toLocaleDateString()}</td>
@@ -269,7 +279,7 @@ const QuestionnairesList = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="10" className="text-center py-3">
+                      <td colSpan="11" className="text-center py-3">
                         No se encontraron cuestionarios
                       </td>
                     </tr>

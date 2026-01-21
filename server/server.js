@@ -4,7 +4,6 @@ import cors from 'cors';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import multer from 'multer';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { dirname } from 'path';
@@ -21,6 +20,7 @@ import phaseEvaluationRoutes from './routes/phaseEvaluation.js';
 import questionnaireIndicatorsRoutes from './routes/questionnaireIndicators.js';
 import indicatorEvaluationRoutes from './routes/indicatorEvaluation.js';
 import educationalResourcesRoutes from './routes/educationalResources.js';
+import pruebaSaberRoutes from './routes/pruebaSaberRoutes.js';
 
 // Middleware imports
 import { verifyToken, isAdmin, isSuperAdmin } from './middleware/authMiddleware.js';
@@ -345,6 +345,7 @@ app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
 app.use('/api/indicators', indicatorsRoutes);
 app.use('/api', improvementPlansRoutes);
 app.use('/api/educational-resources', educationalResourcesRoutes);
+app.use('/api/prueba-saber', pruebaSaberRoutes);
 app.use('/api/messages', messageRoutes);
 
 // ⚠️ usersRoutes DEBE ir DESPUÉS de definir las rutas de auth
@@ -352,37 +353,6 @@ app.use('/api/messages', messageRoutes);
 // Si va antes, interceptará /api/auth/login
 app.use('/api/admin', usersRoutes);
 
-// Configurar multer
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const nombre = `comprobante_${Date.now()}${ext}`;
-    cb(null, nombre);
-  }
-});
-
-const upload = multer({ storage });
-
-// 🚨 ESTA ES LA RUTA QUE DEBES TENER
-app.post('/api/subir-comprobante/:id', upload.single('imagen'), async (req, res) => {
-  try {
-    const rifaId = req.params.id;
-    const imagenNombre = req.file.filename;
-
-    const [result] = await db.query(
-      'UPDATE numeros_jugados SET estado = "Cancelado", imagen_pago = ? WHERE id = ?',
-      [imagenNombre, rifaId]
-    );
-
-    res.json({ mensaje: '✔️ Comprobante subido y estado actualizado', imagen: imagenNombre });
-  } catch (err) {
-    console.error('❌ Error actualizando comprobante:', err);
-    res.status(500).json({ error: 'Error en el servidor' });
-  }
-});
 
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;

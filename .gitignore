@@ -122,6 +122,6 @@ coverage/
 # ===========================================
 # ARCHIVOS DE UPLOAD (si contienen datos sensibles)
 # ===========================================
-# Descomenta si no quieres subir archivos subidos por usuarios
-# server/uploads/
-# client/public/uploads/
+# No subir archivos subidos por usuarios
+server/uploads/
+client/public/uploads/

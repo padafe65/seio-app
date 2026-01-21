@@ -37,14 +37,14 @@ router.get('/', verifyToken, async (req, res) => {
     // Construir la consulta base
     let query = `
       SELECT 
-        q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
+        q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.questions_to_answer, q.time_limit_minutes, q.created_by, q.description,
         u.name as created_by_name${institutionField},
-        c.name as course_name,
+        COALESCE(c.name, 'Todos los cursos') as course_name,
         (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
       FROM questionnaires q
       JOIN teachers t ON q.created_by = t.id
       JOIN users u ON t.user_id = u.id
-      JOIN courses c ON q.course_id = c.id
+      LEFT JOIN courses c ON q.course_id = c.id
     `;
     
     // Si hay un studentId en el query string (para otros roles que consultan por estudiante)
@@ -159,8 +159,9 @@ router.get('/', verifyToken, async (req, res) => {
         const teacherFilterParams = [...teacherIds];
         
         // Filtrar por curso del estudiante (solo para cuestionarios de docentes asignados)
+        // Incluir cuestionarios "para todo el grado" (course_id IS NULL)
         if (studentCourseId) {
-          teacherFilterCondition += ' AND q.course_id = ?';
+          teacherFilterCondition += ' AND (q.course_id = ? OR q.course_id IS NULL)';
           teacherFilterParams.push(studentCourseId);
         }
         
@@ -267,12 +268,13 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     const [rows] = await pool.query(`
       SELECT 
-        q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.created_by, q.description,
+        q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.questions_to_answer, q.time_limit_minutes, q.created_by, q.description,
         u.name as created_by_name,
-        c.name as course_name
+        COALESCE(c.name, 'Todos los cursos') as course_name
       FROM questionnaires q
-      JOIN users u ON q.created_by = u.id
-      JOIN courses c ON q.course_id = c.id
+      JOIN teachers t ON q.created_by = t.id
+      JOIN users u ON t.user_id = u.id
+      LEFT JOIN courses c ON q.course_id = c.id
       WHERE q.id = ?
     `, [id]);
     
@@ -307,16 +309,54 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
   try {
     // created_by debe ser el user_id del docente autenticado
     const created_by = req.user.id;
-    const { title, subject, category, grade, phase, course_id, description } = req.body;
+    const { title, subject, category, grade, phase, course_id, description, questions_to_answer, time_limit_minutes } = req.body;
     
     console.log('Datos recibidos para crear cuestionario:', req.body);
     
-    // Validar que todos los campos necesarios estén presentes
-    if (!title || !grade || !phase || !course_id || !description) {
-      console.log('Faltan campos requeridos:', { title, subject, category, grade, phase, course_id, description });
+    // Normalizar course_id:
+    // - null/undefined => "Todos los cursos"
+    // - 'ALL'/'all' => null
+    // - '' => null
+    const normalizedCourseId =
+      course_id === 'ALL' || course_id === 'all' || course_id === '' || course_id === null || course_id === undefined
+        ? null
+        : course_id;
+
+    // Normalizar questions_to_answer (NULL => todas las preguntas)
+    const normalizedQuestionsToAnswer =
+      questions_to_answer === '' || questions_to_answer === null || questions_to_answer === undefined
+        ? null
+        : parseInt(questions_to_answer, 10);
+
+    if (normalizedQuestionsToAnswer !== null) {
+      if (Number.isNaN(normalizedQuestionsToAnswer) || normalizedQuestionsToAnswer <= 0) {
+        return res.status(400).json({
+          message: 'questions_to_answer debe ser un entero positivo o NULL',
+          received: questions_to_answer
+        });
+      }
+    }
+
+    const normalizedTimeLimitMinutes =
+      time_limit_minutes === '' || time_limit_minutes === null || time_limit_minutes === undefined
+        ? null
+        : parseInt(time_limit_minutes, 10);
+
+    if (normalizedTimeLimitMinutes !== null) {
+      if (Number.isNaN(normalizedTimeLimitMinutes) || normalizedTimeLimitMinutes <= 0) {
+        return res.status(400).json({
+          message: 'time_limit_minutes debe ser un entero positivo o NULL',
+          received: time_limit_minutes
+        });
+      }
+    }
+
+    // Validar que todos los campos necesarios estén presentes (description es opcional)
+    if (!title || !grade || !phase) {
+      console.log('Faltan campos requeridos:', { title, subject, category, grade, phase, course_id: normalizedCourseId, description, questions_to_answer: normalizedQuestionsToAnswer });
       return res.status(400).json({ 
         message: 'Faltan campos requeridos', 
-        received: { title, subject, category, grade, phase, course_id, description } 
+        received: { title, subject, category, grade, phase, course_id: normalizedCourseId, description, questions_to_answer: normalizedQuestionsToAnswer } 
       });
     }
     
@@ -328,10 +368,39 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
     // Asegurar que la combinación subject-category existe en subject_categories
     await ensureSubjectCategoryExists(finalSubject, category);
     
+    const { is_prueba_saber, prueba_saber_level } = req.body;
+    
+    // Validar nivel de Prueba Saber si es tipo Prueba Saber
+    let finalPruebaSaberLevel = null;
+    if (is_prueba_saber === 'true' || is_prueba_saber === true) {
+      const validLevels = [3, 5, 9, 11];
+      const level = parseInt(prueba_saber_level);
+      if (!validLevels.includes(level)) {
+        return res.status(400).json({ 
+          message: 'El nivel de Prueba Saber debe ser 3, 5, 9 o 11',
+          received: prueba_saber_level
+        });
+      }
+      finalPruebaSaberLevel = level;
+    }
+    
     const [result] = await pool.query(
-      `INSERT INTO questionnaires (title, subject, category, grade, phase, course_id, created_by, description) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [title, finalSubject || null, category || null, grade, phase, course_id, teacherId, description]
+      `INSERT INTO questionnaires (title, subject, category, grade, phase, course_id, questions_to_answer, time_limit_minutes, created_by, description, is_prueba_saber, prueba_saber_level) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        title, 
+        finalSubject || null, 
+        category || null, 
+        grade, 
+        phase, 
+        normalizedCourseId, 
+        normalizedQuestionsToAnswer,
+        normalizedTimeLimitMinutes,
+        teacherId, 
+        description || null,
+        is_prueba_saber === 'true' || is_prueba_saber === true ? 1 : 0,
+        finalPruebaSaberLevel
+      ]
     );
     
     res.status(201).json({ 
@@ -348,16 +417,77 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, subject, category, grade, phase, course_id, description } = req.body;
+    const { title, subject, category, grade, phase, course_id, description, is_prueba_saber, prueba_saber_level, questions_to_answer, time_limit_minutes } = req.body;
+
+    const normalizedCourseId =
+      course_id === 'ALL' || course_id === 'all' || course_id === '' || course_id === null || course_id === undefined
+        ? null
+        : course_id;
+
+    const normalizedQuestionsToAnswer =
+      questions_to_answer === '' || questions_to_answer === null || questions_to_answer === undefined
+        ? null
+        : parseInt(questions_to_answer, 10);
+
+    if (normalizedQuestionsToAnswer !== null) {
+      if (Number.isNaN(normalizedQuestionsToAnswer) || normalizedQuestionsToAnswer <= 0) {
+        return res.status(400).json({
+          message: 'questions_to_answer debe ser un entero positivo o NULL',
+          received: questions_to_answer
+        });
+      }
+    }
+
+    const normalizedTimeLimitMinutes =
+      time_limit_minutes === '' || time_limit_minutes === null || time_limit_minutes === undefined
+        ? null
+        : parseInt(time_limit_minutes, 10);
+
+    if (normalizedTimeLimitMinutes !== null) {
+      if (Number.isNaN(normalizedTimeLimitMinutes) || normalizedTimeLimitMinutes <= 0) {
+        return res.status(400).json({
+          message: 'time_limit_minutes debe ser un entero positivo o NULL',
+          received: time_limit_minutes
+        });
+      }
+    }
     
     // Asegurar que la combinación subject-category existe en subject_categories
     await ensureSubjectCategoryExists(subject, category);
     
+    // Validar nivel de Prueba Saber si es tipo Prueba Saber
+    let finalPruebaSaberLevel = null;
+    if (is_prueba_saber === 'true' || is_prueba_saber === true) {
+      const validLevels = [3, 5, 9, 11];
+      const level = parseInt(prueba_saber_level);
+      if (!validLevels.includes(level)) {
+        return res.status(400).json({ 
+          message: 'El nivel de Prueba Saber debe ser 3, 5, 9 o 11',
+          received: prueba_saber_level
+        });
+      }
+      finalPruebaSaberLevel = level;
+    }
+    
     const [result] = await pool.query(
       `UPDATE questionnaires 
-       SET title = ?, subject = ?, category = ?, grade = ?, phase = ?, course_id = ?, description = ? 
+       SET title = ?, subject = ?, category = ?, grade = ?, phase = ?, course_id = ?, questions_to_answer = ?, time_limit_minutes = ?, description = ?, 
+           is_prueba_saber = ?, prueba_saber_level = ? 
        WHERE id = ?`,
-      [title, subject || null, category || null, grade, phase, course_id, description, id]
+      [
+        title, 
+        subject || null, 
+        category || null, 
+        grade, 
+        phase, 
+        normalizedCourseId,
+        normalizedQuestionsToAnswer,
+        normalizedTimeLimitMinutes,
+        description || null,
+        is_prueba_saber === 'true' || is_prueba_saber === true ? 1 : 0,
+        finalPruebaSaberLevel,
+        id
+      ]
     );
     
     if (result.affectedRows === 0) {

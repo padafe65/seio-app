@@ -8,10 +8,19 @@ const Navbar = () => {
   const { authToken, logout, user, isAuthReady } = useAuth();
   const navigate = useNavigate();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
     console.log("🔄 Cambios en authToken:", authToken);
   }, [authToken]);
+  
+  const toggleMenu = () => {
+    setIsMenuOpen(prev => !prev);
+  };
+  
+  const closeMenu = () => {
+    setIsMenuOpen(false);
+  };
 
   // Obtener contador de mensajes no leídos
   useEffect(() => {
@@ -35,13 +44,20 @@ const Navbar = () => {
   const handleLogout = () => {
     logout();
     
-    // Prevenir navegación hacia atrás después de logout
-    window.history.pushState(null, '', '/');
-    window.onpopstate = function() {
-      window.history.pushState(null, '', '/');
-    };
+    // Limpiar cualquier listener previo de onpopstate
+    const originalOnPopState = window.onpopstate;
+    window.onpopstate = null;
     
-    navigate('/');
+    // Navegar al login y limpiar historial
+    window.history.replaceState(null, '', '/');
+    navigate('/', { replace: true });
+    
+    // Restaurar comportamiento normal del navegador después de un breve delay
+    setTimeout(() => {
+      if (window.onpopstate === null) {
+        window.onpopstate = originalOnPopState;
+      }
+    }, 100);
   };
 
   // Función para determinar la ruta del dashboard según el rol
@@ -64,30 +80,29 @@ const Navbar = () => {
         <button
           className="navbar-toggler"
           type="button"
-          data-bs-toggle="collapse"
-          data-bs-target="#navbarNav"
+          onClick={toggleMenu}
           aria-controls="navbarNav"
-          aria-expanded="false"
+          aria-expanded={isMenuOpen}
           aria-label="Toggle navigation"
         >
           <span className="navbar-toggler-icon"></span>
         </button>
 
-        <div className="collapse navbar-collapse" id="navbarNav">
+        <div className={`collapse navbar-collapse ${isMenuOpen ? 'show' : ''}`} id="navbarNav">
           <ul className="navbar-nav ms-auto">
             {authToken && user ? (
               <>
                 <li className="nav-item">
-                  <Link className="nav-link" to={getDashboardRoute()}>Inicio</Link>
+                  <Link className="nav-link" to={getDashboardRoute()} onClick={closeMenu}>Inicio</Link>
                 </li>
                 <li className="nav-item">
-                  <Link className="nav-link" to="/admin">Administración</Link>
+                  <Link className="nav-link" to="/admin" onClick={closeMenu}>Administración</Link>
                 </li>
                 
                 {/* ✅ Enlace a Indicadores solo para docente, administrador y super_administrador */}
                 {['docente', 'administrador', 'super_administrador'].includes(user?.role) && (
                   <li className="nav-item">
-                    <NavLink className="nav-link" to="/indicators">Indicadores</NavLink>
+                    <NavLink className="nav-link" to="/indicators" onClick={closeMenu}>Indicadores</NavLink>
                   </li>
                 )}
 
@@ -97,6 +112,7 @@ const Navbar = () => {
                     <Link 
                       className="nav-link position-relative" 
                       to={user.role === 'estudiante' ? '/student/messages' : '/messages'}
+                      onClick={closeMenu}
                     >
                       <Mail size={18} className="me-1" />
                       Mensajes
@@ -112,13 +128,13 @@ const Navbar = () => {
                 {user?.role === 'docente' && (
                   <>
                     <li className="nav-item">
-                      <Link className="btn btn-primary d-flex align-items-center ms-2" to="/crear-pregunta">
+                      <Link className="btn btn-primary d-flex align-items-center ms-2" to="/crear-pregunta" onClick={closeMenu}>
                         <Pencil size={16} className="me-1" />
                         Crear Pregunta
                       </Link>
                     </li>
                     <li className="nav-item">
-                      <Link className="btn btn-info d-flex align-items-center ms-2" to="/mis-estudiantes">
+                      <Link className="btn btn-info d-flex align-items-center ms-2" to="/mis-estudiantes" onClick={closeMenu}>
                         <Users size={16} className="me-1" />
                         Mis Estudiantes
                       </Link>
@@ -126,16 +142,16 @@ const Navbar = () => {
                   </>
                 )}
                 <li className="nav-item">
-                  <button className="btn btn-danger ms-3" onClick={handleLogout}>Cerrar sesión</button>
+                  <button className="btn btn-danger ms-3" onClick={() => { closeMenu(); handleLogout(); }}>Cerrar sesión</button>
                 </li>
               </>
             ) : (
               <>
                 <li className="nav-item">
-                  <Link className="nav-link" to="/">Iniciar Sesión</Link>
+                  <Link className="nav-link" to="/" onClick={closeMenu}>Iniciar Sesión</Link>
                 </li>
                 <li className="nav-item">
-                  <Link className="nav-link" to="/registro">Registrarse</Link>
+                  <Link className="nav-link" to="/registro" onClick={closeMenu}>Registrarse</Link>
                 </li>
               </>
             )}

@@ -1,4 +1,4 @@
-// backend-rifa/routes/auth.js
+// server/routes/auth.js
 import express from 'express';
 import { verifyToken } from '../middleware/authMiddleware.js';
 

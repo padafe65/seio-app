@@ -6,7 +6,6 @@ import { AuthProvider, useAuth } from './context/AuthContext.js';
 import Navbar from './components/Navbar.js';
 import Login from './pages/Login.js';
 import Registro from './pages/Registro.js';
-import Admin from './pages/Admin.js';
 import './styles/styles.css';
 import ResetPassword from './pages/ResetPassword.js';
 import CompleteStudent from './components/CompleteStudent.js';
@@ -45,6 +44,7 @@ import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
 import StudentIndicators from './pages/indicators/StudentIndicators';
 import StudentEducationalResources from './pages/students/StudentEducationalResources.js';
+import StudentGuidesPage from './pages/StudentGuidesPage.js';
 import ImprovementPlansList from './pages/improvement-plans/ImprovementPlansList.js';
 import ImprovementPlanForm from './pages/improvement-plans/ImprovementPlanForm.js';
 import ImprovementPlanDetail from './pages/improvement-plans/ImprovementPlanDetail.js';
@@ -57,6 +57,11 @@ import UsersManagement from './pages/users/UsersManagement.js';
 import UserForm from './pages/users/UserForm.js';
 import EducationalResourcesList from './pages/educational-resources/EducationalResourcesList.js';
 import EducationalResourceForm from './pages/educational-resources/EducationalResourceForm.js';
+import UploadGuideForm from './pages/educational-resources/UploadGuideForm.js';
+import TeacherGuidesManage from './pages/educational-resources/TeacherGuidesManage.js';
+import TeacherPruebaSaberPage from './pages/prueba-saber/TeacherPruebaSaberPage.js';
+import StudentPruebaSaberPage from './pages/prueba-saber/StudentPruebaSaberPage.js';
+import PruebaSaberResultsPage from './pages/prueba-saber/PruebaSaberResultsPage.js';
 import LicensesManagement from './pages/licenses/LicensesManagement.js';
 import MessagesPage from './pages/messages/MessagesPage.js';
 
@@ -84,13 +89,30 @@ function IdleTimerContainer() {
       confirmButtonColor: '#198754',
       cancelButtonColor: '#d33',
       timer: promptBeforeIdle,
-      timerProgressBar: true
+      timerProgressBar: true,
+      allowOutsideClick: false,
+      allowEscapeKey: false
     }).then((result) => {
       if (result.isConfirmed) {
-        // Usuario quiere continuar
-        idleTimerRef.current.reset();
+        // Usuario quiere continuar - verificar que el timer existe antes de resetear
+        if (idleTimerRef.current) {
+          try {
+            idleTimerRef.current.reset();
+          } catch (error) {
+            console.error('Error al resetear el timer:', error);
+            // Si falla el reset, recargar la página para mantener la sesión
+            window.location.reload();
+          }
+        } else {
+          // Si el ref es null, recargar la página
+          console.warn('Timer ref es null, recargando página...');
+          window.location.reload();
+        }
+      } else if (result.isDismissed && result.dismiss === Swal.DismissReason.timer) {
+        // El tiempo expiró
+        handleLogout();
       } else {
-        // Usuario eligió cerrar sesión o el tiempo expiró
+        // Usuario eligió cerrar sesión
         handleLogout();
       }
     });
@@ -108,10 +130,18 @@ function IdleTimerContainer() {
       icon: 'info',
       confirmButtonColor: '#3085d6',
       timer: 3000,
-      timerProgressBar: true
+      timerProgressBar: true,
+      allowOutsideClick: false,
+      allowEscapeKey: false
     }).then(() => {
       logout();
-      navigate('/');
+      // Limpiar historial y navegar a login
+      window.history.replaceState(null, '', '/');
+      navigate('/', { replace: true });
+      // Forzar recarga para limpiar cualquier estado inconsistente
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 100);
     });
   };
   
@@ -198,7 +228,7 @@ function AppContent() {
     const [show, setShow] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
     const handleClose = () => setShow(false);
-    const handleShow = () => setShow(true);
+    const handleToggle = () => setShow(prev => !prev);
     
     useEffect(() => {
       const handleResize = () => {
@@ -211,11 +241,12 @@ function AppContent() {
     
     return (
       <div>
-        {/* Botón para mostrar sidebar en móviles */}
+        {/* Botón para mostrar/ocultar sidebar en móviles */}
         <button 
           className="btn btn-dark d-md-none position-fixed" 
           style={{ top: '70px', left: '10px', zIndex: 1030 }} 
-          onClick={handleShow}
+          onClick={handleToggle}
+          aria-label="Toggle menu"
         >
           <Menu size={20} />
         </button>
@@ -281,6 +312,21 @@ function AppContent() {
                   <Mail size={18} className="me-2" /> Mensajes
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/subir-guia" className="nav-link text-white d-flex align-items-center">
+                  <GraduationCap size={18} className="me-2" /> Subir Guía de Estudio
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/mis-guias" className="nav-link text-white d-flex align-items-center">
+                  <FileText size={18} className="me-2" /> Mis Guías
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/prueba-saber" className="nav-link text-white d-flex align-items-center">
+                  <GraduationCap size={18} className="me-2" /> Prueba Saber
+                </Link>
+              </li>
 
               <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
@@ -331,6 +377,26 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/messages" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/subir-guia" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <GraduationCap size={18} className="me-2" /> Subir Guía de Estudio
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/mis-guias" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <FileText size={18} className="me-2" /> Mis Guías
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/prueba-saber" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <GraduationCap size={18} className="me-2" /> Prueba Saber
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/prueba-saber/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <GraduationCap size={18} className="me-2" /> Resultados Prueba Saber
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -410,6 +476,17 @@ function AppContent() {
             
             {/* Ruta para mensajería */}
             <Route path="/messages" element={<MessagesPage />} />
+            
+            {/* Rutas para guías de estudio */}
+            <Route path="/subir-guia" element={<UploadGuideForm />} />
+            <Route path="/mis-guias" element={<TeacherGuidesManage />} />
+
+            {/* Prueba Saber (docente) */}
+            <Route path="/prueba-saber" element={<TeacherPruebaSaberPage />} />
+            <Route path="/prueba-saber/resultados" element={<PruebaSaberResultsPage />} />
+
+            {/* Fallback interno: evita pantalla en blanco */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
 
           </Routes>
         </div>
@@ -421,15 +498,16 @@ function AppContent() {
   function SuperAdminDashboardLayout() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
-    const handleShow = () => setShow(true);
+    const handleToggle = () => setShow(prev => !prev);
     
     return (
       <div>
-        {/* Botón para mostrar sidebar en móviles */}
+        {/* Botón para mostrar/ocultar sidebar en móviles */}
         <button 
           className="btn btn-dark d-md-none position-fixed" 
           style={{ top: '70px', left: '10px', zIndex: 1030 }} 
-          onClick={handleShow}
+          onClick={handleToggle}
+          aria-label="Toggle menu"
         >
           <Menu size={20} />
         </button>
@@ -680,15 +758,16 @@ function AppContent() {
   function StudentDashboardLayout() {
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
-    const handleShow = () => setShow(true);
+    const handleToggle = () => setShow(prev => !prev);
     
     return (
       <div>
-        {/* Botón para mostrar sidebar en móviles */}
+        {/* Botón para mostrar/ocultar sidebar en móviles */}
         <button 
           className="btn btn-dark d-md-none position-fixed" 
           style={{ top: '70px', left: '10px', zIndex: 1030 }} 
-          onClick={handleShow}
+          onClick={handleToggle}
+          aria-label="Toggle menu"
         >
           <Menu size={20} />
         </button>
@@ -726,6 +805,21 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/student/messages" className="nav-link text-white d-flex align-items-center">
                   <Mail size={18} className="me-2" /> Mensajes
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/guides" className="nav-link text-white d-flex align-items-center">
+                  <FileText size={18} className="me-2" /> Guías de Estudio
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/prueba-saber" className="nav-link text-white d-flex align-items-center">
+                  <GraduationCap size={18} className="me-2" /> Prueba Saber
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/prueba-saber/resultados" className="nav-link text-white d-flex align-items-center">
+                  <GraduationCap size={18} className="me-2" /> Resultados Prueba Saber
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -775,6 +869,21 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/student/guides" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <FileText size={18} className="me-2" /> Guías de Estudio
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/prueba-saber" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <GraduationCap size={18} className="me-2" /> Prueba Saber
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/student/prueba-saber/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <GraduationCap size={18} className="me-2" /> Resultados Prueba Saber
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/student/educational-resources" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BookOpen size={18} className="me-2" /> Recursos Educativos
                 </Link>
@@ -797,6 +906,9 @@ function AppContent() {
             <Route path="/indicators" element={<StudentIndicators />} />
             <Route path="/improvement" element={<ImprovementPage />} />
             <Route path="/messages" element={<MessagesPage />} />
+            <Route path="/guides" element={<StudentGuidesPage />} />
+            <Route path="/prueba-saber" element={<StudentPruebaSaberPage />} />
+            <Route path="/prueba-saber/resultados" element={<PruebaSaberResultsPage />} />
             <Route path="/educational-resources" element={<StudentEducationalResources />} />
             <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
           </Routes>
@@ -815,9 +927,6 @@ function AppContent() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/CompleteStudent" element={<CompleteStudent />} />
         <Route path="/CompleteTeacher" element={<CompleteTeacher />} />
-        
-        {/* Rutas de admin */}
-        <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
         
         {/* Rutas de super_administrador con sidebar */}
         <Route path="/*" element={

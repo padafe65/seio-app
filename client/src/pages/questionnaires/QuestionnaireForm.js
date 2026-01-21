@@ -1,7 +1,7 @@
 // src/components/QuestionnaireForm.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation, Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../config/axios';
 import { useAuth } from '../../context/AuthContext';
 import Modal from 'react-bootstrap/Modal';
 import Button from 'react-bootstrap/Button';
@@ -12,7 +12,6 @@ import QuestionnaireIndicatorsManager from '../../components/QuestionnaireIndica
 import IndicatorEvaluationManager from '../../components/IndicatorEvaluationManager';
 
 const MySwal = withReactContent(Swal);
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const QuestionnaireForm = () => {
   const { id } = useParams();
@@ -33,7 +32,11 @@ const QuestionnaireForm = () => {
     grade: '',
     phase: '',
     course_id: '',
-    created_by: user?.id
+    questions_to_answer: '',
+    time_limit_minutes: '',
+    created_by: user?.id,
+    is_prueba_saber: false,
+    prueba_saber_level: ''
   });
   
   const [courses, setCourses] = useState([]);
@@ -61,8 +64,39 @@ const QuestionnaireForm = () => {
     grade: '',
     phase: '',
     course_id: '',
+    questions_to_answer: '',
+    time_limit_minutes: '',
     created_by: user?.id
   });
+
+  // Selector de tiempo (minutos)
+  const TIME_LIMIT_OPTIONS = [15, 20, 30, 45, 60, 75, 90, 105, 120, 135];
+  const getNearestTimeOption = (minutes) => {
+    const m = parseInt(minutes, 10);
+    if (!m || Number.isNaN(m) || m <= 0) return '';
+    let best = TIME_LIMIT_OPTIONS[0];
+    let bestDiff = Math.abs(best - m);
+    for (const opt of TIME_LIMIT_OPTIONS) {
+      const diff = Math.abs(opt - m);
+      if (diff < bestDiff) {
+        best = opt;
+        bestDiff = diff;
+      }
+    }
+    return String(best);
+  };
+
+  // Sugerencia de tiempo: normal (N*2 + 10), Prueba Saber (N*3 + 10)
+  const computeSuggestedMinutes = (n, isPruebaSaber) => {
+    const N = parseInt(n, 10);
+    if (!N || Number.isNaN(N) || N <= 0) return null;
+    const perQuestion = isPruebaSaber ? 3 : 2;
+    return (N * perQuestion) + 10;
+  };
+
+  // Control: si el docente cambia manualmente el tiempo, no sobreescribirlo automáticamente
+  const [isTimeAutoForm, setIsTimeAutoForm] = useState(true);
+  const [isTimeAutoModal, setIsTimeAutoModal] = useState(true);
   
   // Estado para nueva categoría en el modal
   const [isCreatingModalCategory, setIsCreatingModalCategory] = useState(false);
@@ -85,17 +119,17 @@ const QuestionnaireForm = () => {
       setLoading(true);
       try {
         // Cargar cursos
-        const coursesResponse = await axios.get(`${API_URL}/api/courses`);
+        const coursesResponse = await api.get(`/courses`);
         setCourses(coursesResponse.data);
         
         // Cargar todas las materias disponibles
-        const subjectsResponse = await axios.get(`${API_URL}/api/subject-categories-list/subjects`);
+        const subjectsResponse = await api.get(`/subject-categories-list/subjects`);
         let loadedSubjects = subjectsResponse.data;
         
         // Cargar materia del docente (para determinar la materia por defecto)
         let teacherSubject = 'Matematicas';
         if (user?.id) {
-          const subjectResponse = await axios.get(`${API_URL}/api/teacher/subject/${user.id}`);
+          const subjectResponse = await api.get(`/teacher/subject/${user.id}`);
           teacherSubject = subjectResponse.data.subject || 'Matematicas';
           setSubjectName(teacherSubject);
           
@@ -113,7 +147,7 @@ const QuestionnaireForm = () => {
             }));
             
             // Cargar categorías basadas en la materia del docente
-            const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${teacherSubject}`);
+            const categoriesResponse = await api.get(`/subject-categories/${teacherSubject}`);
             setCategories(categoriesResponse.data);
           }
         }
@@ -122,7 +156,7 @@ const QuestionnaireForm = () => {
         
         // Si estamos editando, cargar datos del cuestionario
         if (isEditing) {
-          const questionnaireResponse = await axios.get(`${API_URL}/api/questionnaires/${id}`);
+          const questionnaireResponse = await api.get(`/questionnaires/${id}`);
           
           // Verificar que la respuesta tenga la estructura esperada
           if (questionnaireResponse.data && questionnaireResponse.data.questionnaire) {
@@ -176,13 +210,17 @@ const QuestionnaireForm = () => {
               category: extractedCategory || '',
               grade: String(questionnaireData.grade) || '',
               phase: String(questionnaireData.phase) || '',
-              course_id: String(questionnaireData.course_id) || '',
-              created_by: user?.id
+              course_id: questionnaireData.course_id == null ? 'ALL' : String(questionnaireData.course_id),
+              questions_to_answer: questionnaireData.questions_to_answer == null ? '' : String(questionnaireData.questions_to_answer),
+              time_limit_minutes: questionnaireData.time_limit_minutes == null ? '' : String(questionnaireData.time_limit_minutes),
+              created_by: user?.id,
+              is_prueba_saber: questionnaireData.is_prueba_saber === 1 || questionnaireData.is_prueba_saber === true || false,
+              prueba_saber_level: questionnaireData.prueba_saber_level || ''
             });
             
             // Si el cuestionario tiene materia, cargar sus categorías
             if (extractedSubject) {
-              const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${extractedSubject}`);
+              const categoriesResponse = await api.get(`/subject-categories/${extractedSubject}`);
               const loadedCategories = categoriesResponse.data;
               
               // Verificar si la categoría actual del cuestionario está en la lista
@@ -249,7 +287,7 @@ const QuestionnaireForm = () => {
     const loadCategories = async () => {
       if (formData.subject) {
         try {
-          const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${formData.subject}`);
+          const categoriesResponse = await api.get(`/subject-categories/${formData.subject}`);
           setCategories(categoriesResponse.data);
         } catch (error) {
           console.error('Error al cargar categorías:', error);
@@ -274,10 +312,26 @@ const QuestionnaireForm = () => {
         category: '' // Limpiar categoría al cambiar materia
       }));
     } else {
-      setFormData(prev => ({
-        ...prev,
-        [name]: value
-      }));
+      setFormData(prev => {
+        const next = { ...prev, [name]: value };
+
+        // Si el docente cambia el tiempo manualmente, desactivar auto
+        if (name === 'time_limit_minutes') {
+          setIsTimeAutoForm(false);
+        }
+
+        // Si cambia N o Prueba Saber, sugerir tiempo (si auto está activo)
+        if (name === 'questions_to_answer' || name === 'is_prueba_saber') {
+          if (isTimeAutoForm) {
+            const n = name === 'questions_to_answer' ? value : prev.questions_to_answer;
+            const isPS = name === 'is_prueba_saber' ? value : prev.is_prueba_saber;
+            const suggested = computeSuggestedMinutes(n, Boolean(isPS));
+            next.time_limit_minutes = suggested ? getNearestTimeOption(suggested) : '';
+          }
+        }
+
+        return next;
+      });
     }
   };
   
@@ -286,7 +340,7 @@ const QuestionnaireForm = () => {
     const loadModalCategories = async () => {
       if (newQuestionnaireData.subject) {
         try {
-          const categoriesResponse = await axios.get(`${API_URL}/api/subject-categories/${newQuestionnaireData.subject}`);
+          const categoriesResponse = await api.get(`/subject-categories/${newQuestionnaireData.subject}`);
           setCategories(categoriesResponse.data);
         } catch (error) {
           console.error('Error al cargar categorías del modal:', error);
@@ -310,11 +364,22 @@ const QuestionnaireForm = () => {
         created_by: user?.id
       }));
     } else {
-      setNewQuestionnaireData(prev => ({
-        ...prev,
-        [name]: value,
-        created_by: user?.id
-      }));
+      setNewQuestionnaireData(prev => {
+        const next = { ...prev, [name]: value, created_by: user?.id };
+
+        if (name === 'time_limit_minutes') {
+          setIsTimeAutoModal(false);
+        }
+
+        if (name === 'questions_to_answer') {
+          if (isTimeAutoModal) {
+            const suggested = computeSuggestedMinutes(value, false);
+            next.time_limit_minutes = suggested ? getNearestTimeOption(suggested) : '';
+          }
+        }
+
+        return next;
+      });
     }
   };
   
@@ -333,7 +398,7 @@ const QuestionnaireForm = () => {
       const fullCategoryName = `${subjectName}_${newCategory.trim()}`;
       
       // Crear la nueva categoría
-      await axios.post(`${API_URL}/api/subject-categories`, {
+      await api.post(`/subject-categories`, {
         subject: subjectName,
         category: fullCategoryName
       });
@@ -382,7 +447,7 @@ const QuestionnaireForm = () => {
       const fullCategoryName = `${subjectName}_${newModalCategory.trim()}`;
       
       // Crear la nueva categoría
-      await axios.post(`${API_URL}/api/subject-categories`, {
+      await api.post(`/subject-categories`, {
         subject: subjectName,
         category: fullCategoryName
       });
@@ -422,15 +487,21 @@ const QuestionnaireForm = () => {
     setLoading(true);
     
     try {
+      const payload = {
+        ...formData,
+        course_id: formData.course_id === 'ALL' ? null : formData.course_id,
+        questions_to_answer: formData.questions_to_answer === '' ? null : parseInt(formData.questions_to_answer, 10),
+        time_limit_minutes: formData.time_limit_minutes === '' ? null : parseInt(formData.time_limit_minutes, 10)
+      };
       if (isEditing) {
-        await axios.put(`${API_URL}/api/questionnaires/${id}`, formData);
+        await api.put(`/questionnaires/${id}`, payload);
         MySwal.fire({
           icon: 'success',
           title: 'Cuestionario actualizado',
           text: 'El cuestionario ha sido actualizado correctamente'
         });
       } else {
-        await axios.post(`${API_URL}/api/questionnaires`, formData);
+        await api.post(`/questionnaires`, payload);
         MySwal.fire({
           icon: 'success',
           title: 'Cuestionario creado',
@@ -471,7 +542,13 @@ const QuestionnaireForm = () => {
       }
       
       // Crear cuestionario
-      const response = await axios.post(`${API_URL}/api/questionnaires`, newQuestionnaireData);
+      const payload = {
+        ...newQuestionnaireData,
+        course_id: newQuestionnaireData.course_id === 'ALL' ? null : newQuestionnaireData.course_id,
+        questions_to_answer: newQuestionnaireData.questions_to_answer === '' ? null : parseInt(newQuestionnaireData.questions_to_answer, 10),
+        time_limit_minutes: newQuestionnaireData.time_limit_minutes === '' ? null : parseInt(newQuestionnaireData.time_limit_minutes, 10)
+      };
+      const response = await api.post(`/questionnaires`, payload);
       const newQuestionnaire = response.data;
       
       // Mostrar mensaje de éxito
@@ -573,6 +650,64 @@ const QuestionnaireForm = () => {
                 onChange={handleChange}
                 rows="3"
               ></textarea>
+            </div>
+            
+            {/* Campos de Prueba Saber */}
+            <div className="mb-3 p-3 border rounded bg-light">
+              <div className="form-check mb-3">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  name="is_prueba_saber"
+                  id="is_prueba_saber"
+                  checked={formData.is_prueba_saber}
+                  onChange={(e) => {
+                        const checked = e.target.checked;
+                        setFormData((prev) => {
+                          const suggested = isTimeAutoForm
+                            ? computeSuggestedMinutes(prev.questions_to_answer, checked)
+                            : null;
+                          return {
+                            ...prev,
+                            is_prueba_saber: checked,
+                            prueba_saber_level: checked ? prev.prueba_saber_level : '',
+                            ...(isTimeAutoForm && { time_limit_minutes: suggested ? getNearestTimeOption(suggested) : '' })
+                          };
+                        });
+                  }}
+                />
+                <label className="form-check-label" htmlFor="is_prueba_saber">
+                  <strong>Cuestionario tipo Prueba Saber</strong>
+                  <br />
+                  <small className="text-muted">
+                    Los resultados de este cuestionario NO se promedian en las notas de fase
+                  </small>
+                </label>
+              </div>
+              
+              {formData.is_prueba_saber && (
+                <div className="row">
+                  <div className="col-md-6">
+                    <label className="form-label">Nivel de Prueba Saber <span className="text-danger">*</span></label>
+                    <select
+                      className="form-select"
+                      name="prueba_saber_level"
+                      value={formData.prueba_saber_level}
+                      onChange={handleChange}
+                      required={formData.is_prueba_saber}
+                    >
+                      <option value="">Seleccione el nivel</option>
+                      <option value="3">Grado 3°</option>
+                      <option value="5">Grado 5°</option>
+                      <option value="9">Grado 9°</option>
+                      <option value="11">Grado 11°</option>
+                    </select>
+                    <small className="form-text text-muted">
+                      Seleccione el nivel donde el Estado aplica las Pruebas Saber
+                    </small>
+                  </div>
+                </div>
+              )}
             </div>
             
             <div className="row">
@@ -797,12 +932,66 @@ const QuestionnaireForm = () => {
                   required
                 >
                   <option value="">Seleccionar curso</option>
+                  <option value="ALL">Todos los cursos (grado completo)</option>
                   {courses.map(course => (
                     <option key={course.id} value={course.id}>
                       {course.name}
                     </option>
                   ))}
                 </select>
+              </div>
+              
+              <div className="col-md-6 mb-3">
+                <label htmlFor="questions_to_answer" className="form-label">
+                  Número de preguntas a responder (opcional)
+                </label>
+                <input
+                  type="number"
+                  className="form-control"
+                  id="questions_to_answer"
+                  name="questions_to_answer"
+                  value={formData.questions_to_answer ?? ''}
+                  onChange={handleChange}
+                  min="1"
+                  placeholder="Ej: 10 (si lo dejas vacío, el estudiante responde todas)"
+                />
+              </div>
+              
+              <div className="col-md-6 mb-3">
+                <label htmlFor="time_limit_minutes" className="form-label">
+                  Duración (minutos) (opcional)
+                </label>
+                <select
+                  className="form-select"
+                  id="time_limit_minutes"
+                  name="time_limit_minutes"
+                  value={formData.time_limit_minutes ?? ''}
+                  onChange={handleChange}
+                >
+                  <option value="">Sin límite</option>
+                  {TIME_LIMIT_OPTIONS.map((m) => (
+                    <option key={m} value={String(m)}>
+                      {m} min
+                    </option>
+                  ))}
+                </select>
+                {computeSuggestedMinutes(formData.questions_to_answer, formData.is_prueba_saber) && (
+                  <small className="form-text text-muted">
+                    Sugerido: {computeSuggestedMinutes(formData.questions_to_answer, formData.is_prueba_saber)} min
+                    {' '}({formData.is_prueba_saber ? 'Prueba Saber' : 'Normal'}: {formData.is_prueba_saber ? 'N×3+10' : 'N×2+10'})
+                  </small>
+                )}
+                {(() => {
+                  const suggested = computeSuggestedMinutes(formData.questions_to_answer, formData.is_prueba_saber);
+                  const selected = parseInt(formData.time_limit_minutes, 10);
+                  if (!suggested || !selected || Number.isNaN(selected)) return null;
+                  if (selected >= suggested) return null;
+                  return (
+                    <small className="form-text text-warning d-block">
+                      Recomendación: aumentar a {getNearestTimeOption(suggested)} min o más.
+                    </small>
+                  );
+                })()}
               </div>
             </div>
             
@@ -1080,12 +1269,63 @@ const QuestionnaireForm = () => {
                 required
               >
                 <option value="">Seleccionar curso</option>
+                <option value="ALL">Todos los cursos (grado completo)</option>
                 {courses.map(course => (
                   <option key={course.id} value={course.id}>
                     {course.name}
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="col-md-6 mb-3">
+              <label htmlFor="modal-questions_to_answer" className="form-label">
+                Número de preguntas a responder (opcional)
+              </label>
+              <input
+                type="number"
+                className="form-control"
+                id="modal-questions_to_answer"
+                name="questions_to_answer"
+                value={newQuestionnaireData.questions_to_answer ?? ''}
+                onChange={handleModalChange}
+                min="1"
+                placeholder="Ej: 10 (vacío = todas)"
+              />
+            </div>
+            <div className="col-md-6 mb-3">
+              <label htmlFor="modal-time_limit_minutes" className="form-label">
+                Duración (minutos) (opcional)
+              </label>
+              <select
+                className="form-select"
+                id="modal-time_limit_minutes"
+                name="time_limit_minutes"
+                value={newQuestionnaireData.time_limit_minutes ?? ''}
+                onChange={handleModalChange}
+              >
+                <option value="">Sin límite</option>
+                {TIME_LIMIT_OPTIONS.map((m) => (
+                  <option key={m} value={String(m)}>
+                    {m} min
+                  </option>
+                ))}
+              </select>
+              {computeSuggestedMinutes(newQuestionnaireData.questions_to_answer, false) && (
+                <small className="form-text text-muted">
+                  Sugerido: {computeSuggestedMinutes(newQuestionnaireData.questions_to_answer, false)} min (Normal: N×2+10)
+                </small>
+              )}
+              {(() => {
+                const suggested = computeSuggestedMinutes(newQuestionnaireData.questions_to_answer, false);
+                const selected = parseInt(newQuestionnaireData.time_limit_minutes, 10);
+                if (!suggested || !selected || Number.isNaN(selected)) return null;
+                if (selected >= suggested) return null;
+                return (
+                  <small className="form-text text-warning d-block">
+                    Recomendación: aumentar a {getNearestTimeOption(suggested)} min o más.
+                  </small>
+                );
+              })()}
             </div>
           </div>
           

@@ -1,4 +1,4 @@
-// backend-rifa/controllers/authController.js
+// server/controllers/authController.js
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import pool from '../config/db.js';

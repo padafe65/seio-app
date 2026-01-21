@@ -1,4 +1,4 @@
-// frontend-rifa/src/context/AuthContext.js
+// client/src/context/AuthContext.js
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';

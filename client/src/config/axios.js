@@ -47,6 +47,9 @@ axiosInstance.interceptors.response.use(
       if (error.response.status === 401) {
         // Handle unauthorized access
         localStorage.removeItem('token');
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('userRole');
+        localStorage.removeItem('user');
         window.location.href = '/login';
       }
     }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
-import { PlusCircle, Users, FileText } from 'lucide-react';
+import { PlusCircle, Users, FileText, GraduationCap } from 'lucide-react';
 import axiosClient from '../api/axiosClient';
 
 const Dashboard = () => {
@@ -240,7 +240,7 @@ const Dashboard = () => {
 
       {/* Botones de acción para docentes */}
       {user.role === 'docente' && (
-        <div className="d-flex gap-3 mb-4">
+        <div className="d-flex gap-3 mb-4 flex-wrap">
           <Link to="/crear-pregunta" className="btn btn-primary d-flex align-items-center gap-2">
             <PlusCircle size={20} />
             Crear Nueva Pregunta
@@ -252,6 +252,14 @@ const Dashboard = () => {
           <Link to="/materias-categorias" className="btn btn-success d-flex align-items-center gap-2">
             <FileText size={20} />
             Gestionar Materias y Categorías
+          </Link>
+          <Link to="/subir-guia" className="btn btn-warning d-flex align-items-center gap-2">
+            <FileText size={20} />
+            Subir Guía de Estudio
+          </Link>
+          <Link to="/prueba-saber/resultados" className="btn btn-primary d-flex align-items-center gap-2">
+            <GraduationCap size={20} />
+            Resultados Prueba Saber
           </Link>
         </div>
       )}
@@ -274,6 +282,8 @@ const Dashboard = () => {
                     <th>Categoría</th>
                     <th>Grado</th>
                     <th>Fase</th>
+                    <th>Total</th>
+                    <th>A responder</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
@@ -284,6 +294,20 @@ const Dashboard = () => {
                       <td>{questionnaire.category?.split('_')[1] || questionnaire.category}</td>
                       <td>{questionnaire.grade}°</td>
                       <td>Fase {questionnaire.phase}</td>
+                      <td>
+                        <span className="badge bg-secondary">
+                          {questionnaire.question_count ?? 0}
+                        </span>
+                      </td>
+                      <td>
+                        {questionnaire.questions_to_answer ? (
+                          <span className="badge bg-info">
+                            {questionnaire.questions_to_answer}
+                          </span>
+                        ) : (
+                          <span className="text-muted">Todas</span>
+                        )}
+                      </td>
                       <td>
                         <Link to={`/cuestionarios/${questionnaire.id}/editar`} className="btn btn-sm btn-outline-primary me-2">
                           Editar

@@ -49,7 +49,9 @@ const CreateQuestionPage = () => {
     correct_answer: '',
     category: '',
     image: null,
-    image_url: ''
+    image_url: '',
+    is_prueba_saber: false,
+    prueba_saber_level: ''
   };
 
   const [formData, setFormData] = useState(initialFormState);
@@ -246,9 +248,21 @@ const CreateQuestionPage = () => {
     const data = new FormData();
 
     for (let key in formData) {
-      if (formData[key]) {
-        data.append(key, formData[key]);
+      if (formData[key] !== null && formData[key] !== undefined && formData[key] !== '') {
+        // Manejar valores booleanos y números correctamente
+        if (key === 'is_prueba_saber') {
+          data.append(key, formData[key] ? 'true' : 'false');
+        } else if (key === 'prueba_saber_level' && formData.is_prueba_saber) {
+          data.append(key, formData[key]);
+        } else if (key !== 'prueba_saber_level') {
+          data.append(key, formData[key]);
+        }
       }
+    }
+    
+    // Asegurar que is_prueba_saber siempre se envíe
+    if (!formData.is_prueba_saber) {
+      data.append('is_prueba_saber', 'false');
     }
 
     // Si no se seleccionó una nueva imagen, mantener la existente
@@ -299,7 +313,9 @@ await axios.post(`/questions/question`, data, {
       ...initialFormState,
       questionnaire_id: currentQuestionnaireId,
       // Mantener la categoría si hay cuestionario seleccionado
-      category: currentQuestionnaireId && questionnaires.find(q => q.id === parseInt(currentQuestionnaireId) || q.id === currentQuestionnaireId)?.category || ''
+      category: currentQuestionnaireId && questionnaires.find(q => q.id === parseInt(currentQuestionnaireId) || q.id === currentQuestionnaireId)?.category || '',
+      is_prueba_saber: false,
+      prueba_saber_level: ''
     });
     setPreview(null);
     setEditingId(null);
@@ -325,7 +341,9 @@ await axios.post(`/questions/question`, data, {
       correct_answer: question.correct_answer,
       category: question.category,
       image: null,
-      image_url: question.image_url || ''
+      image_url: question.image_url || '',
+      is_prueba_saber: question.is_prueba_saber === 1 || question.is_prueba_saber === true,
+      prueba_saber_level: question.prueba_saber_level || ''
     });
     setPreview(question.image_url ? question.image_url.startsWith('http') ? question.image_url : `${IMAGE_BASE_URL}${question.image_url}` : null);
   };
@@ -593,6 +611,53 @@ await axios.post(`/questions/question`, data, {
                   readOnly={!!formData.questionnaire_id}
                 />
               </div>
+            </div>
+
+            {/* Campos de Prueba Saber */}
+            <div className="row mb-3">
+              <div className="col-md-12">
+                <div className="form-check mb-3">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    name="is_prueba_saber"
+                    id="is_prueba_saber"
+                    checked={formData.is_prueba_saber}
+                    onChange={(e) => {
+                      setFormData({
+                        ...formData,
+                        is_prueba_saber: e.target.checked,
+                        prueba_saber_level: e.target.checked ? formData.prueba_saber_level : ''
+                      });
+                    }}
+                  />
+                  <label className="form-check-label" htmlFor="is_prueba_saber">
+                    <strong>Pregunta tipo Prueba Saber</strong>
+                  </label>
+                </div>
+              </div>
+              
+              {formData.is_prueba_saber && (
+                <div className="col-md-6">
+                  <label className="form-label">Nivel de Prueba Saber <span className="text-danger">*</span></label>
+                  <select
+                    className="form-select"
+                    name="prueba_saber_level"
+                    value={formData.prueba_saber_level}
+                    onChange={handleChange}
+                    required={formData.is_prueba_saber}
+                  >
+                    <option value="">Seleccione el nivel</option>
+                    <option value="3">Grado 3°</option>
+                    <option value="5">Grado 5°</option>
+                    <option value="9">Grado 9°</option>
+                    <option value="11">Grado 11°</option>
+                  </select>
+                  <small className="form-text text-muted">
+                    Seleccione el nivel donde el Estado aplica las Pruebas Saber
+                  </small>
+                </div>
+              )}
             </div>
 
             <div className="d-flex gap-2">

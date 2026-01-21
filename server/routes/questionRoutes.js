@@ -71,7 +71,9 @@ router.post('/question', verifyToken, isTeacherOrAdmin, upload.single('image'), 
       option3,
       option4,
       correct_answer,
-      category
+      category,
+      is_prueba_saber,
+      prueba_saber_level
     } = req.body;
 
     // Si no se proporciona una categoría, obtenerla del cuestionario
@@ -94,11 +96,37 @@ router.post('/question', verifyToken, isTeacherOrAdmin, upload.single('image'), 
 
     const image_url = req.file ? `/uploads/${req.file.filename}` : null;
 
+    // Validar nivel de Prueba Saber si es tipo Prueba Saber
+    let finalPruebaSaberLevel = null;
+    if (is_prueba_saber === 'true' || is_prueba_saber === true) {
+      const validLevels = [3, 5, 9, 11];
+      const level = parseInt(prueba_saber_level);
+      if (!validLevels.includes(level)) {
+        return res.status(400).json({
+          success: false,
+          message: 'El nivel de Prueba Saber debe ser 3, 5, 9 o 11'
+        });
+      }
+      finalPruebaSaberLevel = level;
+    }
+
     const [result] = await pool.query(
       `INSERT INTO questions 
-       (questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, finalCategory, image_url]
+       (questionnaire_id, question_text, option1, option2, option3, option4, correct_answer, category, image_url, is_prueba_saber, prueba_saber_level) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        questionnaire_id, 
+        question_text, 
+        option1, 
+        option2, 
+        option3, 
+        option4, 
+        correct_answer, 
+        finalCategory, 
+        image_url,
+        is_prueba_saber === 'true' || is_prueba_saber === true ? 1 : 0,
+        finalPruebaSaberLevel
+      ]
     );
 
     res.status(201).json({
@@ -129,6 +157,99 @@ router.get('/questions', verifyToken, isTeacherOrAdmin, async (req, res) => {
   } catch (error) {
     console.error('Error al obtener preguntas:', error);
     res.status(500).json({ success: false, message: 'Error al obtener preguntas' });
+  }
+});
+
+/**
+ * GET /api/questions/prueba-saber
+ * Obtener preguntas tipo Prueba Saber filtradas por docente, institución y nivel
+ * Roles: docente (solo sus preguntas), administrador y super_administrador (todas)
+ */
+router.get('/prueba-saber', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { level, institution_id } = req.query;
+    const userRole = req.user.role;
+    
+    let query = `
+      SELECT 
+        q.*,
+        qn.title as questionnaire_title,
+        qn.subject as questionnaire_subject,
+        qn.grade as questionnaire_grade,
+        t.id as teacher_id,
+        u.name as teacher_name,
+        u.institution as teacher_institution
+      FROM questions q
+      LEFT JOIN questionnaires qn ON q.questionnaire_id = qn.id
+      LEFT JOIN teachers t ON qn.created_by = t.id
+      LEFT JOIN users u ON t.user_id = u.id
+      WHERE q.is_prueba_saber = 1
+    `;
+    
+    const params = [];
+    
+    // Si es docente, solo mostrar sus preguntas
+    if (userRole === 'docente') {
+      const [teachers] = await connection.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [req.user.id]
+      );
+      
+      if (teachers.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+      
+      query += ` AND qn.created_by = ?`;
+      params.push(teachers[0].id);
+    }
+    
+    // Filtrar por nivel si se especifica
+    if (level) {
+      const levelInt = parseInt(level);
+      if ([3, 5, 9, 11].includes(levelInt)) {
+        query += ` AND q.prueba_saber_level = ?`;
+        params.push(levelInt);
+      }
+    }
+    
+    // Filtrar por institución si se especifica (solo para admin/super_admin)
+    if ((userRole === 'administrador' || userRole === 'super_administrador') && institution_id) {
+      query += ` AND u.institution = ?`;
+      params.push(institution_id);
+    } else if (userRole === 'docente') {
+      // Para docentes, filtrar automáticamente por su institución
+      const [userInfo] = await connection.query(
+        'SELECT institution FROM users WHERE id = ?',
+        [req.user.id]
+      );
+      
+      if (userInfo.length > 0 && userInfo[0].institution) {
+        query += ` AND u.institution = ?`;
+        params.push(userInfo[0].institution);
+      }
+    }
+    
+    query += ` ORDER BY q.prueba_saber_level ASC, q.id DESC`;
+    
+    const [questions] = await connection.query(query, params);
+    
+    res.json({
+      success: true,
+      count: questions.length,
+      data: questions
+    });
+    
+  } catch (error) {
+    console.error('❌ Error al obtener preguntas Prueba Saber:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener preguntas Prueba Saber',
+      error: error.message
+    });
+  } finally {
+    connection.release();
   }
 });
 
@@ -233,7 +354,9 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
       option3,
       option4,
       correct_answer,
-      category
+      category,
+      is_prueba_saber,
+      prueba_saber_level
     } = req.body;
 
     // Verificar que el nuevo cuestionario también pertenece al docente
@@ -255,6 +378,20 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
 
     const image_url = req.file ? `/uploads/${req.file.filename}` : null;
 
+    // Validar nivel de Prueba Saber si es tipo Prueba Saber
+    let finalPruebaSaberLevel = null;
+    if (is_prueba_saber === 'true' || is_prueba_saber === true) {
+      const validLevels = [3, 5, 9, 11];
+      const level = parseInt(prueba_saber_level);
+      if (!validLevels.includes(level)) {
+        return res.status(400).json({
+          success: false,
+          message: 'El nivel de Prueba Saber debe ser 3, 5, 9 o 11'
+        });
+      }
+      finalPruebaSaberLevel = level;
+    }
+
     const fields = [
       'question_text = ?',
       'option1 = ?',
@@ -262,7 +399,9 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
       'option3 = ?',
       'option4 = ?',
       'correct_answer = ?',
-      'category = ?'
+      'category = ?',
+      'is_prueba_saber = ?',
+      'prueba_saber_level = ?'
     ];
 
     const values = [
@@ -272,7 +411,9 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
       option3,
       option4,
       correct_answer,
-      category
+      category,
+      is_prueba_saber === 'true' || is_prueba_saber === true ? 1 : 0,
+      finalPruebaSaberLevel
     ];
 
     // Si hay una nueva imagen, actualizarla

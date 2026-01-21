@@ -1,4 +1,4 @@
-// backend-rifa/models/User.js
+// server/models/User.js
 export default class User {
     constructor(id, name, phone, email, password, role) {
       this.id = id;

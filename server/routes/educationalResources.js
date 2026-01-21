@@ -2,12 +2,142 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin, isTeacherOrAdmin, isSuperAdmin } from '../middleware/authMiddleware.js';
+import { uploadGuide, getFilePath, getFileUrl } from '../config/storage.js';
 
 const router = express.Router();
 
 // ==========================================
 // RUTAS PARA ESTUDIANTES (Solo lectura)
 // ==========================================
+
+/**
+ * GET /api/educational-resources/student-guides
+ * Obtener guías de estudio filtradas por fase, materia y grado para estudiantes
+ * Query params: phase, subject, grade_level, teacher_id (opcional)
+ */
+router.get('/student-guides', verifyToken, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const { phase, subject, grade_level, teacher_id } = req.query;
+    
+    // Si es estudiante, obtener su información
+    let studentInfo = null;
+    if (req.user.role === 'estudiante') {
+      const [students] = await connection.query(
+        `SELECT s.*, c.name as course_name 
+         FROM students s 
+         LEFT JOIN courses c ON s.course_id = c.id
+         WHERE s.user_id = ?`,
+        [req.user.id]
+      );
+      
+      if (students.length > 0) {
+        studentInfo = students[0];
+      }
+    }
+    
+    let query = `
+      SELECT 
+        er.id,
+        er.subject,
+        er.area,
+        er.topic,
+        er.title,
+        er.description,
+        er.url,
+        er.file_path,
+        er.resource_type,
+        er.grade_level,
+        er.phase,
+        er.difficulty,
+        er.views_count,
+        er.rating,
+        er.teacher_id,
+        er.created_at,
+        u.name as created_by_name,
+        t.user_id as teacher_user_id,
+        ut.name as teacher_name
+      FROM educational_resources er
+      LEFT JOIN users u ON er.created_by = u.id
+      LEFT JOIN teachers t ON er.teacher_id = t.id
+      LEFT JOIN users ut ON t.user_id = ut.id
+      WHERE er.is_active = TRUE
+        AND er.resource_type = 'guia'
+    `;
+    
+    const params = [];
+    
+    // Filtrar por fase
+    if (phase) {
+      query += ` AND er.phase = ?`;
+      params.push(parseInt(phase));
+    }
+    
+    // Filtrar por materia
+    if (subject) {
+      query += ` AND er.subject = ?`;
+      params.push(subject);
+    } else if (studentInfo && studentInfo.grade) {
+      // Si no se especifica materia, buscar todas las materias relevantes
+      // Puedes agregar lógica aquí si es necesario
+    }
+    
+    // Filtrar por grado
+    if (grade_level) {
+      query += ` AND (er.grade_level = ? OR er.grade_level LIKE ? OR er.grade_level IS NULL)`;
+      params.push(grade_level, `%${grade_level}%`);
+    } else if (studentInfo && studentInfo.grade) {
+      // Si no se especifica grado, usar el grado del estudiante
+      query += ` AND (er.grade_level = ? OR er.grade_level LIKE ? OR er.grade_level IS NULL)`;
+      params.push(studentInfo.grade.toString(), `%${studentInfo.grade}%`);
+    }
+    
+    // Filtrar por profesor (opcional)
+    if (teacher_id) {
+      query += ` AND er.teacher_id = ?`;
+      params.push(parseInt(teacher_id));
+    }
+    
+    // Ordenar por fase y fecha de creación
+    query += ` ORDER BY er.phase ASC, er.created_at DESC`;
+    
+    const [resources] = await connection.query(query, params);
+    
+    // Agregar URLs completas de archivos
+    const resourcesWithUrls = resources.map(resource => ({
+      ...resource,
+      file_url: resource.file_path ? getFileUrl(resource.file_path) : null
+    }));
+    
+    // Agrupar por fase para facilitar el acceso desde el frontend
+    const groupedByPhase = {};
+    resourcesWithUrls.forEach(resource => {
+      const phaseKey = resource.phase || 0;
+      if (!groupedByPhase[phaseKey]) {
+        groupedByPhase[phaseKey] = [];
+      }
+      groupedByPhase[phaseKey].push(resource);
+    });
+    
+    res.json({
+      success: true,
+      data: resourcesWithUrls,
+      grouped_by_phase: groupedByPhase,
+      count: resourcesWithUrls.length
+    });
+    
+  } catch (error) {
+    console.error('❌ Error al obtener guías de estudio:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener guías de estudio',
+      error: error.message
+    });
+  } finally {
+    connection.release();
+  }
+});
 
 /**
  * GET /api/educational-resources
@@ -38,16 +168,20 @@ router.get('/', verifyToken, async (req, res) => {
         er.title,
         er.description,
         er.url,
+        er.file_path,
         er.resource_type,
         er.grade_level,
         er.phase,
         er.difficulty,
         er.views_count,
         er.rating,
+        er.teacher_id,
         er.created_at,
-        u.name as created_by_name
+        u.name as created_by_name,
+        t.user_id as teacher_user_id
       FROM educational_resources er
       LEFT JOIN users u ON er.created_by = u.id
+      LEFT JOIN teachers t ON er.teacher_id = t.id
       WHERE er.is_active = TRUE
     `;
     
@@ -537,7 +671,7 @@ router.post('/student/:studentId/view/:resourceId', verifyToken, async (req, res
 
 /**
  * POST /api/educational-resources
- * Crear un nuevo recurso educativo
+ * Crear un nuevo recurso educativo (solo enlaces externos)
  * Roles: docente, administrador, super_administrador
  */
 router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
@@ -559,46 +693,76 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
     } = req.body;
     
     // Validaciones
-    if (!subject || !area || !title || !url) {
+    if (!subject || !area || !title) {
       return res.status(400).json({
         success: false,
-        message: 'Los campos subject, area, title y url son obligatorios'
+        message: 'Los campos subject, area y title son obligatorios'
       });
     }
     
-    // Validar URL
-    try {
-      new URL(url);
-    } catch (error) {
+    // Si no hay file_path, debe haber URL
+    if (!url) {
       return res.status(400).json({
         success: false,
-        message: 'URL no válida'
+        message: 'Debe proporcionar una URL o subir un archivo PDF'
       });
+    }
+    
+    // Validar URL si se proporciona
+    if (url) {
+      try {
+        new URL(url);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'URL no válida'
+        });
+      }
+    }
+    
+    // Obtener teacher_id si el usuario es profesor
+    let teacherId = null;
+    if (req.user.role === 'docente') {
+      const [teachers] = await connection.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [req.user.id]
+      );
+      if (teachers.length > 0) {
+        teacherId = teachers[0].id;
+      }
     }
     
     const [result] = await connection.query(
       `INSERT INTO educational_resources 
-       (subject, area, topic, title, description, url, resource_type, 
-        grade_level, phase, difficulty, institution_id, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (subject, area, topic, title, description, url, file_path, resource_type, 
+        grade_level, phase, difficulty, institution_id, teacher_id, created_by) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         subject,
         area,
         topic || null,
         title,
         description || null,
-        url,
+        url || null,
+        null, // file_path
         resource_type || 'otro',
         grade_level || null,
         phase || null,
         difficulty || 'intermedio',
         institution_id || null,
+        teacherId,
         req.user.id
       ]
     );
     
     const [newResource] = await connection.query(
-      `SELECT * FROM educational_resources WHERE id = ?`,
+      `SELECT er.*, 
+              u.name as created_by_name,
+              t.user_id as teacher_user_id
+       FROM educational_resources er
+       LEFT JOIN users u ON er.created_by = u.id
+       LEFT JOIN teachers t ON er.teacher_id = t.id
+       WHERE er.id = ?`,
       [result.insertId]
     );
     
@@ -613,6 +777,203 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al crear recurso educativo',
+      error: error.message
+    });
+  } finally {
+    connection.release();
+  }
+});
+
+/**
+ * POST /api/educational-resources/upload-guide
+ * Subir una guía de estudio (PDF) como recurso educativo
+ * Roles: docente, administrador, super_administrador
+ */
+router.post('/upload-guide', verifyToken, isTeacherOrAdmin, uploadGuide.single('file'), async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    const {
+      subject,
+      area,
+      topic,
+      title,
+      description,
+      url, // URL complementaria opcional
+      grade_level,
+      phase,
+      difficulty,
+      institution_id
+    } = req.body;
+    
+    // Validaciones
+    if (!subject || !area || !title) {
+      return res.status(400).json({
+        success: false,
+        message: 'Los campos subject, area y title son obligatorios'
+      });
+    }
+    
+    // Verificar que se subió un archivo
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe subir un archivo PDF'
+      });
+    }
+    
+    // Obtener teacher_id si el usuario es profesor
+    let teacherId = null;
+    if (req.user.role === 'docente') {
+      const [teachers] = await connection.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [req.user.id]
+      );
+      if (teachers.length > 0) {
+        teacherId = teachers[0].id;
+      }
+    }
+    
+    // Obtener la ruta del archivo subido
+    const filePath = getFilePath(req.file);
+    
+    // Validar URL complementaria si se proporciona
+    if (url) {
+      try {
+        new URL(url);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: 'URL complementaria no válida'
+        });
+      }
+    }
+    
+    const [result] = await connection.query(
+      `INSERT INTO educational_resources 
+       (subject, area, topic, title, description, url, file_path, resource_type, 
+        grade_level, phase, difficulty, institution_id, teacher_id, created_by) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        subject,
+        area,
+        topic || null,
+        title,
+        description || null,
+        url || null, // URL complementaria opcional
+        filePath, // Ruta del PDF subido
+        'guia',
+        grade_level || null,
+        phase || null,
+        difficulty || 'intermedio',
+        institution_id || null,
+        teacherId,
+        req.user.id
+      ]
+    );
+    
+    const [newResource] = await connection.query(
+      `SELECT er.*, 
+              u.name as created_by_name,
+              t.user_id as teacher_user_id
+       FROM educational_resources er
+       LEFT JOIN users u ON er.created_by = u.id
+       LEFT JOIN teachers t ON er.teacher_id = t.id
+       WHERE er.id = ?`,
+      [result.insertId]
+    );
+    
+    // Agregar URL completa del archivo a la respuesta
+    const resourceWithUrl = {
+      ...newResource[0],
+      file_url: getFileUrl(filePath)
+    };
+    
+    res.status(201).json({
+      success: true,
+      message: 'Guía de estudio subida exitosamente',
+      data: resourceWithUrl
+    });
+    
+  } catch (error) {
+    console.error('❌ Error al subir guía de estudio:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Error al subir guía de estudio',
+      error: error.message
+    });
+  } finally {
+    connection.release();
+  }
+});
+
+/**
+ * GET /api/educational-resources/my
+ * Obtener recursos del profesor autenticado
+ * Roles: docente
+ */
+router.get('/my', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    // Si es docente, obtener su teacher_id
+    let teacherId = null;
+    if (req.user.role === 'docente') {
+      const [teachers] = await connection.query(
+        `SELECT id FROM teachers WHERE user_id = ?`,
+        [req.user.id]
+      );
+      
+      if (teachers.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Profesor no encontrado'
+        });
+      }
+      
+      teacherId = teachers[0].id;
+    }
+    
+    // Obtener recursos del profesor (por teacher_id o created_by)
+    const query = `
+      SELECT 
+        er.*,
+        u.name as created_by_name,
+        t.user_id as teacher_user_id,
+        ut.name as teacher_name
+      FROM educational_resources er
+      LEFT JOIN users u ON er.created_by = u.id
+      LEFT JOIN teachers t ON er.teacher_id = t.id
+      LEFT JOIN users ut ON t.user_id = ut.id
+      WHERE (er.teacher_id = ? OR er.created_by = ?)
+      ORDER BY er.created_at DESC
+    `;
+    
+    const userId = req.user.id;
+    const [resources] = await connection.query(query, [teacherId, userId]);
+    
+    // Obtener URLs completas para archivos
+    const resourcesWithUrls = resources.map(resource => {
+      if (resource.file_path) {
+        return {
+          ...resource,
+          file_url: getFileUrl(resource.file_path)
+        };
+      }
+      return resource;
+    });
+    
+    res.json({
+      success: true,
+      count: resourcesWithUrls.length,
+      data: resourcesWithUrls
+    });
+    
+  } catch (error) {
+    console.error('❌ Error al obtener recursos del profesor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener recursos educativos',
       error: error.message
     });
   } finally {
@@ -642,9 +1003,13 @@ router.get('/all', verifyToken, isAdmin, async (req, res) => {
     let query = `
       SELECT 
         er.*,
-        u.name as created_by_name
+        u.name as created_by_name,
+        t.user_id as teacher_user_id,
+        ut.name as teacher_name
       FROM educational_resources er
       LEFT JOIN users u ON er.created_by = u.id
+      LEFT JOIN teachers t ON er.teacher_id = t.id
+      LEFT JOIN users ut ON t.user_id = ut.id
       WHERE 1=1
     `;
     

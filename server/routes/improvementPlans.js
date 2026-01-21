@@ -674,26 +674,44 @@ router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', asyn
     console.log(`🔍 Buscando indicadores no alcanzados para estudiante ${studentId}, grado ${grade}, fase ${phase}`);
     
     // Obtener indicadores no alcanzados para este estudiante en esta fase
+    // El campo 'achieved' está en student_indicators, no en indicators
     const [indicators] = await pool.query(`
-      SELECT i.id, i.description, i.subject, i.phase, i.grade, i.achieved
+      SELECT 
+        i.id, 
+        i.description, 
+        i.subject, 
+        i.phase, 
+        i.grade,
+        COALESCE(si.achieved, 0) as achieved,
+        si.questionnaire_id,
+        qi.passing_score
       FROM indicators i
       JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
-      WHERE ts.student_id = ? AND i.grade = ? AND i.phase = ? AND i.achieved = false
-      ORDER BY i.subject
-    `, [studentId, grade, phase]);
+      LEFT JOIN student_indicators si ON i.id = si.indicator_id AND si.student_id = ?
+      LEFT JOIN questionnaire_indicators qi ON i.id = qi.indicator_id AND si.questionnaire_id = qi.questionnaire_id
+      WHERE ts.student_id = ? 
+        AND i.grade = ? 
+        AND i.phase = ?
+        AND (si.achieved = 0 OR si.achieved IS NULL)
+      ORDER BY i.subject, i.id
+    `, [studentId, studentId, grade, phase]);
     
     console.log(`✅ Se encontraron ${indicators.length} indicadores no alcanzados`);
     
-    // Si no hay indicadores, devolver array vacío
+    // Si no hay indicadores, devolver array vacío con mensaje descriptivo
     if (!indicators || indicators.length === 0) {
-      console.log('📝 No hay indicadores no alcanzados disponibles, devolviendo array vacío');
+      console.log('📝 No hay indicadores no alcanzados disponibles para este estudiante en esta fase');
       return res.json([]);
     }
     
     res.json(indicators);
   } catch (error) {
     console.error('Error al obtener indicadores no alcanzados:', error);
-    res.status(500).json({ message: 'Error al obtener indicadores no alcanzados' });
+    res.status(500).json({ 
+      success: false,
+      message: 'Error al obtener indicadores no alcanzados',
+      error: error.message 
+    });
   }
 });
 
