@@ -27,7 +27,7 @@ import Swal from 'sweetalert2';
 import { 
   Home, Users, FileText, BarChart2, 
   PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen,
-  Shield, UserPlus, Database, Activity, GraduationCap, CreditCard, Mail
+  Shield, Database, GraduationCap, CreditCard, Mail
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -60,7 +60,8 @@ import EducationalResourceForm from './pages/educational-resources/EducationalRe
 import UploadGuideForm from './pages/educational-resources/UploadGuideForm.js';
 import TeacherGuidesManage from './pages/educational-resources/TeacherGuidesManage.js';
 import TeacherPruebaSaberPage from './pages/prueba-saber/TeacherPruebaSaberPage.js';
-import StudentPruebaSaberPage from './pages/prueba-saber/StudentPruebaSaberPage.js';
+import StudentPruebaSaberListPage from './pages/prueba-saber/StudentPruebaSaberListPage.js';
+import TakePruebaSaberPage from './pages/prueba-saber/TakePruebaSaberPage.js';
 import PruebaSaberResultsPage from './pages/prueba-saber/PruebaSaberResultsPage.js';
 import LicensesManagement from './pages/licenses/LicensesManagement.js';
 import MessagesPage from './pages/messages/MessagesPage.js';
@@ -907,7 +908,8 @@ function AppContent() {
             <Route path="/improvement" element={<ImprovementPage />} />
             <Route path="/messages" element={<MessagesPage />} />
             <Route path="/guides" element={<StudentGuidesPage />} />
-            <Route path="/prueba-saber" element={<StudentPruebaSaberPage />} />
+            <Route path="/prueba-saber" element={<StudentPruebaSaberListPage />} />
+            <Route path="/prueba-saber/test/:questionnaireId" element={<TakePruebaSaberPage />} />
             <Route path="/prueba-saber/resultados" element={<PruebaSaberResultsPage />} />
             <Route path="/educational-resources" element={<StudentEducationalResources />} />
             <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />

@@ -38,6 +38,7 @@ router.get('/', verifyToken, async (req, res) => {
     let query = `
       SELECT 
         q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.questions_to_answer, q.time_limit_minutes, q.created_by, q.description,
+        q.is_prueba_saber, q.prueba_saber_level, q.prueba_saber_type,
         u.name as created_by_name${institutionField},
         COALESCE(c.name, 'Todos los cursos') as course_name,
         (SELECT COUNT(*) FROM questions WHERE questionnaire_id = q.id) as question_count
@@ -269,6 +270,7 @@ router.get('/:id', async (req, res) => {
     const [rows] = await pool.query(`
       SELECT 
         q.id, q.title, q.subject, q.category, q.grade, q.phase, q.created_at, q.course_id, q.questions_to_answer, q.time_limit_minutes, q.created_by, q.description,
+        q.is_prueba_saber, q.prueba_saber_level, q.prueba_saber_type,
         u.name as created_by_name,
         COALESCE(c.name, 'Todos los cursos') as course_name
       FROM questionnaires q

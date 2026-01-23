@@ -564,8 +564,14 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
     const attemptNumber = usedCount + 1;
 
     // Buscar sesión activa para este intento
+    // Buscar sesión activa - calcular remaining_seconds en MySQL para evitar problemas de zona horaria
     const [sessionRows] = await pool.query(
-      `SELECT * FROM quiz_sessions
+      `SELECT *,
+       CASE 
+         WHEN expires_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), expires_at)
+         ELSE NULL
+       END as remaining_seconds
+       FROM quiz_sessions
        WHERE student_id = ? AND questionnaire_id = ? AND academic_year = ? AND attempt_number = ? AND status = 'in_progress'
        ORDER BY started_at DESC
        LIMIT 1`,
@@ -573,8 +579,8 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
     );
     let session = sessionRows[0] || null;
 
-    const now = new Date();
-    if (session?.expires_at && now > new Date(session.expires_at)) {
+    // Verificar si la sesión expiró usando remaining_seconds calculado en MySQL
+    if (session?.expires_at && (session.remaining_seconds === null || session.remaining_seconds <= 0)) {
       await pool.query(`UPDATE quiz_sessions SET status = 'expired' WHERE id = ?`, [session.id]);
       return res.status(400).json({ error: 'Se agotó el tiempo de la evaluación.', code: 'TIME_EXPIRED' });
     }
@@ -599,27 +605,28 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
       }
       const selectedIds = shuffledIds.slice(0, effectiveLimit);
 
-      // expires_at
-      let expiresAt = null;
+      // Usar DATE_ADD de MySQL para calcular expires_at sin problemas de zona horaria
       const timeLimit = questionnaire.time_limit_minutes ? parseInt(questionnaire.time_limit_minutes, 10) : null;
-      if (timeLimit) {
-        expiresAt = new Date(now.getTime() + timeLimit * 60 * 1000);
-      }
 
       const [insertResult] = await pool.query(
         `INSERT INTO quiz_sessions (student_id, questionnaire_id, attempt_number, academic_year, status, started_at, expires_at, question_ids_json)
-         VALUES (?, ?, ?, ?, 'in_progress', NOW(), ?, ?)`,
-        [
-          realStudentId,
-          questionnaireId,
-          attemptNumber,
-          currentAcademicYear,
-          expiresAt ? expiresAt.toISOString().slice(0, 19).replace('T', ' ') : null,
-          JSON.stringify(selectedIds)
-        ]
+         VALUES (?, ?, ?, ?, 'in_progress', NOW(), 
+         ${timeLimit ? 'DATE_ADD(NOW(), INTERVAL ? MINUTE)' : 'NULL'}, ?)`,
+        timeLimit 
+          ? [realStudentId, questionnaireId, attemptNumber, currentAcademicYear, timeLimit, JSON.stringify(selectedIds)]
+          : [realStudentId, questionnaireId, attemptNumber, currentAcademicYear, JSON.stringify(selectedIds)]
       );
 
-      const [newSessionRows] = await pool.query('SELECT * FROM quiz_sessions WHERE id = ?', [insertResult.insertId]);
+      // Recuperar la sesión con remaining_seconds calculado en MySQL
+      const [newSessionRows] = await pool.query(
+        `SELECT *,
+         CASE 
+           WHEN expires_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), expires_at)
+           ELSE NULL
+         END as remaining_seconds
+         FROM quiz_sessions WHERE id = ?`,
+        [insertResult.insertId]
+      );
       session = newSessionRows[0];
     }
 
@@ -647,7 +654,11 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
 
     const totalAvailableQuestions = finalQuestions.length;
     const effectiveQuestionsToAnswer = totalAvailableQuestions;
-    const remainingSeconds = session.expires_at ? Math.max(0, Math.floor((new Date(session.expires_at) - now) / 1000)) : null;
+    
+    // Usar remaining_seconds calculado en MySQL (ya viene en session)
+    const remainingSeconds = session.remaining_seconds !== null && session.remaining_seconds !== undefined 
+      ? Math.max(0, session.remaining_seconds) 
+      : null;
 
     // Devolver tanto la información del cuestionario como las preguntas
     res.json({

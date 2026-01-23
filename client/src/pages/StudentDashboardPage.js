@@ -382,9 +382,11 @@ const StudentDashboardPage = () => {
                 <Link to="/student/improvement" className="btn btn-success">
                   Plan de Mejora
                 </Link>
-                <Link to="/student/prueba-saber/resultados" className="btn btn-warning">
-                  Resultados Prueba Saber
-                </Link>
+                {studentData && studentData.grade && [3, 5, 9, 11].includes(parseInt(studentData.grade)) && (
+                  <Link to="/student/prueba-saber/resultados" className="btn btn-warning">
+                    Resultados Prueba Saber
+                  </Link>
+                )}
               </div>
             </div>
           </div>

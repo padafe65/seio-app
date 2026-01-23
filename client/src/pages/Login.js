@@ -1,7 +1,7 @@
 // client/src/pages/Login.js
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
 
@@ -10,7 +10,7 @@ const notiMySwal = withReactContent(Swal);
 const Login = () => {
   const [credentials, setCredentials] = useState({ email: '', password: '' });
   const { login, user } = useAuth();
-  const navigate = useNavigate();    
+  const navigate = useNavigate();
   console.log("Usuario autenticado:", user);
 
   // Dentro del componente Login
@@ -78,19 +78,31 @@ const Login = () => {
         <button type="submit" className="btn btn-primary">Ingresar</button>
       </form>
       
-      {/* Draggable con imagen y texto */}
-      
-      {/* Imagen en la parte superior */}
-      <img
-        src="/img/jesus.jpg" //Asegúrate de que esta imagen esté en public/img
-        alt="Imagen de Jesus mi salvador"
+      {/* Video de presentación SEIO (mismo tamaño y posición que la imagen anterior) */}
+      <div
+        className="d-inline-block mb-2"
         style={{
-          width: '10%',
-          height: 'auto',
-          borderRadius: '8px',
-          marginBottom: '10px',
+          width: '90px',
+          height: '90px',
+          borderRadius: '50%',
+          overflow: 'hidden',
+          flexShrink: 0,
         }}
-      />
+      >
+        <video
+          src="/videos/videologo.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+          }}
+          title="Presentación SEIO"
+        />
+      </div>
       <div className="overflow-y-auto p-4 rounded-xl mt-3" style={{ maxHeight: '70vh', backgroundColor: '#17a2b8', WebkitOverflowScrolling: 'touch', touchAction: 'manipulation', color:'whitesmoke'}}>
         
         <ul>

@@ -33,7 +33,7 @@ router.get('/results', verifyToken, async (req, res) => {
         q.grade as questionnaire_grade,
         q.subject,
         q.category,
-        s.name as student_name,
+        u.name as student_name,
         s.grade as student_grade,
         c.name as course_name,
         u.institution as student_institution,
