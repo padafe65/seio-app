@@ -7,7 +7,8 @@ import {
   Search as SearchIcon,
   School as SchoolIcon,
   Email as EmailIcon,
-  Person as PersonIcon
+  Person as PersonIcon,
+  Assessment as AssessmentIcon
 } from '@mui/icons-material';
 import {
   Box,
@@ -345,6 +346,16 @@ const StudentsList = () => {
                       />
                     </TableCell>
                     <TableCell align="right">
+                      <IconButton 
+                        component={Link} 
+                        to={`/estudiantes/${student.id}/calificaciones`}
+                        color="info"
+                        size="small"
+                        sx={{ mr: 1 }}
+                        title="Calificaciones"
+                      >
+                        <AssessmentIcon />
+                      </IconButton>
                       <IconButton 
                         component={Link} 
                         to={`/estudiantes/${student.id}/editar`}

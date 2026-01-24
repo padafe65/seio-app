@@ -29,7 +29,7 @@ const SuperAdminDashboard = () => {
         return;
       }
 
-      if (user && user.role === 'super_administrador') {
+      if (user && (user.role === 'super_administrador' || user.role === 'administrador')) {
         try {
           // Obtener estadísticas generales
           const [usersResponse, questionnairesResponse, studentsResponse] = await Promise.allSettled([
@@ -114,11 +114,18 @@ const SuperAdminDashboard = () => {
       {/* Bienvenida */}
       <div>
         <h1 className="text-3xl font-bold text-gray-800">
-          👑 Panel de Super Administrador
+          {user?.role === 'administrador' ? 'Panel de Administrador' : '👑 Panel de Super Administrador'}
         </h1>
         <p className="text-sm text-gray-500 mt-2">
           Bienvenido, {user?.name}. Gestiona todos los aspectos del sistema.
         </p>
+      </div>
+
+      <div className="card border-primary mb-2">
+        <div className="card-body py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <span className="fw-medium">Calificaciones por fase</span>
+          <Link to="/calificaciones-fase" className="btn btn-primary btn-sm">Ver tabla y filtros</Link>
+        </div>
       </div>
 
       {/* Tarjetas de estadísticas */}

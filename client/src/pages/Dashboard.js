@@ -154,6 +154,15 @@ const Dashboard = () => {
         </p>
       </div>
 
+      {user.role === 'docente' && (
+        <div className="card border-primary mb-2">
+          <div className="card-body py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <span className="fw-medium">Calificaciones por fase</span>
+            <Link to="/calificaciones-fase" className="btn btn-primary btn-sm">Ver tabla y filtros</Link>
+          </div>
+        </div>
+      )}
+
       {/* Tarjetas de estadísticas */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
@@ -498,11 +507,12 @@ const Dashboard = () => {
 )}
 
 
-      {/* Tabla de calificaciones por fase */}
+      {/* Tabla de calificaciones por fase (definitiva + manual/sistema) */}
       {user.role === 'docente' && studentGrades.length > 0 && (
         <div className="card">
-          <div className="card-header bg-white">
+          <div className="card-header bg-white d-flex justify-content-between align-items-center">
             <h5 className="mb-0">Calificaciones por Fase</h5>
+            <small className="text-muted">(M) Manual · (S) Sistema</small>
           </div>
           <div className="card-body">
             <div className="table-responsive">
@@ -516,20 +526,36 @@ const Dashboard = () => {
                     <th>Fase 3</th>
                     <th>Fase 4</th>
                     <th>Promedio</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {studentGrades.map((grade, index) => (
-                    <tr key={index}>
-                      <td>{grade.student_name}</td>
-                      <td>{grade.course_name}</td>
-                      <td>{formatGrade(grade.phase1)}</td>
-                      <td>{formatGrade(grade.phase2)}</td>
-                      <td>{formatGrade(grade.phase3)}</td>
-                      <td>{formatGrade(grade.phase4)}</td>
-                      <td>{formatGrade(grade.average)}</td>
-                    </tr>
-                  ))}
+                  {studentGrades.map((grade, index) => {
+                    const phaseBadge = (phaseNum) => {
+                      const manual = grade[`phase${phaseNum}_manual`];
+                      const system = grade[`phase${phaseNum}_system`];
+                      const val = formatGrade(grade[`phase${phaseNum}`]);
+                      if (val === 'N/A') return val;
+                      const tag = (manual != null && !isNaN(parseFloat(manual))) ? 'M' : ((system != null || grade[`phase${phaseNum}`] != null) ? 'S' : null);
+                      return tag ? <>{val} <span className="badge bg-secondary">{tag}</span></> : val;
+                    };
+                    return (
+                      <tr key={grade.student_id || index}>
+                        <td>{grade.student_name}</td>
+                        <td>{grade.course_name}</td>
+                        <td>{phaseBadge(1)}</td>
+                        <td>{phaseBadge(2)}</td>
+                        <td>{phaseBadge(3)}</td>
+                        <td>{phaseBadge(4)}</td>
+                        <td>{formatGrade(grade.average)}</td>
+                        <td>
+                          <Link to={`/estudiantes/${grade.student_id}/calificaciones`} className="btn btn-sm btn-outline-primary">
+                            Ver / Editar
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

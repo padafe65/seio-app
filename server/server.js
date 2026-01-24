@@ -2627,12 +2627,11 @@ app.get('/api/teacher/students/:userId', async (req, res) => {
   }
 });
 
-// Obtener calificaciones por fase de los estudiantes de un docente
+// Obtener calificaciones por fase de los estudiantes de un docente (grades + phase_averages: sistema/manual)
 app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
   try {
     const { teacherId } = req.params;
     
-    // Obtener el ID real del profesor
     const [teacherRows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [teacherId]
@@ -2643,34 +2642,41 @@ app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
     }
     
     const realTeacherId = teacherRows[0].id;
-    
-    // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();
     
-    // Obtener calificaciones de los estudiantes asignados al profesor (filtradas por academic_year)
     const [rows] = await pool.query(`
-      SELECT DISTINCT
-        s.id as student_id, 
+      SELECT
+        s.id AS student_id,
         s.user_id,
-        u.name as student_name,
-        c.name as course_name,
-        g.phase1, 
-        g.phase2, 
-        g.phase3, 
-        g.phase4,
-        g.average
+        s.grade,
+        c.id AS course_id,
+        c.name AS course_name,
+        u.name AS student_name,
+        MAX(g.phase1) AS phase1,
+        MAX(g.phase2) AS phase2,
+        MAX(g.phase3) AS phase3,
+        MAX(g.phase4) AS phase4,
+        MAX(g.average) AS average,
+        MAX(CASE WHEN pa.phase = 1 THEN pa.average_score END) AS phase1_system,
+        MAX(CASE WHEN pa.phase = 1 THEN pa.average_score_manual END) AS phase1_manual,
+        MAX(CASE WHEN pa.phase = 2 THEN pa.average_score END) AS phase2_system,
+        MAX(CASE WHEN pa.phase = 2 THEN pa.average_score_manual END) AS phase2_manual,
+        MAX(CASE WHEN pa.phase = 3 THEN pa.average_score END) AS phase3_system,
+        MAX(CASE WHEN pa.phase = 3 THEN pa.average_score_manual END) AS phase3_manual,
+        MAX(CASE WHEN pa.phase = 4 THEN pa.average_score END) AS phase4_system,
+        MAX(CASE WHEN pa.phase = 4 THEN pa.average_score_manual END) AS phase4_manual
       FROM teacher_students ts
       JOIN students s ON ts.student_id = s.id
       JOIN users u ON s.user_id = u.id
       JOIN courses c ON s.course_id = c.id
-      LEFT JOIN grades g ON s.id = g.student_id 
+      LEFT JOIN grades g ON s.id = g.student_id
         AND (g.academic_year = ? OR g.academic_year IS NULL)
-      WHERE ts.teacher_id = ? 
-      AND (ts.academic_year = ? OR ts.academic_year IS NULL)
-      ORDER BY u.name
-    `, [currentAcademicYear, realTeacherId, currentAcademicYear]);
-    
-    console.log(`📊 Calificaciones obtenidas para el profesor ${realTeacherId}:`, JSON.stringify(rows, null, 2));
+      LEFT JOIN phase_averages pa ON pa.student_id = s.id AND pa.teacher_id = ?
+      WHERE ts.teacher_id = ?
+        AND (ts.academic_year = ? OR ts.academic_year IS NULL)
+      GROUP BY s.id, s.user_id, s.grade, c.id, c.name, u.name
+      ORDER BY s.grade, c.name, u.name
+    `, [currentAcademicYear, realTeacherId, realTeacherId, currentAcademicYear]);
     
     res.json(rows);
   } catch (error) {

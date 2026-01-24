@@ -42,6 +42,7 @@ import QuestionnairesList from './pages/questionnaires/QuestionnairesList.js';
 import QuestionnaireForm from './pages/questionnaires/QuestionnaireForm.js';
 import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
+import CalificacionesPorFasePage from './pages/CalificacionesPorFasePage';
 import StudentIndicators from './pages/indicators/StudentIndicators';
 import StudentEducationalResources from './pages/students/StudentEducationalResources.js';
 import StudentGuidesPage from './pages/StudentGuidesPage.js';
@@ -302,7 +303,11 @@ function AppContent() {
                   <CheckSquare size={18} className="me-2" /> Evaluación de Fase
                 </Link>
               </li>
-
+              <li className="nav-item mb-2">
+                <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center">
+                  <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
               <li className="nav-item mb-2">
                 <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center">
                   <BookOpen size={18} className="me-2" /> Mis Cursos
@@ -376,6 +381,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/messages" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <Mail size={18} className="me-2" /> Mensajes
                 </Link>
@@ -444,6 +454,7 @@ function AppContent() {
             {/* Rutas para estudiantes del docente */}
             <Route path="/mis-estudiantes" element={<TeacherStudentsList />} />
             <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
+            <Route path="/calificaciones-fase" element={<CalificacionesPorFasePage />} />
             
             {/* Rutas para indicadores */}
             <Route path="/indicadores" element={<IndicatorsList />} />
@@ -495,12 +506,15 @@ function AppContent() {
     );
   }
 
-  // Componente Layout para rutas de super_administrador
+  // Componente Layout para rutas de super_administrador / administrador
   function SuperAdminDashboardLayout() {
+    const { user: authUser } = useAuth();
     const [show, setShow] = useState(false);
     const handleClose = () => setShow(false);
     const handleToggle = () => setShow(prev => !prev);
-    
+    const isAdmin = authUser?.role === 'administrador';
+    const panelTitle = isAdmin ? 'Panel Admin' : '👑 Panel Super Admin';
+
     return (
       <div>
         {/* Botón para mostrar/ocultar sidebar en móviles */}
@@ -516,7 +530,7 @@ function AppContent() {
         {/* Sidebar para pantallas medianas y grandes */}
         <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
           <div className="p-3">
-            <h5 className="mb-3">👑 Panel Super Admin</h5>
+            <h5 className="mb-3">{panelTitle}</h5>
             <ul className="nav flex-column">
               <li className="nav-item mb-2">
                 <Link to="/dashboard" className="nav-link text-white d-flex align-items-center">
@@ -569,6 +583,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center">
+                  <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center">
                   <BookOpen size={18} className="me-2" /> Cursos
                 </Link>
@@ -605,7 +624,7 @@ function AppContent() {
         {/* Offcanvas para móviles */}
         <Offcanvas show={show} onHide={handleClose} className="bg-dark text-white">
           <Offcanvas.Header closeButton className="border-bottom">
-            <Offcanvas.Title>👑 Panel Super Admin</Offcanvas.Title>
+            <Offcanvas.Title>{panelTitle}</Offcanvas.Title>
           </Offcanvas.Header>
           <Offcanvas.Body>
             <ul className="nav flex-column">
@@ -665,6 +684,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/mis-cursos" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BookOpen size={18} className="me-2" /> Cursos
                 </Link>
@@ -711,6 +735,7 @@ function AppContent() {
             <Route path="/estudiantes/:id" element={<StudentDetail />} />
             <Route path="/estudiantes/:id/editar" element={<StudentForm />} />
             <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
+            <Route path="/calificaciones-fase" element={<CalificacionesPorFasePage />} />
             
             {/* Rutas para indicadores */}
             <Route path="/indicadores" element={<IndicatorsList />} />
@@ -930,10 +955,10 @@ function AppContent() {
         <Route path="/CompleteStudent" element={<CompleteStudent />} />
         <Route path="/CompleteTeacher" element={<CompleteTeacher />} />
         
-        {/* Rutas de super_administrador con sidebar */}
+        {/* Rutas de super_administrador / administrador con sidebar */}
         <Route path="/*" element={
           <ProtectedRoute>
-            {user && user.role === 'super_administrador' ? <SuperAdminDashboardLayout /> : 
+            {(user && (user.role === 'super_administrador' || user.role === 'administrador')) ? <SuperAdminDashboardLayout /> :
              user && user.role === 'docente' ? <TeacherDashboardLayout /> : null}
           </ProtectedRoute>
         } />

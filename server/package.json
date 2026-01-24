@@ -8,6 +8,7 @@
     "start": "node server.js",
     "start:dev": "nodemon server.js",
     "dev": "nodemon server.js",
+    "migrate:average-score-manual": "node scripts/run-migration-average-score-manual.js",
     "test": "jest --detectOpenHandles --forceExit",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"

@@ -10,7 +10,7 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const StudentDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { authToken, verifyToken } = useAuth();
+  const { user, authToken, verifyToken } = useAuth();
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -132,7 +132,7 @@ const StudentDetail = () => {
           <i className="bi bi-exclamation-triangle-fill me-2"></i>
           {error || 'No se encontró el estudiante solicitado.'}
         </div>
-        <Link to="/mis-estudiantes" className="btn btn-outline-secondary mt-3">
+        <Link to={user?.role === 'docente' ? '/mis-estudiantes' : '/estudiantes'} className="btn btn-outline-secondary mt-3">
           Volver a la lista
         </Link>
       </div>
@@ -144,10 +144,13 @@ const StudentDetail = () => {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h4 className="mb-0">Detalles del Estudiante: {student.user_name}</h4>
         <div>
+          <Link to={`/estudiantes/${id}/calificaciones`} className="btn btn-outline-primary me-2">
+            Calificaciones
+          </Link>
           <Link to={`/estudiantes/${id}/editar`} className="btn btn-primary me-2">
             Editar
           </Link>
-          <Link to="/mis-estudiantes" className="btn btn-outline-secondary">
+          <Link to={user?.role === 'docente' ? '/mis-estudiantes' : '/estudiantes'} className="btn btn-outline-secondary">
             Volver
           </Link>
         </div>
