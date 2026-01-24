@@ -2878,19 +2878,22 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, async (req, res) => {
     if (updatedAttempt.length > 0) {
       const attempt = updatedAttempt[0];
       
-      // Actualizar evaluation_results si existe
-      await pool.query(`
-        UPDATE evaluation_results 
-        SET best_score = (
-          SELECT MAX(score) FROM quiz_attempts 
-          WHERE student_id = ? AND questionnaire_id = ?
-        ),
-        min_score = (
-          SELECT MIN(score) FROM quiz_attempts 
-          WHERE student_id = ? AND questionnaire_id = ?
-        )
-        WHERE student_id = ? AND questionnaire_id = ?
-      `, [attempt.student_id, attempt.questionnaire_id, attempt.student_id, attempt.questionnaire_id, attempt.student_id, attempt.questionnaire_id]);
+      // Sincronizar phase desde questionnaire (coherencia con quiz_attempts)
+      const [qPhase] = await pool.query(
+        'SELECT phase FROM questionnaires WHERE id = ?',
+        [attempt.questionnaire_id]
+      );
+      const phaseFromQ = qPhase?.[0]?.phase ?? attempt.phase;
+
+      // Actualizar evaluation_results: best_score, min_score y phase
+      await pool.query(
+        `UPDATE evaluation_results 
+         SET best_score = (SELECT MAX(score) FROM quiz_attempts WHERE student_id = ? AND questionnaire_id = ?),
+             min_score = (SELECT MIN(score) FROM quiz_attempts WHERE student_id = ? AND questionnaire_id = ?),
+             phase = ?
+         WHERE student_id = ? AND questionnaire_id = ?`,
+        [attempt.student_id, attempt.questionnaire_id, attempt.student_id, attempt.questionnaire_id, phaseFromQ, attempt.student_id, attempt.questionnaire_id]
+      );
       
       // Recalcular automáticamente phase_averages después de actualizar intentos
       try {
@@ -3619,5 +3622,103 @@ app.post('/api/recalculate-phase-averages/teacher/:teacherId', verifyToken, asyn
   } catch (error) {
     console.error('Error al recalcular phase_averages:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// CRUD nota manual por fase (docente, administrador, super_administrador)
+const allowTeacherOrAdmin = (req, res, next) => {
+  const r = req.user?.role;
+  if (r === 'docente' || r === 'administrador' || r === 'super_administrador' || r === 'admin') return next();
+  return res.status(403).json({ success: false, error: 'Se requiere rol docente, administrador o super administrador.' });
+};
+
+app.put('/api/phase-averages/students/:studentId/phases/:phase/manual', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const phase = parseInt(req.params.phase, 10);
+    const { average_score_manual } = req.body;
+
+    if (![1, 2, 3, 4].includes(phase)) {
+      return res.status(400).json({ success: false, error: 'Fase debe ser 1, 2, 3 o 4.' });
+    }
+
+    const year = new Date().getFullYear();
+
+    const [teacherRows] = await pool.query(
+      'SELECT teacher_id FROM teacher_students WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+      [studentId, year]
+    );
+    if (teacherRows.length === 0) {
+      return res.status(404).json({ success: false, error: 'No se encontró profesor asignado para el estudiante.' });
+    }
+    const teacherId = teacherRows[0].teacher_id;
+
+    if (req.user.role === 'docente' && req.user.teacher_id !== teacherId) {
+      return res.status(403).json({ success: false, error: 'No tienes permiso para editar notas de este estudiante.' });
+    }
+
+    const manualVal = average_score_manual === null || average_score_manual === undefined || average_score_manual === ''
+      ? null
+      : Math.min(5, Math.max(0, parseFloat(average_score_manual)));
+
+    const [existing] = await pool.query(
+      'SELECT id FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+      [studentId, teacherId, phase]
+    );
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No existe registro de fase para este estudiante. Debe haber evaluaciones del sistema en esa fase antes de agregar nota manual.'
+      });
+    }
+
+    await pool.query(
+      'UPDATE phase_averages SET average_score_manual = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+      [manualVal, studentId, teacherId, phase]
+    );
+
+    const result = await recalculatePhaseAverages(studentId, teacherId);
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+
+    res.json({
+      success: true,
+      message: 'Nota manual actualizada y definitiva recalculada.',
+      phase,
+      average_score_manual: manualVal
+    });
+  } catch (e) {
+    console.error('Error al actualizar nota manual:', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/phase-averages/students/:studentId/phases', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const year = new Date().getFullYear();
+
+    const [teacherRows] = await pool.query(
+      'SELECT teacher_id FROM teacher_students WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+      [studentId, year]
+    );
+    if (teacherRows.length === 0) {
+      return res.json([]);
+    }
+    const teacherId = teacherRows[0].teacher_id;
+
+    if (req.user.role === 'docente' && req.user.teacher_id !== teacherId) {
+      return res.status(403).json({ success: false, error: 'No tienes permiso para ver notas de este estudiante.' });
+    }
+
+    const [rows] = await pool.query(
+      'SELECT phase, average_score, average_score_manual, evaluations_completed FROM phase_averages WHERE student_id = ? AND teacher_id = ? ORDER BY phase',
+      [studentId, teacherId]
+    );
+    res.json(rows);
+  } catch (e) {
+    console.error('Error al listar phase_averages:', e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });

@@ -216,13 +216,19 @@ router.post('/submit', verifyToken, async (req, res) => {
     } else {
       const current = existingEval[0];
       if (score > current.best_score) {
-        // Actualizar si esta nota es mejor (y actualizar academic_year si es NULL)
+        // Actualizar si esta nota es mejor; también phase para mantener coherencia con questionnaire
         await pool.query(
           `UPDATE evaluation_results 
-           SET best_score = ?, selected_attempt_id = ?, recorded_at = CURRENT_TIMESTAMP, 
+           SET best_score = ?, selected_attempt_id = ?, phase = ?, recorded_at = CURRENT_TIMESTAMP, 
                academic_year = COALESCE(academic_year, ?)
            WHERE id = ?`,
-          [score, attemptId, currentAcademicYear, current.id]
+          [score, attemptId, phaseNumber, currentAcademicYear, current.id]
+        );
+      } else {
+        // Mismo o menor puntaje: seguir sincronizando phase por si el cuestionario cambió de fase
+        await pool.query(
+          `UPDATE evaluation_results SET phase = ?, academic_year = COALESCE(academic_year, ?) WHERE id = ?`,
+          [phaseNumber, currentAcademicYear, current.id]
         );
       }
     }
@@ -771,32 +777,53 @@ router.get('/evaluations-by-phase/:studentId', async (req, res) => {
     
     const teacherName = studentInfo.length > 0 ? (studentInfo[0].teacher_name || null) : null;
     const institution = studentInfo.length > 0 ? (studentInfo[0].institution || null) : null;
+    const teacherId = studentInfo.length > 0 ? (studentInfo[0].teacher_id || null) : null;
 
-    // Obtener todas las evaluaciones agrupadas por fase (filtradas por academic_year)
+    // Obtener evaluaciones por fase + phase_averages (average_score, average_score_manual) y grades (definitiva)
     const [evaluations] = await pool.query(`
       SELECT 
         q.phase,
         COUNT(er.id) AS total_evaluations,
-        AVG(er.best_score) AS phase_average,
-        g.phase1, g.phase2, g.phase3, g.phase4,
-        g.average AS overall_average
+        AVG(er.best_score) AS phase_average_system,
+        MAX(pa.average_score) AS average_score,
+        MAX(pa.average_score_manual) AS average_score_manual,
+        MAX(g.phase1) AS phase1, MAX(g.phase2) AS phase2, MAX(g.phase3) AS phase3, MAX(g.phase4) AS phase4,
+        MAX(g.average) AS overall_average
       FROM evaluation_results er
       JOIN questionnaires q ON er.questionnaire_id = q.id
       LEFT JOIN grades g ON er.student_id = g.student_id 
         AND (g.academic_year = ? OR g.academic_year IS NULL)
+      LEFT JOIN phase_averages pa ON pa.student_id = er.student_id 
+        AND pa.phase = q.phase
+        AND (pa.teacher_id = ? OR ? IS NULL)
       WHERE er.student_id = ? 
       AND (er.academic_year = ? OR er.academic_year IS NULL)
       GROUP BY q.phase
       ORDER BY q.phase
-    `, [currentAcademicYear, realStudentId, currentAcademicYear]);
-    
-    // Agregar información del docente, institución y período académico a cada fase
-    const evaluationsWithInfo = evaluations.map(evaluation => ({
-      ...evaluation,
-      teacher_name: teacherName,
-      institution: institution,
-      academic_year: currentAcademicYear
-    }));
+    `, [currentAcademicYear, teacherId, teacherId, realStudentId, currentAcademicYear]);
+
+    // Definitiva: grades.phaseN si existe; si no, sistema. Incluir average_score (sistema) y average_score_manual.
+    const evaluationsWithInfo = evaluations.map(ev => {
+      const phaseCol = `phase${ev.phase}`;
+      const definitive = ev[phaseCol] != null ? parseFloat(ev[phaseCol]) : (ev.average_score != null ? parseFloat(ev.average_score) : ev.phase_average_system);
+      const systemScore = ev.average_score != null ? parseFloat(ev.average_score) : (ev.phase_average_system != null ? parseFloat(ev.phase_average_system) : null);
+      const manualScore = ev.average_score_manual != null ? parseFloat(ev.average_score_manual) : null;
+      return {
+        phase: ev.phase,
+        total_evaluations: ev.total_evaluations,
+        phase_average: definitive,
+        average_score: systemScore,
+        average_score_manual: manualScore,
+        phase1: ev.phase1,
+        phase2: ev.phase2,
+        phase3: ev.phase3,
+        phase4: ev.phase4,
+        overall_average: ev.overall_average,
+        teacher_name: teacherName,
+        institution: institution,
+        academic_year: currentAcademicYear
+      };
+    });
 
     res.json(evaluationsWithInfo);
   } catch (error) {

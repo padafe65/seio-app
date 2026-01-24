@@ -264,8 +264,10 @@ const StudentDashboardPage = () => {
                   <thead>
                     <tr>
                       <th>Fase</th>
-                      <th>Evaluaciones Completadas</th>
-                      <th>Promedio</th>
+                      <th>Evaluaciones</th>
+                      <th>Nota automática (sistema)</th>
+                      <th>Nota manual</th>
+                      <th>Definitiva</th>
                       <th>Docente</th>
                       <th>Institución</th>
                       <th>Estado</th>
@@ -273,29 +275,45 @@ const StudentDashboardPage = () => {
                   </thead>
                   <tbody>
                     {filteredEvaluations.length > 0 ? (
-                      filteredEvaluations.map((phase, index) => (
-                        <tr key={index}>
-                          <td>Fase {phase.phase}</td>
-                          <td>{phase.total_evaluations}</td>
-                          <td>{formatGrade(phase.phase_average)}</td>
-                          <td>{phase.teacher_name || 'N/A'}</td>
-                          <td>{phase.institution || studentData?.institution || studentData?.user_institution || 'N/A'}</td>
-                          <td>
-                            {phase.phase_average ? (
-                              parseFloat(phase.phase_average) >= 3.0 ? (
-                                <span className="badge bg-success">Aprobado</span>
+                      filteredEvaluations.map((phase, index) => {
+                        const hasManual = phase.average_score_manual != null && !isNaN(parseFloat(phase.average_score_manual));
+                        return (
+                          <tr key={index}>
+                            <td>Fase {phase.phase}</td>
+                            <td>{phase.total_evaluations}</td>
+                            <td>{formatGrade(phase.average_score)}</td>
+                            <td>
+                              {hasManual ? (
+                                formatGrade(phase.average_score_manual)
                               ) : (
-                                <span className="badge bg-danger">Reprobado</span>
-                              )
-                            ) : (
-                              <span className="badge bg-secondary">Sin datos</span>
-                            )}
-                          </td>
-                      </tr>
-                    ))
+                                <span className="text-muted small">—</span>
+                              )}
+                            </td>
+                            <td>
+                              {formatGrade(phase.phase_average)}
+                              {!hasManual && (phase.average_score != null || phase.phase_average != null) && (
+                                <span className="text-muted small d-block">(solo sistema)</span>
+                              )}
+                            </td>
+                            <td>{phase.teacher_name || 'N/A'}</td>
+                            <td>{phase.institution || studentData?.institution || studentData?.user_institution || 'N/A'}</td>
+                            <td>
+                              {phase.phase_average ? (
+                                parseFloat(phase.phase_average) >= 3.0 ? (
+                                  <span className="badge bg-success">Aprobado</span>
+                                ) : (
+                                  <span className="badge bg-danger">Reprobado</span>
+                                )
+                              ) : (
+                                <span className="badge bg-secondary">Sin datos</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                     ) : (
                       <tr>
-                        <td colSpan="6" className="text-center">
+                        <td colSpan="8" className="text-center">
                           {selectedTeacherId 
                             ? 'No hay evaluaciones registradas para esta materia' 
                             : 'No hay evaluaciones registradas'}
@@ -305,6 +323,11 @@ const StudentDashboardPage = () => {
                   </tbody>
                 </table>
               </div>
+              {filteredEvaluations.some(p => (p.average_score_manual == null || isNaN(parseFloat(p.average_score_manual))) && (p.average_score != null || p.phase_average != null)) && (
+                <div className="alert alert-info mt-3 mb-0 small">
+                  <strong>Nota:</strong> En las fases en que no hay nota manual, la definitiva corresponde únicamente a la nota del sistema.
+                </div>
+              )}
             </div>
           </div>
         </div>

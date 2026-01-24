@@ -94,13 +94,25 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       };
     }
     
-    // 4. Actualizar la tabla grades con las fases correctas
+    // 4. Obtener average_score_manual existente por fase (no sobrescribir)
+    const [existingPhaseRows] = await pool.query(
+      'SELECT phase, average_score_manual FROM phase_averages WHERE student_id = ? AND teacher_id = ?',
+      [studentId, teacherId]
+    );
+    const manualByPhase = {};
+    existingPhaseRows.forEach(r => { manualByPhase[r.phase] = r.average_score_manual; });
+
+    // 5. Calcular definitiva por fase: sistema solo, o (sistema + manual) / 2
     const phaseGrades = {};
-    evalsByPhase.forEach(phase => {
-      phaseGrades[`phase${phase.phase}`] = phase.avg_score;
-    });
-    
-    // Verificar si existe registro en grades (filtrado por academic_year)
+    for (const phase of evalsByPhase) {
+      const manual = manualByPhase[phase.phase];
+      const definitive = (manual != null && !isNaN(parseFloat(manual)))
+        ? parseFloat(((phase.avg_score + parseFloat(manual)) / 2).toFixed(2))
+        : phase.avg_score;
+      phaseGrades[`phase${phase.phase}`] = definitive;
+    }
+
+    // 6. Verificar si existe registro en grades (filtrado por academic_year)
     const [existingGrade] = await pool.query(
       'SELECT * FROM grades WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
       [studentId, currentAcademicYear]
@@ -118,8 +130,8 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       
       if (updateFields.length > 0) {
         await pool.query(
-          `UPDATE grades SET ${updateFields.join(', ')} WHERE student_id = ?`,
-          [...updateValues, studentId]
+          `UPDATE grades SET ${updateFields.join(', ')} WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)`,
+          [...updateValues, studentId, currentAcademicYear]
         );
         console.log(`✅ Actualizado grades con fases:`, phaseGrades);
       }
@@ -139,8 +151,11 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       }
     }
     
-    // 5. Recalcular el promedio general en grades
-    const [currentGrades] = await pool.query('SELECT * FROM grades WHERE student_id = ?', [studentId]);
+    // 7. Recalcular el promedio general en grades
+    const [currentGrades] = await pool.query(
+      'SELECT * FROM grades WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)',
+      [studentId, currentAcademicYear]
+    );
     if (currentGrades.length > 0) {
       const grades = currentGrades[0];
       const validPhases = [grades.phase1, grades.phase2, grades.phase3, grades.phase4]
@@ -160,27 +175,24 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       console.log(`✅ Promedio general calculado: ${overallAverage.toFixed(2)} (${validPhases.length} fases válidas)`);
     }
     
-    // 6. Actualizar phase_averages con los valores correctos
+    // 8. Actualizar phase_averages: solo average_score y evaluations_completed (preservar average_score_manual)
     for (const evalData of evalsByPhase) {
       const phase = evalData.phase;
       const avgScore = parseFloat(evalData.avg_score);
       const evaluationsCompleted = evalData.total_evaluations;
       
-      // Verificar si existe registro
       const [existingPhaseAvg] = await pool.query(
-        'SELECT * FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+        'SELECT id, average_score_manual FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
         [studentId, teacherId, phase]
       );
       
       if (existingPhaseAvg.length > 0) {
-        // Actualizar registro existente
         await pool.query(
           'UPDATE phase_averages SET average_score = ?, evaluations_completed = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
           [avgScore, evaluationsCompleted, studentId, teacherId, phase]
         );
-        console.log(`✅ Actualizado phase_averages fase ${phase}: ${avgScore} (${evaluationsCompleted} evaluaciones)`);
+        console.log(`✅ Actualizado phase_averages fase ${phase}: ${avgScore} (${evaluationsCompleted} evaluaciones), manual preservado`);
       } else {
-        // Crear nuevo registro
         await pool.query(
           'INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, evaluations_completed) VALUES (?, ?, ?, ?, ?)',
           [studentId, teacherId, phase, avgScore, evaluationsCompleted]
