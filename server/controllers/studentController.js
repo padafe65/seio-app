@@ -41,6 +41,78 @@ export const getStudents = async (req, res) => {
   }
 };
 
+// Estudiantes sin profesor asignado (docente: por sus instituciones; admin/super: todos o filtros)
+export const getUnassignedStudents = async (req, res) => {
+  try {
+    const { institution, grade, course_id } = req.query;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+
+    let teacherInstitutions = [];
+    if (userRole === 'docente') {
+      const [teacherRows] = await pool.query(
+        'SELECT id, institution FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+      if (teacherRows.length > 0) {
+        const teacherId = teacherRows[0].id;
+        try {
+          const [instRows] = await pool.query(
+            `SELECT DISTINCT institution FROM teacher_institutions 
+             WHERE teacher_id = ? AND license_status = 'active'`,
+            [teacherId]
+          );
+          teacherInstitutions = (instRows || []).map((r) => r.institution);
+        } catch (_) {}
+        if (teacherInstitutions.length === 0 && teacherRows[0].institution) {
+          teacherInstitutions = [teacherRows[0].institution];
+        }
+      }
+    }
+
+    let query = `
+      SELECT DISTINCT
+        s.id, s.user_id, s.grade, s.course_id, s.institution,
+        u.name, u.email, u.phone,
+        c.name as course_name, c.grade as course_grade
+      FROM students s
+      INNER JOIN users u ON s.user_id = u.id
+      LEFT JOIN courses c ON s.course_id = c.id
+      LEFT JOIN teacher_students ts ON s.id = ts.student_id
+      WHERE ts.student_id IS NULL
+    `;
+    const params = [];
+
+    if (userRole === 'docente' && teacherInstitutions.length > 0) {
+      const placeholders = teacherInstitutions.map(() => '?').join(',');
+      query += ` AND (s.institution IN (${placeholders}) OR u.institution IN (${placeholders}))`;
+      params.push(...teacherInstitutions, ...teacherInstitutions);
+    } else if (institution) {
+      query += ` AND (s.institution = ? OR u.institution = ?)`;
+      params.push(institution, institution);
+    }
+    if (grade) {
+      query += ` AND s.grade = ?`;
+      params.push(grade);
+    }
+    if (course_id) {
+      query += ` AND s.course_id = ?`;
+      params.push(course_id);
+    }
+    query += ` ORDER BY u.name ASC`;
+
+    const [students] = await pool.query(query, params);
+    res.json({ success: true, count: students.length, data: students });
+  } catch (error) {
+    console.error('Error al obtener estudiantes sin profesor:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener estudiantes sin profesor',
+      error: error.message
+    });
+  }
+};
+
 // Obtener un estudiante por ID
 export const getStudentById = async (req, res) => {
   try {

@@ -33,6 +33,7 @@ import teacherRoutes from './routes/teacherRoutes.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
 import usersRoutes from './routes/usersRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
+import attendanceRoutes from './routes/attendanceRoutes.js';
 import pool from './config/db.js';
 import { syncSubjectCategories } from './utils/syncSubjectCategories.js';
 
@@ -347,6 +348,7 @@ app.use('/api', improvementPlansRoutes);
 app.use('/api/educational-resources', educationalResourcesRoutes);
 app.use('/api/prueba-saber', pruebaSaberRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 // ⚠️ usersRoutes DEBE ir DESPUÉS de definir las rutas de auth
 // porque usersRoutes aplica verifyToken a todas las rutas que empiezan con /api
@@ -2996,96 +2998,6 @@ app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
       success: false,
       message: 'Error al asignar estudiante',
       error: error.message 
-    });
-  }
-});
-
-// Obtener estudiantes sin profesor asignado (filtrados por institución del docente)
-app.get('/api/students/unassigned', verifyToken, async (req, res) => {
-  try {
-    const { institution, grade, course_id } = req.query;
-    const userRole = req.user.role;
-    const userId = req.user.id;
-    
-    // Obtener instituciones del docente si es docente
-    let teacherInstitutions = [];
-    if (userRole === 'docente') {
-      const [teacherRows] = await pool.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
-        [userId]
-      );
-      
-      if (teacherRows.length > 0) {
-        const teacherId = teacherRows[0].id;
-        // Obtener instituciones activas del docente desde teacher_institutions
-        const [institutionRows] = await pool.query(
-          `SELECT DISTINCT institution 
-           FROM teacher_institutions 
-           WHERE teacher_id = ? AND license_status = 'active'`,
-          [teacherId]
-        );
-        teacherInstitutions = institutionRows.map(row => row.institution);
-      }
-    }
-    
-    // Construir query base
-    let query = `
-      SELECT DISTINCT
-        s.id,
-        s.user_id,
-        s.grade,
-        s.course_id,
-        s.institution,
-        u.name,
-        u.email,
-        u.phone,
-        c.name as course_name,
-        c.grade as course_grade
-      FROM students s
-      INNER JOIN users u ON s.user_id = u.id
-      LEFT JOIN courses c ON s.course_id = c.id
-      LEFT JOIN teacher_students ts ON s.id = ts.student_id
-      WHERE ts.student_id IS NULL
-    `;
-    
-    const params = [];
-    
-    // Filtrar por institución si es docente o si se proporciona
-    if (userRole === 'docente' && teacherInstitutions.length > 0) {
-      query += ` AND (s.institution IN (${teacherInstitutions.map(() => '?').join(',')}) OR u.institution IN (${teacherInstitutions.map(() => '?').join(',')}))`;
-      params.push(...teacherInstitutions, ...teacherInstitutions);
-    } else if (institution) {
-      query += ` AND (s.institution = ? OR u.institution = ?)`;
-      params.push(institution, institution);
-    }
-    
-    // Filtrar por grado si se proporciona
-    if (grade) {
-      query += ` AND s.grade = ?`;
-      params.push(grade);
-    }
-    
-    // Filtrar por curso si se proporciona
-    if (course_id) {
-      query += ` AND s.course_id = ?`;
-      params.push(course_id);
-    }
-    
-    query += ` ORDER BY u.name ASC`;
-    
-    const [students] = await pool.query(query, params);
-    
-    res.json({
-      success: true,
-      count: students.length,
-      data: students
-    });
-  } catch (error) {
-    console.error('❌ Error al obtener estudiantes sin profesor:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error al obtener estudiantes sin profesor',
-      error: error.message
     });
   }
 });

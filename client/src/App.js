@@ -27,7 +27,7 @@ import Swal from 'sweetalert2';
 import { 
   Home, Users, FileText, BarChart2, 
   PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen,
-  Shield, Database, GraduationCap, CreditCard, Mail
+  Shield, Database, GraduationCap, CreditCard, Mail, ClipboardList
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -36,6 +36,7 @@ import StudentForm from './pages/students/StudentForm.js';
 import StudentDetail from './pages/students/StudentDetail.js';
 import IndicatorsList from './pages/indicators/IndicatorsList.js';
 import IndicatorForm from './pages/indicators/IndicatorForm.js';
+import PlantillasPorAsignatura from './pages/indicators/PlantillasPorAsignatura.js';
 import ResultsList from './pages/results/ResultsList.js';
 import ResultDetail from './pages/results/ResultDetail.js';
 import QuestionnairesList from './pages/questionnaires/QuestionnairesList.js';
@@ -66,6 +67,8 @@ import TakePruebaSaberPage from './pages/prueba-saber/TakePruebaSaberPage.js';
 import PruebaSaberResultsPage from './pages/prueba-saber/PruebaSaberResultsPage.js';
 import LicensesManagement from './pages/licenses/LicensesManagement.js';
 import MessagesPage from './pages/messages/MessagesPage.js';
+import AttendancePage from './pages/attendance/AttendancePage.js';
+import AttendanceValidatePage from './pages/attendance/AttendanceValidatePage.js';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -284,6 +287,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/indicadores/plantillas" className="nav-link text-white d-flex align-items-center">
+                  <CheckSquare size={18} className="me-2" /> Plantillas por asignatura
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/resultados" className="nav-link text-white d-flex align-items-center">
                   <BarChart2 size={18} className="me-2" /> Resultados
                 </Link>
@@ -306,6 +314,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center">
                   <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/asistencia" className="nav-link text-white d-flex align-items-center">
+                  <ClipboardList size={18} className="me-2" /> Asistencia
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -376,6 +389,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/indicadores/plantillas" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <CheckSquare size={18} className="me-2" /> Plantillas por asignatura
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BarChart2 size={18} className="me-2" /> Resultados
                 </Link>
@@ -383,6 +401,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/asistencia" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <ClipboardList size={18} className="me-2" /> Asistencia
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -455,9 +478,11 @@ function AppContent() {
             <Route path="/mis-estudiantes" element={<TeacherStudentsList />} />
             <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
             <Route path="/calificaciones-fase" element={<CalificacionesPorFasePage />} />
+            <Route path="/asistencia" element={<AttendancePage />} />
             
             {/* Rutas para indicadores */}
             <Route path="/indicadores" element={<IndicatorsList />} />
+            <Route path="/indicadores/plantillas" element={<PlantillasPorAsignatura />} />
             <Route path="/indicadores/nuevo" element={<IndicatorForm />} />
             <Route path="/indicadores/:id/editar" element={<IndicatorForm />} />
             
@@ -563,6 +588,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/indicadores/plantillas" className="nav-link text-white d-flex align-items-center">
+                  <CheckSquare size={18} className="me-2" /> Plantillas por asignatura
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/resultados" className="nav-link text-white d-flex align-items-center">
                   <BarChart2 size={18} className="me-2" /> Resultados
                 </Link>
@@ -585,6 +615,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center">
                   <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/asistencia" className="nav-link text-white d-flex align-items-center">
+                  <ClipboardList size={18} className="me-2" /> Asistencia
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -659,6 +694,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/indicadores/plantillas" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <CheckSquare size={18} className="me-2" /> Plantillas por asignatura
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/resultados" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BarChart2 size={18} className="me-2" /> Resultados
                 </Link>
@@ -686,6 +726,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/calificaciones-fase" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <BarChart2 size={18} className="me-2" /> Calificaciones por Fase
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/asistencia" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <ClipboardList size={18} className="me-2" /> Asistencia
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -736,9 +781,11 @@ function AppContent() {
             <Route path="/estudiantes/:id/editar" element={<StudentForm />} />
             <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
             <Route path="/calificaciones-fase" element={<CalificacionesPorFasePage />} />
+            <Route path="/asistencia" element={<AttendancePage />} />
             
             {/* Rutas para indicadores */}
             <Route path="/indicadores" element={<IndicatorsList />} />
+            <Route path="/indicadores/plantillas" element={<PlantillasPorAsignatura />} />
             <Route path="/indicadores/nuevo" element={<IndicatorForm />} />
             <Route path="/indicadores/:id/editar" element={<IndicatorForm />} />
             
@@ -853,6 +900,11 @@ function AppContent() {
                   <BookOpen size={18} className="me-2" /> Recursos Educativos
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/asistencia/validar" className="nav-link text-white d-flex align-items-center">
+                  <ClipboardList size={18} className="me-2" /> Registrar asistencia
+                </Link>
+              </li>
             </ul>
           </div>
         </div>
@@ -914,6 +966,11 @@ function AppContent() {
                   <BookOpen size={18} className="me-2" /> Recursos Educativos
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/asistencia/validar" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <ClipboardList size={18} className="me-2" /> Registrar asistencia
+                </Link>
+              </li>
             </ul>
           </Offcanvas.Body>
         </Offcanvas>
@@ -954,6 +1011,7 @@ function AppContent() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/CompleteStudent" element={<CompleteStudent />} />
         <Route path="/CompleteTeacher" element={<CompleteTeacher />} />
+        <Route path="/asistencia/validar" element={<AttendanceValidatePage />} />
         
         {/* Rutas de super_administrador / administrador con sidebar */}
         <Route path="/*" element={

@@ -1,0 +1,2 @@
+-- Marcar indicadores creados al "aplicar plantilla" para poder listar "Plantillas aplicadas".
+-- Ejecutar vía: npm run migrate:from-template (desde server)

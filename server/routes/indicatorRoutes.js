@@ -2,12 +2,13 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
+import { getTemplateSubjects, getTemplateIndicators } from '../data/subjectTemplates.js';
 
 const router = express.Router();
 
 // Obtener todos los indicadores (con filtros opcionales)
 router.get('/', verifyToken, async (req, res) => {
-  const { teacher_id, student_id, subject, phase, questionnaire_id } = req.query;
+  const { teacher_id, student_id, subject, phase, questionnaire_id, from_template, grade } = req.query;
   console.log('🔍 Iniciando consulta de indicadores con filtros:', req.query);
 
   try {
@@ -68,6 +69,8 @@ router.get('/', verifyToken, async (req, res) => {
         i.subject,
         i.category,
         i.phase,
+        i.grade,
+        i.from_template,
         i.created_at,
         i.teacher_id,
         i.questionnaire_id,
@@ -113,6 +116,13 @@ router.get('/', verifyToken, async (req, res) => {
     if (questionnaire_id) {
       query += ' AND i.questionnaire_id = ?';
       params.push(questionnaire_id);
+    }
+    if (from_template === '1' || from_template === 'true') {
+      query += ' AND i.from_template = 1';
+    }
+    if (grade) {
+      query += ' AND i.grade = ?';
+      params.push(grade);
     }
     
     // Agrupar por indicador para manejar múltiples estudiantes
@@ -188,6 +198,55 @@ router.get('/', verifyToken, async (req, res) => {
       message: 'Error al obtener indicadores',
       error: error.message 
     });
+  }
+});
+
+// Plantillas por asignatura (Micro-SaaS): listar asignaturas disponibles
+router.get('/templates/subjects', verifyToken, (req, res) => {
+  try {
+    const subjects = getTemplateSubjects();
+    res.json({ success: true, data: subjects });
+  } catch (e) {
+    console.error('Error listing template subjects:', e);
+    res.status(500).json({ success: false, message: 'Error al listar plantillas' });
+  }
+});
+
+// Obtener indicadores de una plantilla por asignatura
+router.get('/templates/:subject', verifyToken, (req, res) => {
+  try {
+    const { subject } = req.params;
+    const indicators = getTemplateIndicators(decodeURIComponent(subject));
+    res.json({ success: true, data: indicators });
+  } catch (e) {
+    console.error('Error fetching template:', e);
+    res.status(500).json({ success: false, message: 'Error al obtener plantilla' });
+  }
+});
+
+// Aplicar plantilla: crear indicadores para el docente desde la plantilla
+router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const { teacher_id, subject, grade } = req.body;
+    const tid = teacher_id ?? req.user?.teacher_id;
+    if (!tid) return res.status(400).json({ success: false, message: 'teacher_id requerido' });
+    const sub = (subject || '').trim();
+    const indicators = getTemplateIndicators(sub);
+    if (!indicators.length) return res.status(400).json({ success: false, message: 'Plantilla no encontrada para esta asignatura' });
+    const g = (grade || '').toString().trim() || null;
+    const inserted = [];
+    for (const t of indicators) {
+      const [r] = await pool.query(
+        `INSERT INTO indicators (teacher_id, description, subject, category, phase, grade, questionnaire_id, from_template)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, 1)`,
+        [tid, t.description, sub, t.category || null, t.phase, g]
+      );
+      inserted.push({ id: r.insertId, ...t });
+    }
+    res.json({ success: true, data: inserted, count: inserted.length });
+  } catch (e) {
+    console.error('Error applying template:', e);
+    res.status(500).json({ success: false, message: 'Error al aplicar plantilla' });
   }
 });
 

@@ -7,7 +7,8 @@ import {
   createStudent,
   updateStudent,
   deleteStudent,
-  getStudentStats
+  getStudentStats,
+  getUnassignedStudents
 } from '../controllers/studentController.js';
 import { validateTeacherStudentInstitution } from '../utils/validateTeacherStudentInstitution.js';
 import { fileURLToPath } from 'url';
@@ -50,6 +51,9 @@ router.use(verifyToken);
 
 // Obtener todos los estudiantes (solo administradores)
 router.get('/', isAdmin, getStudents);
+
+// Estudiantes sin profesor (docente: por institución; admin/super: todos o filtros)
+router.get('/unassigned', getUnassignedStudents);
 
 // Crear un nuevo estudiante (solo administradores)
 router.post('/', isAdmin, upload.single('profileImage'), createStudent);

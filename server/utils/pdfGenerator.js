@@ -34,35 +34,41 @@ export const generatePhaseResultsPDF = async (data) => {
       doc.on('error', reject);
 
       // ============================================
-      // ENCABEZADO CON LOGO
+      // ENCABEZADO CON LOGO (marca blanca)
       // ============================================
       const logoPath = path.join(__dirname, '../uploads/logos/logo.png');
-      const logoExists = fs.existsSync(logoPath);
-
-      if (logoExists) {
+      let logoExists = fs.existsSync(logoPath);
+      if (data.reportLogoUrl && typeof data.reportLogoUrl === 'string') {
+        const rel = data.reportLogoUrl.replace(/^\//, '');
+        const customLogo = path.join(__dirname, '..', rel);
+        if (fs.existsSync(customLogo)) {
+          try {
+            doc.image(customLogo, 50, 50, { width: 80, height: 80 });
+            logoExists = true;
+          } catch (e) { /* fallback */ }
+        }
+      }
+      if (!logoExists && fs.existsSync(logoPath)) {
         try {
           doc.image(logoPath, 50, 50, { width: 80, height: 80 });
+          logoExists = true;
         } catch (error) {
           console.warn('⚠️ Error al cargar logo, continuando sin logo:', error.message);
         }
       }
 
-      // Título principal
+      const titleMain = (data.reportBrandName && data.reportBrandName.trim()) ? data.reportBrandName.trim() : 'SEIO - Sistema Evaluativo Integral Online';
+      const titleSub = 'Resultados de Evaluación Académica';
+
       doc.fontSize(20)
          .font('Helvetica-Bold')
          .fillColor('#1a1a1a')
-         .text('SEIO - Sistema Evaluativo Integral Online', logoExists ? 150 : 50, 50, {
-           width: 400,
-           align: 'left'
-         });
+         .text(titleMain, logoExists ? 150 : 50, 50, { width: 400, align: 'left' });
 
       doc.fontSize(16)
          .font('Helvetica')
          .fillColor('#666666')
-         .text('Resultados de Evaluación Académica', logoExists ? 150 : 50, 80, {
-           width: 400,
-           align: 'left'
-         });
+         .text(titleSub, logoExists ? 150 : 50, 80, { width: 400, align: 'left' });
 
       // Línea separadora
       doc.moveTo(50, 140)
@@ -480,11 +486,11 @@ export const generateFinalGradePDF = async (data) => {
         }
       }
 
+      const titleMainFinal = (data.reportBrandName && data.reportBrandName.trim()) ? data.reportBrandName.trim() : 'SEIO - Sistema Evaluativo Integral Online';
       doc.fontSize(20)
          .font('Helvetica-Bold')
          .fillColor('#1a1a1a')
-         .text('SEIO - Sistema Evaluativo Integral Online', logoExists ? 150 : 50, 50);
-
+         .text(titleMainFinal, logoExists ? 150 : 50, 50);
       doc.fontSize(16)
          .font('Helvetica')
          .fillColor('#666666')

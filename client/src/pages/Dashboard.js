@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Users, FileText, GraduationCap } from 'lucide-react';
@@ -14,6 +14,12 @@ const Dashboard = () => {
   const [teacherSubject, setTeacherSubject] = useState(''); // Nuevo estado para la materia del docente
   const [teacherLicenses, setTeacherLicenses] = useState([]); // Estado para licencias del docente
   const [teacherId, setTeacherId] = useState(null); // ID del docente (teacher_id)
+  const [reportBrandName, setReportBrandName] = useState('');
+  const [reportLogoUrl, setReportLogoUrl] = useState('');
+  const [savingReportBrand, setSavingReportBrand] = useState(false);
+  const [logoFile, setLogoFile] = useState(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef(null);
   const [studentFilters, setStudentFilters] = useState({
     name: '',
     email: '',
@@ -64,6 +70,8 @@ const Dashboard = () => {
             const teacherData = teacherDataResponse.data?.data || teacherDataResponse.data;
             if (teacherData && teacherData.id) {
               setTeacherId(teacherData.id);
+              setReportBrandName(teacherData.report_brand_name || '');
+              setReportLogoUrl(teacherData.report_logo_url || '');
               
               // Obtener licencias del docente
               try {
@@ -159,6 +167,112 @@ const Dashboard = () => {
           <div className="card-body py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
             <span className="fw-medium">Calificaciones por fase</span>
             <Link to="/calificaciones-fase" className="btn btn-primary btn-sm">Ver tabla y filtros</Link>
+          </div>
+        </div>
+      )}
+
+      {user.role === 'docente' && teacherId && (
+        <div className="card mb-3 border-secondary">
+          <div className="card-header bg-light">
+            <h6 className="mb-0">Marca blanca en reportes PDF</h6>
+            <small className="text-muted">Nombre o logo que aparecerá en los reportes que generes</small>
+          </div>
+          <div className="card-body">
+            <div className="row g-2 mb-2">
+              <div className="col-md-6">
+                <label className="form-label small">Nombre comercial (ej. Estudio del Profe Juan)</label>
+                <input
+                  type="text"
+                  className="form-control form-control-sm"
+                  placeholder="Dejar vacío para usar SEIO"
+                  value={reportBrandName}
+                  onChange={(e) => setReportBrandName(e.target.value)}
+                />
+              </div>
+              <div className="col-md-6">
+                <label className="form-label small">URL del logo (opcional)</label>
+                <input
+                  type="text"
+                  className="form-control form-control-sm"
+                  placeholder="https://... o /uploads/..."
+                  value={reportLogoUrl}
+                  onChange={(e) => setReportLogoUrl(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="row g-2 mb-2">
+              <div className="col-12">
+                <label className="form-label small">O subir logo desde PC o celular</label>
+                <div className="d-flex flex-wrap align-items-center gap-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/jpg,image/webp"
+                    className="form-control form-control-sm w-auto"
+                    onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary btn-sm"
+                    disabled={!logoFile || uploadingLogo}
+                    onClick={async () => {
+                      if (!logoFile || !teacherId) return;
+                      setUploadingLogo(true);
+                      try {
+                        const form = new FormData();
+                        form.append('logo', logoFile);
+                        const api = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+                        const token = localStorage.getItem('authToken');
+                        const r = await fetch(`${api}/api/teachers/${teacherId}/logo`, {
+                          method: 'POST',
+                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                          body: form,
+                          credentials: 'include'
+                        });
+                        const data = await r.json().catch(() => ({}));
+                        if (!r.ok) throw new Error(data?.message || 'Error al subir');
+                        setReportLogoUrl(data?.data?.report_logo_url || '');
+                        setLogoFile(null);
+                        if (logoInputRef.current) logoInputRef.current.value = '';
+                        const Swal = (await import('sweetalert2')).default;
+                        Swal.fire({ title: 'Logo subido', text: 'El logo se usará en tus reportes PDF.', icon: 'success' });
+                      } catch (e) {
+                        const Swal = (await import('sweetalert2')).default;
+                        Swal.fire({ title: 'Error', text: e?.message || 'No se pudo subir el logo.', icon: 'error' });
+                      } finally {
+                        setUploadingLogo(false);
+                      }
+                    }}
+                  >
+                    {uploadingLogo ? 'Subiendo…' : 'Subir logo'}
+                  </button>
+                </div>
+                <small className="text-muted">PNG, JPG o WEBP. Máx. 2 MB.</small>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn btn-outline-primary btn-sm"
+              disabled={savingReportBrand}
+              onClick={async () => {
+                setSavingReportBrand(true);
+                try {
+                  await axiosClient.put(`/teachers/${teacherId}/report-settings`, {
+                    report_brand_name: reportBrandName || null,
+                    report_logo_url: reportLogoUrl || null
+                  });
+                  const Swal = (await import('sweetalert2')).default;
+                  Swal.fire({ title: 'Guardado', text: 'Configuración de marca blanca actualizada.', icon: 'success' });
+                } catch (e) {
+                  const Swal = (await import('sweetalert2')).default;
+                  Swal.fire({ title: 'Error', text: e.response?.data?.message || 'No se pudo guardar', icon: 'error' });
+                } finally {
+                  setSavingReportBrand(false);
+                }
+              }}
+            >
+              {savingReportBrand ? 'Guardando…' : 'Guardar'}
+            </button>
           </div>
         </div>
       )}

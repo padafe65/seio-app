@@ -1,14 +1,38 @@
 // routes/teachers.js
 import express from 'express';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import multer from 'multer';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin } from '../middleware/authMiddleware.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = express.Router();
 
-// Middleware para verificar el rol de docente o superadmin
+const LOGO_DIR = path.join(__dirname, '..', 'uploads', 'logos', 'teachers');
+if (!fs.existsSync(LOGO_DIR)) fs.mkdirSync(LOGO_DIR, { recursive: true });
+
+const logoUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, LOGO_DIR),
+    filename: (req, file, cb) => {
+      let ext = (path.extname(file.originalname) || '.png').toLowerCase();
+      if (!['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) ext = '.png';
+      cb(null, `teacher-${req.params.id}-${Date.now()}${ext}`);
+    }
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\/(png|jpe?g|webp)$/i.test(file.mimetype);
+    cb(null, !!ok);
+  }
+});
+
+// Middleware para verificar el rol de docente o admin (acceso total administrador y super)
 const isTeacherOrAdmin = (req, res, next) => {
-    if (req.user.role !== 'docente' && req.user.role !== 'super_administrador') {
-        return res.status(403).json({ message: 'Acceso denegado. Se requiere rol de Docente o Super Administrador.' });
+    if (req.user.role !== 'docente' && req.user.role !== 'administrador' && req.user.role !== 'super_administrador') {
+        return res.status(403).json({ message: 'Acceso denegado. Se requiere rol de Docente, Administrador o Super Administrador.' });
     }
     next();
 };
@@ -275,6 +299,48 @@ router.post('/', isAdmin, async (req, res) => {
       message: 'Error al crear profesor',
       error: error.message 
     });
+  }
+});
+
+// Marca blanca: actualizar report_brand_name y report_logo_url del docente (propio o admin)
+router.put('/:id/report-settings', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { report_brand_name, report_logo_url } = req.body;
+    const [rows] = await pool.query('SELECT id, user_id FROM teachers WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ message: 'Profesor no encontrado' });
+    const teacher = rows[0];
+    const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
+    const isOwner = req.user.role === 'docente' && req.user.teacher_id === parseInt(id, 10);
+    if (!isAdmin && !isOwner) return res.status(403).json({ message: 'Sin permiso para actualizar estos datos' });
+    await pool.query(
+      'UPDATE teachers SET report_brand_name = ?, report_logo_url = ? WHERE id = ?',
+      [report_brand_name != null ? String(report_brand_name).trim() || null : null, report_logo_url != null ? String(report_logo_url).trim() || null : null, id]
+    );
+    const [updated] = await pool.query('SELECT id, report_brand_name, report_logo_url FROM teachers WHERE id = ?', [id]);
+    res.json({ success: true, data: updated[0] });
+  } catch (e) {
+    console.error('Error updating report settings:', e);
+    res.status(500).json({ message: 'Error al actualizar configuración de reportes' });
+  }
+});
+
+// Subir logo desde PC/celular (marca blanca)
+router.post('/:id/logo', logoUpload.single('logo'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!req.file) return res.status(400).json({ message: 'No se envió ningún archivo. Selecciona una imagen (PNG, JPG, WEBP) desde tu PC o celular.' });
+    const [rows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ message: 'Profesor no encontrado' });
+    const isAdminUser = req.user.role === 'administrador' || req.user.role === 'super_administrador';
+    const isOwner = req.user.role === 'docente' && req.user.teacher_id === parseInt(id, 10);
+    if (!isAdminUser && !isOwner) return res.status(403).json({ message: 'Sin permiso para subir el logo' });
+    const relativePath = `/uploads/logos/teachers/${req.file.filename}`;
+    await pool.query('UPDATE teachers SET report_logo_url = ? WHERE id = ?', [relativePath, id]);
+    res.json({ success: true, data: { report_logo_url: relativePath } });
+  } catch (e) {
+    console.error('Error uploading teacher logo:', e);
+    res.status(500).json({ message: 'Error al subir el logo' });
   }
 });
 
@@ -608,6 +674,8 @@ router.get('/by-user/:userId', verifyToken, async (req, res) => {
       user_id: teacher.user_id,
       subject: teacher.subject,
       institution: teacher.institution,
+      report_brand_name: teacher.report_brand_name || null,
+      report_logo_url: teacher.report_logo_url || null,
       user: {
         id: teacher.user_id,
         name: teacher.name,

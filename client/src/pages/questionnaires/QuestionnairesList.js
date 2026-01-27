@@ -119,6 +119,15 @@ const QuestionnairesList = () => {
           <PlusCircle size={18} className="me-2" /> Nuevo Cuestionario
         </Link>
       </div>
+
+      {user?.role === 'docente' && (
+        <div className="alert alert-info mb-3 d-flex align-items-center" role="alert">
+          <List size={22} className="me-2 flex-shrink-0" />
+          <div>
+            <strong>Mi banco de ítems — Privado.</strong> Solo tú puedes ver y usar estos cuestionarios y preguntas. Crea y edita tus ítems desde aquí o desde <Link to="/crear-pregunta" className="alert-link">Crear pregunta</Link>.
+          </div>
+        </div>
+      )}
       
       {error && (
         <div className="alert alert-danger mb-4">

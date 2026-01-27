@@ -47,6 +47,8 @@ export const evaluatePhaseResults = async (phase) => {
         t.id as teacher_id,
         ut.name as teacher_name,
         t.subject as teacher_subject,
+        t.report_brand_name,
+        t.report_logo_url,
         COALESCE(ut.institution, u.institution) as institution
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -162,6 +164,8 @@ export const evaluatePhaseResults = async (phase) => {
         phaseScore: student.phase_score,
         teacherName: student.teacher_name || 'N/A',
         teacherSubject: student.teacher_subject || 'N/A',
+        reportBrandName: student.report_brand_name || null,
+        reportLogoUrl: student.report_logo_url || null,
         institution: student.institution || student.student_institution || 'N/A',
         academicPeriod: academicPeriod,
         failedIndicators: failedIndicators,
@@ -234,6 +238,8 @@ export const evaluatePhaseResults = async (phase) => {
               phaseGrades: phaseGrades,
               teacherName: student.teacher_name || 'N/A',
               teacherSubject: student.teacher_subject || 'N/A',
+              reportBrandName: student.report_brand_name || null,
+              reportLogoUrl: student.report_logo_url || null,
               institution: student.institution || student.student_institution || 'N/A',
               academicPeriod: academicPeriod
             };

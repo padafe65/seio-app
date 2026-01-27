@@ -1,0 +1,3 @@
+-- Marca blanca en reportes: nombre comercial y logo opcional por docente.
+-- Si report_brand_name está definido, los PDF usan ese nombre en lugar de solo "SEIO".
+-- Ejecutar vía: npm run migrate:report-brand (desde server)

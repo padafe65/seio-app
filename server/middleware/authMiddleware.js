@@ -146,7 +146,7 @@ export const isAdmin = (req, res, next) => {
  * Middleware para verificar si el usuario es administrador, super_administrador o docente
  */
 export const isTeacherOrAdmin = (req, res, next) => {
-  if (req.user.role === 'admin' || req.user.role === 'super_administrador' || req.user.role === 'docente') {
+  if (req.user.role === 'admin' || req.user.role === 'administrador' || req.user.role === 'super_administrador' || req.user.role === 'docente') {
     return next();
   }
   

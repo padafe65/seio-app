@@ -395,6 +395,11 @@ await axios.post(`/questions/question`, data, {
   return (
     <MathJaxContext>
     <div className="container mt-4">
+      {user?.role === 'docente' && (
+        <div className="alert alert-light border mb-3 py-2 small">
+          <strong>Mi banco de ítems — Privado.</strong> Las preguntas y cuestionarios que crees solo tú puedes verlos y usarlos.
+        </div>
+      )}
       {questionnaireIdFromUrl && currentQuestionnaire && (
         <div className="mb-4">
           <div className="d-flex justify-content-between align-items-center mb-3">

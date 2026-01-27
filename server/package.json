@@ -9,6 +9,9 @@
     "start:dev": "nodemon server.js",
     "dev": "nodemon server.js",
     "migrate:average-score-manual": "node scripts/run-migration-average-score-manual.js",
+    "migrate:attendance": "node scripts/run-migration-attendance.js",
+    "migrate:report-brand": "node scripts/run-migration-report-brand.js",
+    "migrate:from-template": "node scripts/run-migration-from-template.js",
     "test": "jest --detectOpenHandles --forceExit",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
