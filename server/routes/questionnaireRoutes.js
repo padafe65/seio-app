@@ -3,6 +3,7 @@ import express from 'express';
 import pool from '../config/db.js';
 import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
 import { verifyToken, validateTeacherSubject } from '../middleware/authMiddleware.js';
+import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -69,9 +70,9 @@ router.get('/', verifyToken, async (req, res) => {
       }
     }
     
-    // Lógica de roles: super_administrador ve todos, docente solo los suyos, estudiante solo los de sus docentes
-    if (userRole === 'super_administrador') {
-      // Super administrador puede ver todos los cuestionarios
+    // Lógica de roles: super_administrador y administrador ven todos, docente solo los suyos, estudiante solo los de sus docentes
+    if (userRole === 'super_administrador' || userRole === 'administrador') {
+      // Super administrador y administrador pueden ver todos los cuestionarios
       // Si hay created_by en el query, respetarlo; si no, mostrar todos
       if (created_by) {
         const [teacherRows] = await pool.query(
@@ -405,6 +406,17 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
       ]
     );
     
+    // 📝 Registrar en auditoría
+    await logCreate(
+      'questionnaires',
+      result.insertId,
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      { title, subject: finalSubject, category, grade, phase, course_id: normalizedCourseId, description },
+      req
+    );
+    
     res.status(201).json({ 
       message: 'Cuestionario creado correctamente', 
       id: result.insertId 
@@ -457,6 +469,26 @@ router.put('/:id', async (req, res) => {
     // Asegurar que la combinación subject-category existe en subject_categories
     await ensureSubjectCategoryExists(subject, category);
     
+    // Obtener valores antiguos para auditoría
+    const [oldQuestionnaire] = await pool.query(
+      'SELECT * FROM questionnaires WHERE id = ?',
+      [id]
+    );
+    
+    if (oldQuestionnaire.length === 0) {
+      return res.status(404).json({ message: 'Cuestionario no encontrado' });
+    }
+    
+    const oldValues = {
+      title: oldQuestionnaire[0].title,
+      subject: oldQuestionnaire[0].subject,
+      category: oldQuestionnaire[0].category,
+      grade: oldQuestionnaire[0].grade,
+      phase: oldQuestionnaire[0].phase,
+      course_id: oldQuestionnaire[0].course_id,
+      description: oldQuestionnaire[0].description
+    };
+    
     // Validar nivel de Prueba Saber si es tipo Prueba Saber
     let finalPruebaSaberLevel = null;
     if (is_prueba_saber === 'true' || is_prueba_saber === true) {
@@ -492,9 +524,17 @@ router.put('/:id', async (req, res) => {
       ]
     );
     
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Cuestionario no encontrado' });
-    }
+    // 📝 Registrar en auditoría
+    await logUpdate(
+      'questionnaires',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      oldValues,
+      { title, subject, category, grade, phase, course_id: normalizedCourseId, description },
+      req
+    );
     
     res.json({ message: 'Cuestionario actualizado correctamente' });
   } catch (error) {
@@ -508,15 +548,42 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Obtener datos del cuestionario para auditoría antes de eliminar
+    const [questionnaire] = await pool.query(
+      'SELECT * FROM questionnaires WHERE id = ?',
+      [id]
+    );
+    
+    if (questionnaire.length === 0) {
+      return res.status(404).json({ message: 'Cuestionario no encontrado' });
+    }
+    
+    const deletedQuestionnaireData = {
+      title: questionnaire[0].title,
+      subject: questionnaire[0].subject,
+      category: questionnaire[0].category,
+      grade: questionnaire[0].grade,
+      phase: questionnaire[0].phase,
+      course_id: questionnaire[0].course_id,
+      description: questionnaire[0].description
+    };
+    
     // Primero eliminar las preguntas asociadas
     await pool.query('DELETE FROM questions WHERE questionnaire_id = ?', [id]);
     
     // Luego eliminar el cuestionario
-    const [result] = await pool.query('DELETE FROM questionnaires WHERE id = ?', [id]);
+    await pool.query('DELETE FROM questionnaires WHERE id = ?', [id]);
     
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: 'Cuestionario no encontrado' });
-    }
+    // 📝 Registrar en auditoría
+    await logDelete(
+      'questionnaires',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      deletedQuestionnaireData,
+      req
+    );
     
     res.json({ message: 'Cuestionario y sus preguntas eliminados correctamente' });
   } catch (error) {

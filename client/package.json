@@ -17,7 +17,10 @@
     "axios": "^1.9.0",
     "better-react-mathjax": "^2.3.0",
     "bootstrap": "^5.3.6",
+    "chart.js": "^4.5.1",
     "framer-motion": "^12.6.3",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
     "jwt-decode": "^4.0.0",
     "katex": "^0.16.22",
     "lucide-react": "^0.503.0",
@@ -25,6 +28,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-bootstrap": "^2.10.9",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.1.0",
     "react-draggable": "^4.4.6",
     "react-idle-timer": "^5.7.2",
@@ -35,7 +39,8 @@
     "sweetalert2": "^11.17.2",
     "sweetalert2-react-content": "^5.1.0",
     "web-vitals": "^2.1.4",
-    "wouter": "^3.7.0"
+    "wouter": "^3.7.0",
+    "xlsx": "^0.18.5"
   },
   "scripts": {
     "start": "set NODE_OPTIONS=--openssl-legacy-provider && react-scripts start",

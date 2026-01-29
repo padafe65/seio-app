@@ -27,7 +27,7 @@ import Swal from 'sweetalert2';
 import { 
   Home, Users, FileText, BarChart2, 
   PlusCircle, CheckSquare, Award, Settings, Menu, BookOpen,
-  Shield, Database, GraduationCap, CreditCard, Mail, ClipboardList
+  Shield, Database, GraduationCap, CreditCard, Mail, ClipboardList, Activity
 } from 'lucide-react';
 
 // Nuevas páginas para CRUD
@@ -57,6 +57,7 @@ import CourseForm from './pages/courses/CourseForm.js';
 import AutomaticImprovementPlansManager from './components/AutomaticImprovementPlansManager.js';
 import UsersManagement from './pages/users/UsersManagement.js';
 import UserForm from './pages/users/UserForm.js';
+import AuditLogsPage from './pages/audit/AuditLogsPage.js';
 import EducationalResourcesList from './pages/educational-resources/EducationalResourcesList.js';
 import EducationalResourceForm from './pages/educational-resources/EducationalResourceForm.js';
 import UploadGuideForm from './pages/educational-resources/UploadGuideForm.js';
@@ -568,6 +569,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/admin/audit" className="nav-link text-danger d-flex align-items-center">
+                  <Activity size={18} className="me-2" /> Auditoría
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/admin/licenses" className="nav-link text-info d-flex align-items-center">
                   <CreditCard size={18} className="me-2" /> Licencias
                 </Link>
@@ -674,6 +680,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/admin/audit" className="nav-link text-danger d-flex align-items-center" onClick={handleClose}>
+                  <Activity size={18} className="me-2" /> Auditoría
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/admin/licenses" className="nav-link text-info d-flex align-items-center" onClick={handleClose}>
                   <CreditCard size={18} className="me-2" /> Licencias
                 </Link>
@@ -769,6 +780,7 @@ function AppContent() {
             <Route path="/admin/users" element={<UsersManagement />} />
             <Route path="/admin/users/new" element={<UserForm />} />
             <Route path="/admin/users/:id/edit" element={<UserForm />} />
+            <Route path="/admin/audit" element={<AuditLogsPage />} />
             <Route path="/admin/licenses" element={<LicensesManagement />} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
             <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />

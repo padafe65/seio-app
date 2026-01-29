@@ -47,7 +47,9 @@ const StudentsList = () => {
     email: '',
     course: '',
     grade: '',
-    institution: ''  // ✨ AGREGADO: filtro por institución
+    institution: '',  // ✨ AGREGADO: filtro por institución
+    teacher: '',      // ✨ AGREGADO: filtro por docente
+    phase: ''         // ✨ AGREGADO: filtro por fase
   });
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -114,8 +116,8 @@ const StudentsList = () => {
   };
   
   useEffect(() => {
-    // Permitir acceso a admin y super_administrador
-    if (user?.role === 'admin' || user?.role === 'super_administrador') {
+    // Permitir acceso a administrador y super_administrador
+    if (user?.role === 'administrador' || user?.role === 'super_administrador') {
       fetchStudents();
     } else {
       // Redirigir si no es administrador o super administrador
@@ -177,7 +179,7 @@ const StudentsList = () => {
 
   const clearFilters = () => {
     setSearchTerm('');
-    setFilters({ name: '', email: '', course: '', grade: '' });
+    setFilters({ name: '', email: '', course: '', grade: '', institution: '', teacher: '', phase: '' });
   };
   
   if (loading) {
@@ -284,6 +286,28 @@ const StudentsList = () => {
               placeholder="Nombre de la institución"
               value={filters.institution}
               onChange={(e) => handleFilterChange('institution', e.target.value)}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <TextField
+              fullWidth
+              variant="outlined"
+              size="small"
+              label="Filtrar por Docente"
+              placeholder="Nombre del docente"
+              value={filters.teacher}
+              onChange={(e) => handleFilterChange('teacher', e.target.value)}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <TextField
+              fullWidth
+              variant="outlined"
+              size="small"
+              label="Filtrar por Fase"
+              placeholder="Ej: 1, 2, 3, 4"
+              value={filters.phase}
+              onChange={(e) => handleFilterChange('phase', e.target.value)}
             />
           </Grid>
         </Grid>

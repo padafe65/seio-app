@@ -29,7 +29,7 @@ const CourseForm = () => {
   const [error, setError] = useState(null);
   
   useEffect(() => {
-    if (!user || user.role !== 'super_administrador') {
+    if (!user || (user.role !== 'super_administrador' && user.role !== 'administrador')) {
       navigate('/dashboard');
       return;
     }

@@ -26,12 +26,14 @@ import pruebaSaberRoutes from './routes/pruebaSaberRoutes.js';
 import { verifyToken, isAdmin, isSuperAdmin } from './middleware/authMiddleware.js';
 import { recalculatePhaseAverages, recalculateAllStudentsPhaseAverages } from './utils/recalculatePhaseAverages.js';
 import { syncTeacherStudentData } from './utils/syncTeacherStudentData.js';
+import { logCreate, logUpdate, logDelete } from './utils/auditLogger.js';
 import teacherCoursesRoutes from './routes/teacherCoursesRoutes.js';
 import teacherLicensesRoutes from './routes/teacherLicensesRoutes.js';
 import teachers from './routes/teachers.js';
 import teacherRoutes from './routes/teacherRoutes.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
 import usersRoutes from './routes/usersRoutes.js';
+import auditRoutes from './routes/auditRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
 import pool from './config/db.js';
@@ -561,6 +563,7 @@ app.use('/api', improvementPlansRoutes);
 app.use('/api/educational-resources', educationalResourcesRoutes);
 // ⚠️ usersRoutes aplica verifyToken, por eso debe ir DESPUÉS de las rutas públicas de auth
 app.use('/api/admin', usersRoutes);  // Cambiado de '/api' a '/api/admin' para evitar conflictos
+app.use('/api/audit', auditRoutes);  // Rutas de auditoría (solo super_administrador)
 
 const verificarToken = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1]; // Extrae el token del header
@@ -905,9 +908,9 @@ app.get('/api/courses', async (req, res) => {
   }
 });
 
-// Rutas CRUD de cursos para super_administrador
+// Rutas CRUD de cursos para super_administrador y administrador
 // POST - Crear nuevo curso
-app.post('/api/courses', verifyToken, isSuperAdmin, async (req, res) => {
+app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
   try {
     const { name, grade, institution, teacher_id } = req.body;
     
@@ -1023,6 +1026,17 @@ app.post('/api/courses', verifyToken, isSuperAdmin, async (req, res) => {
       }
     }
     
+    // 📝 Registrar en auditoría
+    await logCreate(
+      'courses',
+      courseId,
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      { name, grade, institution, teacher_id },
+      req
+    );
+    
     res.status(201).json({
       success: true,
       message: 'Curso creado exitosamente',
@@ -1045,7 +1059,7 @@ app.post('/api/courses', verifyToken, isSuperAdmin, async (req, res) => {
 });
 
 // PUT - Actualizar curso existente
-app.put('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
+app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, grade, institution, teacher_id } = req.body;
@@ -1128,18 +1142,34 @@ app.put('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
     
     params.push(id);
     
-    // Obtener el teacher_id anterior antes de actualizar
+    // Obtener valores antiguos para auditoría
+    const oldValues = {
+      name: existingRows[0].name,
+      grade: existingRows[0].grade,
+      institution: existingRows[0].institution,
+      teacher_id: existingRows[0].teacher_id
+    };
+    
     let oldTeacherId = null;
     if (hasTeacherId) {
-      const [currentRows] = await pool.query('SELECT teacher_id FROM courses WHERE id = ?', [id]);
-      if (currentRows.length > 0) {
-        oldTeacherId = currentRows[0].teacher_id;
-      }
+      oldTeacherId = existingRows[0].teacher_id;
     }
     
     await pool.query(
       `UPDATE courses SET ${updates.join(', ')} WHERE id = ?`,
       params
+    );
+    
+    // 📝 Registrar en auditoría
+    await logUpdate(
+      'courses',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      oldValues,
+      { name, grade, institution, teacher_id },
+      req
     );
     
     // Manejar la relación en teacher_courses si el teacher_id cambió
@@ -1240,7 +1270,7 @@ app.put('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
 });
 
 // DELETE - Eliminar curso
-app.delete('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
+app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1271,8 +1301,27 @@ app.delete('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
       // Continuar con la eliminación del curso aunque falle la eliminación de relaciones
     }
     
+    // Guardar datos para auditoría antes de eliminar
+    const deletedCourseData = {
+      name: existingRows[0].name,
+      grade: existingRows[0].grade,
+      institution: existingRows[0].institution,
+      teacher_id: existingRows[0].teacher_id
+    };
+    
     // Eliminar el curso
     await pool.query('DELETE FROM courses WHERE id = ?', [id]);
+    
+    // 📝 Registrar en auditoría
+    await logDelete(
+      'courses',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      deletedCourseData,
+      req
+    );
     
     res.json({
       success: true,
@@ -1290,7 +1339,7 @@ app.delete('/api/courses/:id', verifyToken, isSuperAdmin, async (req, res) => {
 });
 
 // Obtener todos los docentes asignados a un curso (con sus roles)
-app.get('/api/courses/:id/teachers', verifyToken, isSuperAdmin, async (req, res) => {
+app.get('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1337,7 +1386,7 @@ app.get('/api/courses/:id/teachers', verifyToken, isSuperAdmin, async (req, res)
 });
 
 // Agregar docente adicional a un curso
-app.post('/api/courses/:id/teachers', verifyToken, isSuperAdmin, async (req, res) => {
+app.post('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { teacher_id, role } = req.body;
@@ -1425,7 +1474,7 @@ app.post('/api/courses/:id/teachers', verifyToken, isSuperAdmin, async (req, res
 });
 
 // Eliminar docente de un curso
-app.delete('/api/courses/:id/teachers/:teacherId', verifyToken, isSuperAdmin, async (req, res) => {
+app.delete('/api/courses/:id/teachers/:teacherId', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id, teacherId } = req.params;
     

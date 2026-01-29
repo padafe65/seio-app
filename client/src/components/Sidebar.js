@@ -36,9 +36,6 @@ const Sidebar = () => {
         
         {user && user.role === 'docente' && (
           <>
-            <Link to="/estudiantes" className={`nav-link text-white mb-2 ${isActive('/estudiantes')}`}>
-              <Users size={18} className="me-2" /> Estudiantes
-            </Link>
             <Link to="/mis-estudiantes" className={`nav-link text-white mb-2 ${isActive('/mis-estudiantes')}`}>
               <Users size={18} className="me-2" /> Mis estudiantes
             </Link>
@@ -63,6 +60,20 @@ const Sidebar = () => {
 
 
 
+          </>
+        )}
+        
+        {user && (user.role === 'administrador' || user.role === 'super_administrador') && (
+          <>
+            <Link to="/estudiantes" className={`nav-link text-white mb-2 ${isActive('/estudiantes')}`}>
+              <Users size={18} className="me-2" /> Estudiantes
+            </Link>
+            <Link to="/cuestionarios" className={`nav-link text-white mb-2 ${isActive('/cuestionarios')}`}>
+              <FileText size={18} className="me-2" /> Cuestionarios
+            </Link>
+            <Link to="/resultados" className={`nav-link text-white mb-2 ${isActive('/resultados')}`}>
+              <BarChart2 size={18} className="me-2" /> Resultados
+            </Link>
           </>
         )}
         

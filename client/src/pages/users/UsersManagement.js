@@ -21,7 +21,7 @@ const UsersManagement = () => {
   useEffect(() => {
     if (!isAuthReady) return;
     
-    if (user && user.role === 'super_administrador') {
+    if (user && (user.role === 'super_administrador' || user.role === 'administrador')) {
       fetchUsers();
       fetchIncompleteUsers();
     } else {
@@ -33,7 +33,14 @@ const UsersManagement = () => {
     try {
       setLoading(true);
       const response = await axiosClient.get('/admin/users');
-      setUsers(response.data.data || response.data || []);
+      let usersData = response.data.data || response.data || [];
+      
+      // Si es administrador (no super), filtrar para que solo vea estudiantes y docentes
+      if (user.role === 'administrador') {
+        usersData = usersData.filter(u => u.role === 'estudiante' || u.role === 'docente');
+      }
+      
+      setUsers(usersData);
     } catch (error) {
       console.error('Error al cargar usuarios:', error);
       Swal.fire({
@@ -104,7 +111,18 @@ const UsersManagement = () => {
     }
   };
 
-  const handleDelete = async (userId, userName) => {
+  const handleDelete = async (userId, userName, userRole) => {
+    // Validar permisos: administrador no puede eliminar otros administradores o super_administradores
+    if (user.role === 'administrador' && (userRole === 'administrador' || userRole === 'super_administrador')) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Acceso denegado',
+        text: 'No tienes permisos para eliminar usuarios con rol de administrador o super administrador.',
+        confirmButtonText: 'OK'
+      });
+      return;
+    }
+
     const result = await Swal.fire({
       title: '¿Estás seguro?',
       text: `¿Deseas eliminar al usuario "${userName}"? Esta acción no se puede deshacer.`,
@@ -262,7 +280,11 @@ const UsersManagement = () => {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h2 className="mb-1">Gestión de Usuarios</h2>
-          <p className="text-muted mb-0">Administra todos los usuarios del sistema</p>
+          <p className="text-muted mb-0">
+            {user.role === 'super_administrador' 
+              ? 'Administra todos los usuarios del sistema' 
+              : 'Administra estudiantes y docentes'}
+          </p>
         </div>
         <Link to="/admin/users/new" className="btn btn-primary">
           <UserPlus size={20} className="me-2" />
@@ -284,20 +306,25 @@ const UsersManagement = () => {
               >
                 Todos ({users.length})
               </button>
-              <button
-                type="button"
-                className={`btn ${filter === 'super_administrador' ? 'btn-danger' : 'btn-outline-danger'}`}
-                onClick={() => setFilter('super_administrador')}
-              >
-                Super Admin ({users.filter(u => u.role === 'super_administrador').length})
-              </button>
-              <button
-                type="button"
-                className={`btn ${filter === 'administrador' ? 'btn-warning' : 'btn-outline-warning'}`}
-                onClick={() => setFilter('administrador')}
-              >
-                Admin ({users.filter(u => u.role === 'administrador').length})
-              </button>
+              {/* Solo super_administrador puede ver filtros de admin */}
+              {user.role === 'super_administrador' && (
+                <>
+                  <button
+                    type="button"
+                    className={`btn ${filter === 'super_administrador' ? 'btn-danger' : 'btn-outline-danger'}`}
+                    onClick={() => setFilter('super_administrador')}
+                  >
+                    Super Admin ({users.filter(u => u.role === 'super_administrador').length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn ${filter === 'administrador' ? 'btn-warning' : 'btn-outline-warning'}`}
+                    onClick={() => setFilter('administrador')}
+                  >
+                    Admin ({users.filter(u => u.role === 'administrador').length})
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className={`btn ${filter === 'docente' ? 'btn-info' : 'btn-outline-info'}`}
@@ -457,21 +484,27 @@ const UsersManagement = () => {
                               <UserCheck size={16} />
                             </button>
                           )}
-                          <Link
-                            to={`/admin/users/${userItem.id}/edit`}
-                            className="btn btn-sm btn-outline-primary"
-                            title="Editar"
-                          >
-                            <Edit size={16} />
-                          </Link>
-                          <button
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => handleDelete(userItem.id, userItem.name)}
-                            disabled={userItem.id === user.id}
-                            title={userItem.id === user.id ? 'No puedes eliminar tu propia cuenta' : 'Eliminar'}
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          {/* Administrador no puede editar otros administradores o super_administradores */}
+                          {(user.role === 'super_administrador' || (user.role === 'administrador' && userItem.role !== 'administrador' && userItem.role !== 'super_administrador')) && (
+                            <Link
+                              to={`/admin/users/${userItem.id}/edit`}
+                              className="btn btn-sm btn-outline-primary"
+                              title="Editar"
+                            >
+                              <Edit size={16} />
+                            </Link>
+                          )}
+                          {/* Administrador no puede eliminar otros administradores o super_administradores */}
+                          {(user.role === 'super_administrador' || (user.role === 'administrador' && userItem.role !== 'administrador' && userItem.role !== 'super_administrador')) && (
+                            <button
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => handleDelete(userItem.id, userItem.name, userItem.role)}
+                              disabled={userItem.id === user.id}
+                              title={userItem.id === user.id ? 'No puedes eliminar tu propia cuenta' : 'Eliminar'}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

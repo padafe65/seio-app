@@ -17,7 +17,7 @@ const CoursesList = () => {
   const [institutions, setInstitutions] = useState([]);
   
   useEffect(() => {
-    if (user && user.role === 'super_administrador') {
+    if (user && (user.role === 'super_administrador' || user.role === 'administrador')) {
       fetchCourses();
       fetchInstitutions();
     }
@@ -94,7 +94,7 @@ const CoursesList = () => {
     return matchesSearch && matchesInstitution && matchesTeacher;
   });
   
-  if (!user || user.role !== 'super_administrador') {
+  if (!user || (user.role !== 'super_administrador' && user.role !== 'administrador')) {
     return (
       <div className="alert alert-danger">
         No tienes permisos para acceder a esta página.

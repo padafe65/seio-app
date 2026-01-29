@@ -3,6 +3,7 @@ import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin, isSuperAdmin } from '../middleware/authMiddleware.js';
 import bcrypt from 'bcrypt';
+import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -37,8 +38,8 @@ const validateRoleAssignment = (userRole, assignedRole) => {
 // Aplicar verificación de token a todas las rutas
 router.use(verifyToken);
 
-// Obtener todos los usuarios (solo super_administrador)
-router.get('/users', isSuperAdmin, async (req, res) => {
+// Obtener todos los usuarios (administrador y super_administrador)
+router.get('/users', isAdminOrSuperAdmin, async (req, res) => {
   try {
     // Verificar si la columna institution existe antes de incluirla
     let institutionField = '';
@@ -58,6 +59,12 @@ router.get('/users', isSuperAdmin, async (req, res) => {
       console.log('⚠️ Campo institution no disponible aún, ejecuta la migración SQL');
     }
     
+    // Si es administrador (no super), filtrar para que solo vea estudiantes y docentes
+    let roleFilter = '';
+    if (req.user.role === 'administrador') {
+      roleFilter = " WHERE role IN ('estudiante', 'docente')";
+    }
+    
     const [users] = await pool.query(
       `SELECT id, name, email, phone, role${institutionField},
               CASE 
@@ -70,7 +77,7 @@ router.get('/users', isSuperAdmin, async (req, res) => {
                 ELSE 1
               END as estado,
               created_at 
-       FROM users 
+       FROM users${roleFilter}
        ORDER BY created_at DESC`
     );
     
@@ -88,8 +95,8 @@ router.get('/users', isSuperAdmin, async (req, res) => {
   }
 });
 
-// Obtener un usuario por ID (solo super_administrador)
-router.get('/users/:id', isSuperAdmin, async (req, res) => {
+// Obtener un usuario por ID (administrador y super_administrador)
+router.get('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -228,6 +235,7 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
     }
     
     const [result] = await pool.query(insertQuery, insertValues);
+    const newUserId = result.insertId;
     
     // Obtener el usuario creado (sin la contraseña)
     const [newUser] = await pool.query(
@@ -244,7 +252,18 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
               created_at 
        FROM users 
        WHERE id = ?`,
-      [result.insertId]
+      [newUserId]
+    );
+    
+    // 📝 Registrar en auditoría
+    await logCreate(
+      'users',
+      newUserId,
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      { name, email, role, institution: institution || null },
+      req
     );
     
     res.status(201).json({
@@ -279,6 +298,20 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       return res.status(404).json({
         success: false,
         message: 'Usuario no encontrado'
+      });
+    }
+    
+    const targetUser = existingUsers[0];
+    
+    // 🔒 Validar permisos: administrador no puede editar otros administradores o super_administradores
+    if (userRole === 'administrador' && 
+        (targetUser.role === 'administrador' || targetUser.role === 'super_administrador')) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para editar usuarios con rol de administrador o super administrador.',
+        code: 'INSUFFICIENT_PERMISSIONS',
+        yourRole: userRole,
+        targetRole: targetUser.role
       });
     }
     
@@ -422,9 +455,31 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     
     values.push(id);
     
+    // Guardar valores antiguos para auditoría
+    const oldValues = {
+      name: existingUsers[0].name,
+      email: existingUsers[0].email,
+      phone: existingUsers[0].phone,
+      role: existingUsers[0].role,
+      estado: existingUsers[0].estado,
+      institution: existingUsers[0].institution
+    };
+    
     await pool.query(
       `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
       values
+    );
+    
+    // 📝 Registrar en auditoría
+    await logUpdate(
+      'users',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      oldValues,
+      { name, email, phone, role, estado, institution },
+      req
     );
     
     // Verificar si la columna institution existe para el SELECT
@@ -477,8 +532,8 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   }
 });
 
-// Eliminar un usuario (solo super_administrador)
-router.delete('/users/:id', isSuperAdmin, async (req, res) => {
+// Eliminar un usuario (administrador y super_administrador con restricciones)
+router.delete('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -503,8 +558,41 @@ router.delete('/users/:id', isSuperAdmin, async (req, res) => {
       });
     }
     
+    const targetUser = existingUsers[0];
+    
+    // Validar permisos: administrador no puede eliminar otros administradores o super_administradores
+    if (req.user.role === 'administrador' && 
+        (targetUser.role === 'administrador' || targetUser.role === 'super_administrador')) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para eliminar usuarios con rol de administrador o super administrador.',
+        code: 'INSUFFICIENT_PERMISSIONS',
+        yourRole: req.user.role,
+        targetRole: targetUser.role
+      });
+    }
+    
+    // Guardar valores para auditoría antes de eliminar
+    const deletedUserData = {
+      name: targetUser.name,
+      email: targetUser.email,
+      role: targetUser.role,
+      institution: targetUser.institution
+    };
+    
     // Eliminar el usuario
     await pool.query('DELETE FROM users WHERE id = ?', [id]);
+    
+    // 📝 Registrar en auditoría
+    await logDelete(
+      'users',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      deletedUserData,
+      req
+    );
     
     res.json({
       success: true,

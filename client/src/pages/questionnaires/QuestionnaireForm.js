@@ -127,28 +127,34 @@ const QuestionnaireForm = () => {
         let loadedSubjects = subjectsResponse.data;
         
         // Cargar materia del docente (para determinar la materia por defecto)
+        // Solo si el usuario es docente
         let teacherSubject = 'Matematicas';
-        if (user?.id) {
-          const subjectResponse = await api.get(`/teacher/subject/${user.id}`);
-          teacherSubject = subjectResponse.data.subject || 'Matematicas';
-          setSubjectName(teacherSubject);
-          
-          // Asegurar que la materia del docente esté en la lista de materias
-          const subjectExists = loadedSubjects.some(s => s.subject === teacherSubject);
-          if (!subjectExists) {
-            loadedSubjects.push({ subject: teacherSubject });
-          }
-          
-          // Pre-seleccionar la materia del docente en formData si no estamos editando
-          if (!isEditing) {
-            setFormData(prev => ({
-              ...prev,
-              subject: teacherSubject
-            }));
+        if (user?.id && user?.role === 'docente') {
+          try {
+            const subjectResponse = await api.get(`/teacher/subject/${user.id}`);
+            teacherSubject = subjectResponse.data.subject || 'Matematicas';
+            setSubjectName(teacherSubject);
             
-            // Cargar categorías basadas en la materia del docente
-            const categoriesResponse = await api.get(`/subject-categories/${teacherSubject}`);
-            setCategories(categoriesResponse.data);
+            // Asegurar que la materia del docente esté en la lista de materias
+            const subjectExists = loadedSubjects.some(s => s.subject === teacherSubject);
+            if (!subjectExists) {
+              loadedSubjects.push({ subject: teacherSubject });
+            }
+            
+            // Pre-seleccionar la materia del docente en formData si no estamos editando
+            if (!isEditing) {
+              setFormData(prev => ({
+                ...prev,
+                subject: teacherSubject
+              }));
+              
+              // Cargar categorías basadas en la materia del docente
+              const categoriesResponse = await api.get(`/subject-categories/${teacherSubject}`);
+              setCategories(categoriesResponse.data);
+            }
+          } catch (error) {
+            console.warn('⚠️ No se pudo cargar la materia del docente:', error.message);
+            // Continuar sin materia predeterminada
           }
         }
         

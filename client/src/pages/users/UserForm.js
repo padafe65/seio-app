@@ -63,6 +63,21 @@ const UserForm = () => {
       setLoading(true);
       const response = await axiosClient.get(`/admin/users/${id}`);
       const userData = response.data.data || response.data;
+      
+      // 🔒 Validar permisos: administrador no puede editar otros administradores o super_administradores
+      if (user.role === 'administrador' && 
+          (userData.role === 'administrador' || userData.role === 'super_administrador')) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Acceso denegado',
+          text: 'No tienes permisos para editar usuarios con rol de administrador o super administrador.',
+          confirmButtonText: 'OK'
+        }).then(() => {
+          navigate('/admin/users');
+        });
+        return;
+      }
+      
       setFormData({
         name: userData.name || '',
         email: userData.email || '',

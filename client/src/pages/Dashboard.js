@@ -14,6 +14,7 @@ const Dashboard = () => {
   const [teacherSubject, setTeacherSubject] = useState(''); // Nuevo estado para la materia del docente
   const [teacherLicenses, setTeacherLicenses] = useState([]); // Estado para licencias del docente
   const [teacherId, setTeacherId] = useState(null); // ID del docente (teacher_id)
+  const [teacherInstitution, setTeacherInstitution] = useState(''); // Institución del docente
   const [reportBrandName, setReportBrandName] = useState('');
   const [reportLogoUrl, setReportLogoUrl] = useState('');
   const [savingReportBrand, setSavingReportBrand] = useState(false);
@@ -70,6 +71,7 @@ const Dashboard = () => {
             const teacherData = teacherDataResponse.data?.data || teacherDataResponse.data;
             if (teacherData && teacherData.id) {
               setTeacherId(teacherData.id);
+              setTeacherInstitution(teacherData.institution || '');
               setReportBrandName(teacherData.report_brand_name || '');
               setReportLogoUrl(teacherData.report_logo_url || '');
               
@@ -149,18 +151,64 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Bienvenida */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-800">
-          {user.role === 'estudiante' ? `Hola, ${user.name}` : `Hola, Profesor(a) ${user.name}`}
-        </h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {user.role === 'estudiante' 
-            ? 'Aquí puedes ver tu progreso académico.' 
-            : `Aquí puedes gestionar y revisar el progreso de tus alumnos. ${teacherSubject ? `Materia: ${teacherSubject}` : ''}`}
-        </p>
-      </div>
+    <div className="dashboard-container position-relative">
+      {/* Marca de agua del logo del docente */}
+      {reportLogoUrl && (
+        <div 
+          className="dashboard-watermark position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+          style={{
+            backgroundImage: `url(${reportLogoUrl})`,
+            backgroundSize: '400px',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            opacity: 0.03,
+            pointerEvents: 'none',
+            zIndex: 0
+          }}
+        />
+      )}
+      
+      {/* Contenido principal con z-index superior */}
+      <div className="p-6 space-y-6" style={{ position: 'relative', zIndex: 1 }}>
+        {/* Encabezado del Dashboard con logo y nombre del docente */}
+        <div className="dashboard-header mb-4 text-center position-relative">
+          {/* Debug: Mostrar estado del logo */}
+          {console.log('Dashboard Debug - reportLogoUrl:', reportLogoUrl, 'user.role:', user.role, 'teacherId:', teacherId)}
+          {reportLogoUrl && (
+            <img 
+              src={reportLogoUrl} 
+              alt="Logo del docente" 
+              className="dashboard-logo mb-3"
+              style={{ 
+                maxWidth: '250px', 
+                maxHeight: '100px',
+                objectFit: 'contain'
+              }}
+              onError={(e) => {
+                console.log('Error cargando logo:', e.target.src);
+                e.target.style.display = 'none';
+              }}
+              onLoad={() => {
+                console.log('Logo cargado exitosamente:', reportLogoUrl);
+              }}
+            />
+          )}
+          {!reportLogoUrl && user.role === 'docente' && (
+            <div className="alert alert-info mb-3">
+              <small>📝 No tienes configurado un logo. Ve a la sección "Marca blanca en reportes PDF" para subir uno.</small>
+            </div>
+          )}
+          <h1 className="text-2xl font-bold text-gray-800">
+            {user.role === 'estudiante' ? `Hola, ${user.name}` : `Bienvenido${user.name ? `, ${user.name}` : ''}${teacherSubject ? ` - ${teacherSubject}` : ''}`}
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">
+            {user.role === 'estudiante' 
+              ? 'Aquí puedes ver tu progreso académico.' 
+              : user.role === 'docente' 
+                ? (teacherInstitution ? `Panel de ${teacherInstitution}` : 'Panel de control de tu institución')
+                : 'Panel de administración'}
+          </p>
+        </div>
 
       {user.role === 'docente' && (
         <div className="card border-primary mb-2">
@@ -676,6 +724,7 @@ const Dashboard = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

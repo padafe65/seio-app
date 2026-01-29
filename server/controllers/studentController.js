@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import { syncTeacherStudentData } from '../utils/syncTeacherStudentData.js';
+import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 
 // Asegurarse de que el directorio de subidas exista
 const uploadsDir = path.join(process.cwd(), 'uploads', 'students');
@@ -331,9 +332,12 @@ export const updateStudent = async (req, res) => {
       }
     }
 
-    // 2. Obtener el user_id del estudiante
+    // 2. Obtener el user_id del estudiante y valores antiguos para auditoría
     const [student] = await connection.query(
-      'SELECT user_id FROM students WHERE id = ?',
+      `SELECT s.*, u.name as user_name, u.email as user_email, u.phone as user_phone, u.institution
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.id = ?`,
       [id]
     );
 
@@ -347,6 +351,19 @@ export const updateStudent = async (req, res) => {
     }
 
     const userIdToUpdate = student[0].user_id;
+    
+    // Guardar valores antiguos para auditoría
+    const oldValues = {
+      name: student[0].user_name,
+      email: student[0].user_email,
+      phone: student[0].user_phone,
+      institution: student[0].institution,
+      contact_email: student[0].contact_email,
+      contact_phone: student[0].contact_phone,
+      age: student[0].age,
+      grade: student[0].grade,
+      course_id: student[0].course_id
+    };
 
     // 3. Actualizar la tabla users (incluyendo institution si existe)
     // Verificar si el campo institution existe en la tabla users
@@ -425,6 +442,18 @@ export const updateStudent = async (req, res) => {
 
     // Confirmar la transacción
     await connection.commit();
+    
+    // 📝 Registrar en auditoría
+    await logUpdate(
+      'students',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      oldValues,
+      { name, email, phone, institution, contact_email, contact_phone, age, grade, course_id, teacher_id },
+      req
+    );
     
     // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
     // Hacerlo después del commit para no afectar la transacción principal
@@ -521,6 +550,17 @@ export const createStudent = async (req, res) => {
 
     await connection.commit();
     
+    // 📝 Registrar en auditoría
+    await logCreate(
+      'students',
+      studentResult.insertId,
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      { name, email, age, grade, course_id, teacher_id },
+      req
+    );
+    
     res.status(201).json({
       success: true,
       message: 'Estudiante creado exitosamente',
@@ -567,9 +607,12 @@ export const deleteStudent = async (req, res) => {
     
     const { id } = req.params;
     
-    // 1. Obtener el user_id del estudiante
+    // 1. Obtener datos del estudiante para auditoría
     const [student] = await connection.query(
-      'SELECT user_id FROM students WHERE id = ?',
+      `SELECT s.*, u.name as user_name, u.email as user_email, u.phone as user_phone
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       WHERE s.id = ?`,
       [id]
     );
     
@@ -583,6 +626,16 @@ export const deleteStudent = async (req, res) => {
     
     const userId = student[0].user_id;
     
+    // Guardar datos para auditoría antes de eliminar
+    const deletedStudentData = {
+      name: student[0].user_name,
+      email: student[0].user_email,
+      phone: student[0].user_phone,
+      age: student[0].age,
+      grade: student[0].grade,
+      course_id: student[0].course_id
+    };
+    
     // 2. Eliminar el estudiante
     await connection.query('DELETE FROM students WHERE id = ?', [id]);
     
@@ -590,6 +643,17 @@ export const deleteStudent = async (req, res) => {
     await connection.query('DELETE FROM users WHERE id = ?', [userId]);
     
     await connection.commit();
+    
+    // 📝 Registrar en auditoría
+    await logDelete(
+      'students',
+      parseInt(id),
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      deletedStudentData,
+      req
+    );
     
     res.json({
       success: true,
