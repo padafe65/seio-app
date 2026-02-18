@@ -310,8 +310,10 @@ router.get('/:id', async (req, res) => {
 // 🔒 Validación: Docentes solo pueden crear contenido de SU materia
 router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
   try {
-    // created_by debe ser el user_id del docente autenticado
-    const created_by = req.user.id;
+    // created_by en la BD es FK a teachers.id (no users.id); usar el docente autenticado
+    if (!req.user.teacher_id) {
+      return res.status(403).json({ message: 'Solo los docentes pueden crear cuestionarios.', error: 'FORBIDDEN' });
+    }
     const { title, subject, category, grade, phase, course_id, description, questions_to_answer, time_limit_minutes } = req.body;
     
     console.log('Datos recibidos para crear cuestionario:', req.body);
@@ -364,8 +366,6 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
     }
     
     // El subject ya está validado y forzado por validateTeacherSubject
-    // Obtener el ID del profesor (teacher_id ya está en req.body por el middleware)
-    const teacherId = req.body.teacher_id;
     const finalSubject = req.body.subject; // Subject validado por middleware
     
     // Asegurar que la combinación subject-category existe en subject_categories
@@ -399,7 +399,7 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
         normalizedCourseId, 
         normalizedQuestionsToAnswer,
         normalizedTimeLimitMinutes,
-        teacherId, 
+        req.user.teacher_id, // teachers.id del docente autenticado (FK questionnaires.created_by)
         description || null,
         is_prueba_saber === 'true' || is_prueba_saber === true ? 1 : 0,
         finalPruebaSaberLevel

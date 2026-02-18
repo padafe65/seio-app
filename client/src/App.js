@@ -70,6 +70,8 @@ import LicensesManagement from './pages/licenses/LicensesManagement.js';
 import MessagesPage from './pages/messages/MessagesPage.js';
 import AttendancePage from './pages/attendance/AttendancePage.js';
 import AttendanceValidatePage from './pages/attendance/AttendanceValidatePage.js';
+import ManageSessions from './pages/ManageSessions.jsx';
+import TeacherDashboard from './pages/TeacherDashboard.jsx';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -347,10 +349,15 @@ function AppContent() {
                   <GraduationCap size={18} className="me-2" /> Prueba Saber
                 </Link>
               </li>
-
+              
               <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/gestionar-sesiones" className="nav-link text-white d-flex align-items-center">
+                  <Activity size={18} className="me-2" /> Gestionar Sesiones
                 </Link>
               </li>
             </ul>
@@ -449,6 +456,11 @@ function AppContent() {
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
                 </Link>
               </li>
+              <li className="nav-item mb-2">
+                <Link to="/gestionar-sesiones" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Activity size={18} className="me-2" /> Gestionar Sesiones
+                </Link>
+              </li>
             </ul>
           </Offcanvas.Body>
         </Offcanvas>
@@ -464,12 +476,8 @@ function AppContent() {
         }}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
-            <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
-            {/* Nueva ruta para gestionar materias y categorías */}
-            <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
-            
-            {/* Rutas para estudiantes */}
+            <Route path="/gestionar-sesiones" element={<ManageSessions />} />
+            <Route path="/progreso-estudiantes/:questionnaireId" element={<TeacherDashboard />} />
             <Route path="/estudiantes" element={<StudentsList />} />
             <Route path="/estudiantes/nuevo" element={<StudentForm />} />
             <Route path="/estudiantes/:id" element={<StudentDetail />} />
@@ -496,20 +504,16 @@ function AppContent() {
             <Route path="/planes-mejoramiento/nuevo" element={<ImprovementPlanForm />} />
             <Route path="/planes-mejoramiento/:id" element={<ImprovementPlanDetail />} />
             <Route path="/planes-mejoramiento/:id/editar" element={<ImprovementPlanForm />} />
-            {/* Nueva ruta mejorada para planes de mejoramiento */}
             <Route path="/planes-mejoramiento/:id/detalle" element={<ImprovementPlanDetailEnhanced />} />
-            {/* Sistema automático de planes de mejoramiento */}
             <Route path="/planes-automaticos" element={<AutomaticImprovementPlansManager />} />
-            {/* Añadir la ruta dentro del componente TeacherDashboardLayout*/}
             <Route path="/mis-cursos" element={<TeacherCoursesManager />} />
-
-            {/* Y luego añadir esta ruta dentro del componente Routes:*/}
             <Route path="/evaluacion-fase" element={<PhaseEvaluation />} />
             
             {/* Rutas para cuestionarios */}
             <Route path="/cuestionarios" element={<QuestionnairesList />} />
             <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
+            <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
             <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
             
             {/* Ruta para mensajería */}
@@ -633,6 +637,13 @@ function AppContent() {
                   <BookOpen size={18} className="me-2" /> Cursos
                 </Link>
               </li>
+
+              <li className="nav-item mb-2">
+                <Link to="/gestionar-sesiones" className="nav-link text-white d-flex align-items-center">
+                  <Activity size={18} className="me-2" /> Gestionar Sesiones
+                </Link>
+              </li>
+
               <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
@@ -760,6 +771,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/cursos" className="nav-link bg-info text-white d-flex align-items-center" onClick={handleClose}>
+                  <BookOpen size={18} className="me-2" /> Gestión de Cursos
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/recursos-educativos" className="nav-link bg-warning text-dark d-flex align-items-center" onClick={handleClose}>
                   <GraduationCap size={18} className="me-2" /> Recursos Educativos
                 </Link>
@@ -777,6 +793,7 @@ function AppContent() {
         }}>
           <Routes>
             <Route path="/dashboard" element={<SuperAdminDashboard />} />
+            <Route path="/gestionar-sesiones" element={<ManageSessions />} />
             <Route path="/admin/users" element={<UsersManagement />} />
             <Route path="/admin/users/new" element={<UserForm />} />
             <Route path="/admin/users/:id/edit" element={<UserForm />} />
@@ -791,6 +808,9 @@ function AppContent() {
             <Route path="/estudiantes/nuevo" element={<StudentForm />} />
             <Route path="/estudiantes/:id" element={<StudentDetail />} />
             <Route path="/estudiantes/:id/editar" element={<StudentForm />} />
+            
+            {/* Rutas para estudiantes del docente */}
+            <Route path="/mis-estudiantes" element={<TeacherStudentsList />} />
             <Route path="/estudiantes/:id/calificaciones" element={<StudentGrades />} />
             <Route path="/calificaciones-fase" element={<CalificacionesPorFasePage />} />
             <Route path="/asistencia" element={<AttendancePage />} />
@@ -833,6 +853,18 @@ function AppContent() {
             
             {/* Ruta para mensajería */}
             <Route path="/messages" element={<MessagesPage />} />
+            
+            {/* Rutas para guías de estudio */}
+            <Route path="/subir-guia" element={<UploadGuideForm />} />
+            <Route path="/mis-guias" element={<TeacherGuidesManage />} />
+
+            {/* Prueba Saber (docente) */}
+            <Route path="/prueba-saber" element={<TeacherPruebaSaberPage />} />
+            <Route path="/prueba-saber/resultados" element={<PruebaSaberResultsPage />} />
+
+            {/* Fallback interno: evita pantalla en blanco */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+
           </Routes>
         </div>
       </div>

@@ -213,6 +213,29 @@ router.post('/records', verifyToken, isTeacherOrAdmin, async (req, res) => {
   }
 });
 
+// Eliminar sesión de asistencia
+router.delete('/sessions/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [sessions] = await pool.query('SELECT teacher_id FROM attendance_sessions WHERE id = ?', [id]);
+    
+    if (!sessions.length) {
+      return res.status(404).json({ success: false, message: 'Sesión no encontrada.' });
+    }
+
+    const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
+    if (!isAdmin && sessions[0].teacher_id !== req.user.teacher_id) {
+      return res.status(403).json({ success: false, message: 'No tienes permiso para eliminar esta sesión.' });
+    }
+
+    await pool.query('DELETE FROM attendance_sessions WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Sesión eliminada correctamente.' });
+  } catch (e) {
+    console.error('Error deleting attendance session:', e);
+    res.status(500).json({ success: false, message: 'Error al eliminar la sesión.' });
+  }
+});
+
 // --- Validación QR / código (estudiante) ---
 
 // GET info sesión por token (público para mostrar en página de escaneo)

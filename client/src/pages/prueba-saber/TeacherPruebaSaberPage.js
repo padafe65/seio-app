@@ -76,7 +76,7 @@ const TeacherPruebaSaberPage = () => {
     return acc;
   }, {});
 
-  const levels = [3, 5, 9, 11];
+  const levels = [3, 5, 7, 9, 11];
 
   if (loading) {
     return (
@@ -121,6 +121,7 @@ const TeacherPruebaSaberPage = () => {
                 <option value="">Todos los niveles</option>
                 <option value="3">Grado 3°</option>
                 <option value="5">Grado 5°</option>
+                <option value="7">Grado 7°</option>
                 <option value="9">Grado 9°</option>
                 <option value="11">Grado 11°</option>
               </select>

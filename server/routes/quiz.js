@@ -1,8 +1,16 @@
 // routes/quiz.js
 import express from 'express';
-import pool from '../config/db.js';  // tu conexión MySQL
+import pool from '../config/db.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
+import * as quizController from '../controllers/quiz.controller.js';
 const router = express.Router();
+// Nueva API: finalizar evaluación
+router.post('/finish', quizController.finishQuiz);
+// Nueva API: iniciar o reanudar sesión
+router.post('/start', quizController.startOrResumeSession);
+
+// Nueva API: guardar progreso
+router.post('/save-progress', quizController.saveProgress);
 
 router.post('/submit', verifyToken, async (req, res) => {
   const { student_id, questionnaire_id, answers, session_id } = req.body;
@@ -415,8 +423,8 @@ router.get('/attempts/all/:student_id', async (req, res) => {
 
     // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();
-    
-    // Consulta para obtener el conteo de intentos por cuestionario (filtrados por academic_year)
+
+    // Conteo de intentos completados por cuestionario (quiz_attempts)
     const [rows] = await pool.query(
       `SELECT questionnaire_id, COUNT(*) as attempt_count 
        FROM quiz_attempts 
@@ -425,9 +433,33 @@ router.get('/attempts/all/:student_id', async (req, res) => {
        GROUP BY questionnaire_id`,
       [realStudentId, currentAcademicYear]
     );
-    
-    console.log(`Intentos encontrados para el student_id ${realStudentId}:`, rows);
-    res.json({ attempts: rows, count: rows.length });
+
+    // Conteo de sesiones expiradas por cuestionario (misma lógica que GET /questions para límite de 2)
+    const [expiredRows] = await pool.query(
+      `SELECT questionnaire_id, COUNT(*) as expired_count 
+       FROM quiz_sessions 
+       WHERE student_id = ? AND academic_year = ? AND status = 'expired' 
+       GROUP BY questionnaire_id`,
+      [realStudentId, currentAcademicYear]
+    );
+    const expiredByQ = new Map(expiredRows.map((r) => [r.questionnaire_id, Number(r.expired_count) || 0]));
+
+    const attemptsWithEffective = rows.map((r) => {
+      const qId = r.questionnaire_id;
+      const attemptCount = Number(r.attempt_count) || 0;
+      const expiredCount = expiredByQ.get(qId) || 0;
+      const effective_count = attemptCount + expiredCount;
+      return { questionnaire_id: qId, attempt_count: attemptCount, expired_count: expiredCount, effective_count };
+    });
+    // Incluir cuestionarios con solo sesiones expiradas (sin intentos completados)
+    expiredByQ.forEach((expiredCount, qId) => {
+      if (!attemptsWithEffective.some((a) => a.questionnaire_id === qId)) {
+        attemptsWithEffective.push({ questionnaire_id: Number(qId), attempt_count: 0, expired_count: expiredCount, effective_count: expiredCount });
+      }
+    });
+
+    console.log(`Intentos encontrados para el student_id ${realStudentId}:`, attemptsWithEffective);
+    res.json({ attempts: attemptsWithEffective, count: attemptsWithEffective.length });
   } catch (err) {
     console.error('❌ Error al obtener intentos:', err);
     res.status(500).json({ error: 'Error al obtener intentos' });
@@ -449,8 +481,7 @@ router.get('/attempts/:student_id/:questionnaire_id', async (req, res) => {
     }
 
     const realStudentId = studentRows[0].id;
-    
-    // Obtener año académico actual para filtrar
+
     const currentAcademicYear = new Date().getFullYear();
 
     const [rows] = await pool.query(
@@ -461,7 +492,17 @@ router.get('/attempts/:student_id/:questionnaire_id', async (req, res) => {
        ORDER BY attempt_number`,
       [realStudentId, questionnaire_id, currentAcademicYear]
     );
-    res.json({ attempts: rows, count: rows.length });
+    const completedCount = rows.length;
+
+    const [expiredRows] = await pool.query(
+      `SELECT COUNT(*) AS count FROM quiz_sessions 
+       WHERE student_id = ? AND questionnaire_id = ? AND academic_year = ? AND status = 'expired'`,
+      [realStudentId, questionnaire_id, currentAcademicYear]
+    );
+    const expiredCount = Number(expiredRows?.[0]?.count) || 0;
+    const effective_count = completedCount + expiredCount;
+
+    res.json({ attempts: rows, count: completedCount, expired_count: expiredCount, effective_count });
   } catch (err) {
     console.error('❌ Error al obtener intentos:', err);
     res.status(500).json({ error: 'Error al obtener intentos' });

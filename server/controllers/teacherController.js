@@ -393,3 +393,387 @@ export const getTeacherIndicators = async (req, res) => {
     });
   }
 };
+
+export const getStudentProgressByQuestionnaire = async (req, res) => {
+  try {
+    const { questionnaireId } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    console.log(`🔍 Obteniendo progreso de estudiantes para cuestionario ${questionnaireId}`);
+
+    if (!questionnaireId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el ID del cuestionario'
+      });
+    }
+
+    // Verificar que el cuestionario existe
+    const [questionnaires] = await pool.query(
+      'SELECT * FROM questionnaires WHERE id = ?',
+      [questionnaireId]
+    );
+
+    if (!questionnaires || questionnaires.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No se encontró el cuestionario'
+      });
+    }
+
+    const questionnaire = questionnaires[0];
+
+    // Si es docente, verificar que el cuestionario le pertenezca
+    if (userRole === 'docente') {
+      const teacherId = req.user.teacher_id;
+      
+      console.log(`🔍 Docente autenticado: user_id=${userId}, teacher_id=${teacherId}`);
+      console.log(`🔍 Cuestionario solicitado: created_by=${questionnaire.created_by}, questionnaire_id=${questionnaireId}`);
+    
+      // Mostrar todos los cuestionarios del docente para diagnóstico
+      const [teacherQuestionnaires] = await pool.query(
+        'SELECT id, title FROM questionnaires WHERE created_by = ?',
+        [teacherId]
+      );
+      console.log(`📋 Cuestionarios del docente ${teacherId}:`, teacherQuestionnaires.map(q => `ID:${q.id} - ${q.title}`));
+
+      if (!teacherId) {
+        console.log('❌ teacher_id no encontrado en el middleware');
+        return res.status(403).json({
+          success: false,
+          message: 'Teacher ID no encontrado'
+        });
+      }
+
+      if (teacherId !== questionnaire.created_by) {
+        console.log(`❌ Sin permiso: teacherId=${teacherId} != questionnaire.created_by=${questionnaire.created_by}`);
+        return res.status(403).json({
+          success: false,
+          message: `No tienes permiso para ver este cuestionario. El cuestionario ID=${questionnaireId} fue creado por teacher_id=${questionnaire.created_by}, pero tu teacher_id es ${teacherId}. Por favor selecciona un cuestionario que te pertenezca.`
+        });
+      }
+
+      console.log('✅ Permisos validados correctamente');
+    }
+
+    // Obtener el progreso de los estudiantes
+    const [progress] = await pool.query(
+      `SELECT 
+        s.id as student_id,
+        u.name as student_name,
+        u.email as email,
+        qs.id as session_id,
+        qs.status as status,
+        qs.attempt_number as attempt_number,
+        qs.started_at as session_started,
+        JSON_LENGTH(qs.answers_json) as answered_questions,
+        (SELECT COUNT(*) FROM questions WHERE questionnaire_id = ?) as total_questions,
+        CASE 
+          WHEN qs.status = 'submitted' THEN 
+            -- Aquí podrías calcular el puntaje real basado en las respuestas si fuera necesario
+            -- Por ahora usaremos un valor de ejemplo o lo que esté en la sesión
+            5.0 -- Ejemplo de puntaje
+          ELSE NULL
+        END as score,
+        CASE 
+          WHEN JSON_LENGTH(qs.answers_json) > 0 AND (SELECT COUNT(*) FROM questions WHERE questionnaire_id = ?) > 0 THEN 
+            ROUND(JSON_LENGTH(qs.answers_json) * 100.0 / (SELECT COUNT(*) FROM questions WHERE questionnaire_id = ?), 2)
+          ELSE 0
+        END as progress_percentage
+       FROM students s
+       JOIN users u ON s.user_id = u.id
+       JOIN teacher_students ts ON s.id = ts.student_id
+       LEFT JOIN quiz_sessions qs ON s.id = qs.student_id AND qs.questionnaire_id = ?
+       WHERE ts.teacher_id = ?
+       GROUP BY s.id, u.name, u.email, qs.id, qs.status, qs.attempt_number, qs.started_at, qs.answers_json
+       ORDER BY u.name ASC`,
+      [questionnaireId, questionnaireId, questionnaireId, questionnaireId, userRole === 'docente' ? req.user.teacher_id : questionnaire.created_by]
+    );
+
+    res.status(200).json({
+      success: true,
+      data: progress,
+      questionnaire: {
+        id: questionnaire.id,
+        title: questionnaire.title,
+        total_questions: progress.length > 0 ? progress[0].total_questions : 0
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error en getStudentProgressByQuestionnaire:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error del servidor al obtener el progreso de estudiantes',
+      error: error.message
+    });
+  }
+};
+
+/*export const getTeacherSessions = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    
+    if (!teacherId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el ID del profesor'
+      });
+    }
+
+    const [sessions] = await pool.query(
+      `SELECT 
+        qs.*, 
+        u.name as student_name, 
+        q.title as questionnaire_title
+       FROM quiz_sessions qs
+       JOIN students s ON qs.student_id = s.id
+       JOIN users u ON s.user_id = u.id
+       JOIN teacher_students ts ON s.id = ts.student_id
+       JOIN questionnaires q ON qs.questionnaire_id = q.id
+       WHERE ts.teacher_id = ?
+       ORDER BY qs.started_at DESC`,
+      [teacherId]
+    );
+
+    res.status(200).json({
+      success: true,
+      data: sessions
+    });
+  } catch (error) {
+    console.error('❌ Error en getTeacherSessions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener las sesiones del profesor',
+      error: error.message
+    });
+  }
+};*/
+
+export const getAllSessionsByRole = async (req, res) => {
+  try {
+    const { id: userId, role } = req.user;
+
+    let query = `
+      SELECT 
+        qs.*, 
+        u.name as student_name, 
+        q.title as questionnaire_title
+      FROM quiz_sessions qs
+      JOIN students s ON qs.student_id = s.id
+      JOIN users u ON s.user_id = u.id
+      JOIN questionnaires q ON qs.questionnaire_id = q.id
+      LEFT JOIN teacher_students ts ON s.id = ts.student_id
+    `;
+
+    let params = [];
+
+    // 🧑‍🏫 Si es docente → solo sus estudiantes
+    if (role === 'docente') {
+      const [teacher] = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+
+      if (!teacher.length) {
+        return res.status(403).json({
+          success: false,
+          message: 'Docente no encontrado'
+        });
+      }
+
+      query += ` WHERE ts.teacher_id = ?`;
+      params.push(teacher[0].id);
+    }
+
+    // 👑 Si es admin o super_admin → ve TODO
+    query += ` ORDER BY qs.started_at DESC`;
+
+    const [sessions] = await pool.query(query, params);
+
+    res.status(200).json({
+      success: true,
+      data: sessions
+    });
+
+  } catch (error) {
+    console.error('❌ Error obteniendo sesiones:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo sesiones'
+    });
+  }
+};
+
+
+//Reopen la sesion de evaluación para que el estudiante pueda volver a responder el cuestionario
+export const reopenSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el ID de la sesión'
+      });
+    }
+
+    await pool.query(`
+      UPDATE quiz_sessions
+      SET 
+        status = 'in_progress',
+        expires_at = NULL
+      WHERE id = ?
+    `, [sessionId]);
+
+    res.status(200).json({
+      success: true,
+      message: 'Sesión reabierta correctamente'
+    });
+
+  } catch (error) {
+    console.error('Error reabriendo sesión:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al reabrir sesión'
+    });
+  }
+};
+
+// controllers/teacherController.js
+
+export const updateSession = async (req, res) => {
+  const { sessionId } = req.params;
+  const { role, id: userId } = req.user;
+
+  if (!['docente', 'administrador', 'super_admin'].includes(role)) {
+    return res.status(403).json({
+      success: false,
+      message: 'No tienes permisos para actualizar sesiones'
+    });
+  }
+
+  const {
+    status,
+    started_at,
+    expires_at,
+    answers_json,
+    question_ids_json,
+    attempt_number,
+    academic_year
+  } = req.body;
+
+  try {
+
+    // 🔎 VALIDAR FECHAS Y DURACIÓN
+    if (started_at && expires_at) {
+      const start = new Date(started_at);
+      const end = new Date(expires_at);
+
+      if (end <= start) {
+        return res.status(400).json({
+          success: false,
+          message: 'La fecha de finalización no puede ser menor o igual a la fecha de inicio'
+        });
+      }
+
+      // Obtener duración permitida del cuestionario
+      const [sessionData] = await pool.query(
+        `SELECT q.time_limit_minutes
+         FROM quiz_sessions qs
+         JOIN questionnaires q ON qs.questionnaire_id = q.id
+         WHERE qs.id = ?`,
+        [sessionId]
+      );
+
+      if (sessionData.length) {
+        const timeLimit = sessionData[0].time_limit_minutes;
+
+        if (timeLimit) {
+          const diffMinutes = (end - start) / (1000 * 60);
+
+          if (diffMinutes > timeLimit) {
+            return res.status(400).json({
+              success: false,
+              message: `La duración no puede superar los ${timeLimit} minutos definidos para esta evaluación`
+            });
+          }
+        }
+      }
+    }
+
+    // 🧑‍🏫 Validar que docente solo edite sus estudiantes
+    if (role === 'docente') {
+      const [teacher] = await pool.query(
+        'SELECT id FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+
+      if (!teacher.length) {
+        return res.status(403).json({
+          success: false,
+          message: 'Docente no encontrado'
+        });
+      }
+
+      const teacherId = teacher[0].id;
+
+      const [sessionCheck] = await pool.query(
+        `SELECT qs.id
+         FROM quiz_sessions qs
+         JOIN teacher_students ts ON qs.student_id = ts.student_id
+         WHERE qs.id = ? AND ts.teacher_id = ?`,
+        [sessionId, teacherId]
+      );
+
+      if (!sessionCheck.length) {
+        return res.status(403).json({
+          success: false,
+          message: 'No tienes permiso para modificar esta sesión'
+        });
+      }
+    }
+
+    // 👑 Admin y super_admin pueden modificar cualquiera
+
+    await pool.query(
+      `UPDATE quiz_sessions
+       SET 
+         status = ?,
+         started_at = ?,
+         expires_at = ?,
+         attempt_number = ?,
+         academic_year = ?,
+         answers_json = ?,
+         question_ids_json = ?,
+         updated_at = CURRENT_TIMESTAMP()
+       WHERE id = ?`,
+      [
+        status,
+        started_at,
+        expires_at,
+        attempt_number,
+        academic_year,
+        answers_json,
+        question_ids_json,
+        sessionId
+      ]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Sesión actualizada correctamente'
+    });
+
+  } catch (err) {
+    console.error('Error actualizando sesión:', err);
+
+    const message =
+        err.response?.data?.message ||
+        'Error al actualizar la sesión';
+
+    alert(message);
+}
+
+};

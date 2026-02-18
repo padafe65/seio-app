@@ -36,19 +36,31 @@ import usersRoutes from './routes/usersRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
+import rateLimit from 'express-rate-limit';
 import pool from './config/db.js';
 import { syncSubjectCategories } from './utils/syncSubjectCategories.js';
 
 
 dotenv.config();
 
-// Verifica que las variables de entorno estén siendo cargadas correctamente
-console.log("🔍 Verificando variables de entorno:");
-console.log("DB_HOST:", process.env.DB_HOST);
-console.log("DB_USER:", process.env.DB_USER);
-console.log("DB_PASSWORD:", process.env.DB_PASSWORD === '' ? '(vacío)' : process.env.DB_PASSWORD === 'empty' ? '(interpreta como vacío)' : '(oculta)');
-console.log("DB_NAME:", process.env.DB_NAME);
-console.log("JWT_SECRET:", process.env.JWT_SECRET ? '(cargado)' : '(no cargado)');
+// Validación de seguridad: en producción JWT_SECRET es obligatorio y debe tener al menos 32 caracteres
+const isProduction = process.env.NODE_ENV === 'production';
+let JWT_SECRET = process.env.JWT_SECRET;
+if (isProduction && (!JWT_SECRET || (typeof JWT_SECRET === 'string' && JWT_SECRET.length < 32))) {
+  console.error('❌ SEGURIDAD: En producción JWT_SECRET debe estar en .env con al menos 32 caracteres.');
+  process.exit(1);
+}
+if (!isProduction && (!JWT_SECRET || (typeof JWT_SECRET === 'string' && JWT_SECRET.length < 32))) {
+  console.warn('⚠️ JWT_SECRET no definido o muy corto. Usando valor por defecto solo para desarrollo.');
+  JWT_SECRET = JWT_SECRET || 'dev-secret-no-usar-en-produccion-min-32-chars';
+}
+process.env.JWT_SECRET = JWT_SECRET; // para que middleware y demás usen el mismo valor
+
+// Logs de entorno solo en desarrollo (evitar exponer configuración en producción)
+if (process.env.NODE_ENV === 'development') {
+  console.log("🔍 Variables de entorno: DB_HOST:", process.env.DB_HOST, "DB_USER:", process.env.DB_USER, "DB_NAME:", process.env.DB_NAME);
+  console.log("JWT_SECRET:", JWT_SECRET ? '(cargado)' : '(no cargado)');
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -82,8 +94,17 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization']
 };
 app.use(cors(corsOptions));
-app.use(express.json()); 
+app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Rate limiting para auth: protege contra fuerza bruta y abuso de recuperación de contraseña
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 20, // máx. 20 intentos por IP (login + forgot-password)
+  message: { success: false, error: 'Demasiados intentos. Intenta de nuevo en 15 minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 // ⚠️ IMPORTANTE: Definir rutas de autenticación ANTES de montar otras rutas que requieren token
 // Esto asegura que /api/auth/login y /api/auth/register no sean interceptadas por middleware de autenticación
@@ -358,93 +379,66 @@ app.use('/api/attendance', attendanceRoutes);
 app.use('/api/admin', usersRoutes);
 
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
 
-  console.log('🔐 ========== INICIO DE LOGIN ==========');
-  console.log('🔐 Email recibido:', email ? email.substring(0, 10) + '...' : 'undefined');
-  console.log('🔐 Password recibido:', password ? '***' + password.substring(password.length - 2) : 'undefined');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔐 Login intent - email (truncado):', email ? email.substring(0, 10) + '...' : 'undefined');
+  }
 
   try {
     if (!email || !password) {
-      console.log('❌ Email o contraseña vacíos');
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        error: "Email y contraseña son requeridos" 
+        error: "Email y contraseña son requeridos"
       });
     }
 
-    console.log('📊 Buscando usuario en la base de datos...');
     const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [email]);
-    console.log(`📊 Usuarios encontrados: ${rows.length}`);
 
     if (rows.length === 0) {
-      console.log('❌ Usuario no encontrado en la base de datos');
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        error: "Usuario no encontrado" 
+        error: "Usuario no encontrado"
       });
     }
 
     const user = rows[0];
-    console.log('✅ Usuario encontrado:', { 
-      id: user.id, 
-      email: user.email, 
-      role: user.role, 
-      estado: user.estado,
-      estadoType: typeof user.estado,
-      hasPassword: !!user.password,
-      passwordLength: user.password ? user.password.length : 0
-    });
-    
-    // Verificar si el usuario está activo - SOLO si el campo existe Y es explícitamente 0 o false
-    // Si el campo no existe, es null, undefined, o cualquier otro valor, asumimos que está activo
+
+    // Verificar si el usuario está activo
     if (user.estado === 0 || user.estado === false || user.estado === '0' || user.estado === 'false') {
-      console.log('❌ Usuario inactivo. Estado:', user.estado, 'Tipo:', typeof user.estado);
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        error: "Usuario inactivo. Contacta al administrador." 
+        error: "Usuario inactivo. Contacta al administrador."
       });
     }
-    
-    console.log('✅ Usuario activo (o sin restricción de estado), continuando con verificación de contraseña...');
-    
-    console.log('🔒 Verificando contraseña...');
-    console.log('🔒 Password recibido (primeros 10 chars):', password ? password.substring(0, 10) : 'undefined');
-    console.log('🔒 Hash almacenado (primeros 20 chars):', user.password ? user.password.substring(0, 20) : 'undefined');
-    
+
     if (!user.password) {
-      console.log('❌ El usuario no tiene contraseña almacenada');
-      return res.status(401).json({ 
+      return res.status(401).json({
         success: false,
-        error: "Usuario sin contraseña configurada. Contacta al administrador." 
+        error: "Usuario sin contraseña configurada. Contacta al administrador."
       });
     }
 
     try {
       const passwordMatch = await bcrypt.compare(password, user.password);
-      console.log('🔒 Resultado de verificación de contraseña:', passwordMatch);
 
       if (!passwordMatch) {
-        console.log('❌ Contraseña incorrecta');
-        return res.status(401).json({ 
+        return res.status(401).json({
           success: false,
-          error: "Contraseña incorrecta" 
+          error: "Contraseña incorrecta"
         });
       }
     } catch (bcryptError) {
-      console.error('❌ Error al comparar contraseña:', bcryptError);
-      return res.status(500).json({ 
+      if (process.env.NODE_ENV === 'development') console.error('Error bcrypt:', bcryptError.message);
+      return res.status(500).json({
         success: false,
         error: "Error al verificar la contraseña",
         details: process.env.NODE_ENV === 'development' ? bcryptError.message : undefined
       });
     }
 
-    // Usar user.role (no user.rol) para el token
-    console.log('🎫 Generando token para usuario:', { id: user.id, role: user.role });
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '2h' });
-    console.log('✅ Token generado exitosamente');
 
     const responseData = {
       success: true,
@@ -471,11 +465,11 @@ app.post('/api/auth/login', async (req, res) => {
       }
     };
 
-    console.log('✅ Login exitoso, enviando respuesta');
     res.json(responseData);
   } catch (error) {
-    console.error('❌ Error en login:', error);
-    console.error('❌ Stack trace:', error.stack);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('❌ Error en login:', error.message);
+    }
     res.status(500).json({ 
       success: false,
       error: "Error en el servidor",
@@ -586,7 +580,7 @@ const verificarToken = (req, res, next) => {
 // =====================================================
 
 // Solicitar recuperación de contraseña (envía correo con token)
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 

@@ -1,7 +1,7 @@
 // pages/questionnaires/QuestionnairesList.js
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { PlusCircle, Edit, Trash2, Search, List } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Search, List, BarChart2 } from 'lucide-react';
 import axios from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
 
@@ -264,6 +264,12 @@ const QuestionnairesList = () => {
                         <td>{new Date(questionnaire.created_at).toLocaleDateString()}</td>
                         <td className="text-end">
                           <div className="btn-group">
+                            <Link 
+                              to={`/progreso-estudiantes/${questionnaire.id}`} 
+                              className="btn btn-sm btn-outline-success"
+                            >
+                              <BarChart2 size={16} className="me-1" /> Progreso
+                            </Link>
                             <Link 
                               to={`/cuestionarios/${questionnaire.id}/preguntas`} 
                               className="btn btn-sm btn-outline-info"

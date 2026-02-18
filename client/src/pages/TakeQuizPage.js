@@ -88,6 +88,10 @@ const TakeQuizPage = () => {
       .then((res) => {
         console.log('Cuestionarios cargados:', res.data);
         setQuestionnaires(res.data);
+
+        // Localiza esta parte en TakeQuizPage.js y añade el console.log
+console.log("ID que tiene el estudiante en la tabla students:", studentData?.id);
+console.log("ID que tiene el estudiante en la tabla users:", user?.id);
         
         // Mostrar alerta si no hay cuestionarios disponibles
         if (!res.data || res.data.length === 0) {
@@ -166,9 +170,9 @@ const TakeQuizPage = () => {
       .get(`/quiz/attempts/${studentId}/${questionnaireId}`)
       .then((res) => {
         setAttempts(res.data.attempts || []);
-        setCount(res.data.count);
-        console.log("res.data.count: "+res.data.count);
-        if ((res.data.count || 0) >= 2) {
+        const effectiveCount = res.data.effective_count ?? res.data.count ?? 0;
+        setCount(effectiveCount);
+        if (effectiveCount >= 2) {
           setMaxAttemptsReached(true);
           setQuestions([]);
           setScore(null);
@@ -244,16 +248,11 @@ const TakeQuizPage = () => {
   }, [remainingSeconds, submitted, maxAttemptsReached]);
 
   const getAttemptCount = (questionnaireId) => {
-    // Convertir a números para asegurar una comparación correcta
     const qId = parseInt(questionnaireId);
-    
-    // Buscar el intento correspondiente a este cuestionario
     const attemptInfo = allAttempts.find(a => parseInt(a.questionnaire_id) === qId);
-    
-    console.log("Buscando intentos para cuestionario:", qId, "Encontrado:", attemptInfo);
-    
-    // Devolver el conteo o 0 si no se encuentra
-    return attemptInfo ? parseInt(attemptInfo.attempt_count) : 0;
+    // Usar effective_count (completados + sesiones expiradas) para coincidir con el backend
+    const count = attemptInfo ? (attemptInfo.effective_count ?? attemptInfo.attempt_count ?? 0) : 0;
+    return typeof count === 'number' ? count : parseInt(count) || 0;
   };
   
   // Función para obtener información de intentos por fase para un cuestionario específico
