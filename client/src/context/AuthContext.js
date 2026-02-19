@@ -80,7 +80,7 @@ export const AuthProvider = ({ children }) => {
         await axios.get(`${API_URL}/api/auth/verify`, config);
         console.log("✅ Token verificado correctamente");
         
-        // Si el token es válido, restaurar usuario
+        // Si el token es válido, restaurar usuario desde localStorage
         const storedUser = localStorage.getItem("user");
         if (storedUser && !user) {
           setUser(JSON.parse(storedUser));
@@ -140,7 +140,8 @@ export const AuthProvider = ({ children }) => {
         email: userDataFinal.email,
         role: userDataFinal.role,
         phone: userDataFinal.phone || null,
-        estado: userDataFinal.estado || 1
+        estado: userDataFinal.estado || 1,
+        profile_image: userDataFinal.profile_image || null
       };
       
       // Si es docente, asegurarnos de que tenga un teacher_id
@@ -239,6 +240,13 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('is_teacher_registration');
   };
 
+  // Actualizar perfil del usuario (para cambios de datos o foto de perfil)
+  const updateUserProfile = (updatedUserData) => {
+    const mergedUser = { ...user, ...updatedUserData };
+    setUser(mergedUser);
+    localStorage.setItem('user', JSON.stringify(mergedUser));
+  };
+
   return (
     <AuthContext.Provider value={{ 
       authToken, 
@@ -247,7 +255,8 @@ export const AuthProvider = ({ children }) => {
       login, 
       logout, 
       isAuthReady,
-      verifyToken // Exportando la función verifyToken
+      verifyToken,
+      updateUserProfile
     }}>
       {children}
     </AuthContext.Provider>

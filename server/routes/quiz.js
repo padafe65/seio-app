@@ -189,11 +189,12 @@ router.post('/submit', verifyToken, async (req, res) => {
 
     // 4. Insertar intento con el ID de estudiante correcto, la fase y el año académico
     const [result] = await pool.query(
-      `INSERT INTO quiz_attempts (student_id, questionnaire_id, attempt_number, score, phase, academic_year)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [realStudentId, questionnaire_id, attemptNumber, score, phaseNumber, currentAcademicYear]
-    );
-
+  `INSERT INTO quiz_attempts 
+    (student_id, questionnaire_id, quiz_session_id, attempt_number, score, phase, academic_year)
+   VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  [realStudentId, questionnaire_id, session?.id || null,     // ← AQUÍ
+    attemptNumber, score,  phaseNumber, currentAcademicYear]
+);
     const attemptId = result.insertId;
 
     // Marcar sesión como enviada (si existe) y guardar respuestas

@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
+import ImageUploader from '../components/ImageUploader';
 
 const notiMySwal = withReactContent(Swal);
 
@@ -10,6 +11,7 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const Registro = () => {
   const [user, setUser] = useState({ name: '', phone: '', email: '', password: '', role: '' });
+  const [profileImage, setProfileImage] = useState(null);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -109,6 +111,11 @@ const Registro = () => {
           <option value="estudiante">Estudiante</option>
           <option value="docente">Docente</option>
         </select>
+
+        <ImageUploader 
+          onImageUpload={setProfileImage}
+          currentImage={profileImage}
+        />
 
         <button type="submit" className="btn btn-success w-100">Registrar</button>
       </form>

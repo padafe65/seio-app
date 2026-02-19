@@ -21,6 +21,7 @@ export const getStudents = async (req, res) => {
         s.*, 
         u.email as user_email,
         u.phone as user_phone,
+        u.profile_image as user_profile_image,
         u.role, u.id as user_id, u.name as user_name, u.created_at as user_created_at,
         u.estado as user_estado,
         c.name as course_name

@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './context/AuthContext.js';
 import Navbar from './components/Navbar.js';
 import Login from './pages/Login.js';
 import Registro from './pages/Registro.js';
+import Profile from './pages/Profile.js';
 import './styles/styles.css';
 import ResetPassword from './pages/ResetPassword.js';
 import CompleteStudent from './components/CompleteStudent.js';
@@ -476,6 +477,7 @@ function AppContent() {
         }}>
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/profile" element={<Profile />} />
             <Route path="/gestionar-sesiones" element={<ManageSessions />} />
             <Route path="/progreso-estudiantes/:questionnaireId" element={<TeacherDashboard />} />
             <Route path="/estudiantes" element={<StudentsList />} />
@@ -900,6 +902,11 @@ function AppContent() {
                 </Link>
               </li>
               <li className="nav-item mb-2">
+                <Link to="/profile" className="nav-link text-white d-flex align-items-center">
+                  <Users size={18} className="me-2" /> Mi Perfil
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
                 <Link to="/student/take-quiz" className="nav-link text-white d-flex align-items-center">
                   <FileText size={18} className="me-2" /> Evaluaciones
                 </Link>
@@ -963,6 +970,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/student/dashboard" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
                   <Home size={18} className="me-2" /> Dashboard
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/profile" className="nav-link text-white d-flex align-items-center" onClick={handleClose}>
+                  <Users size={18} className="me-2" /> Mi Perfil
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -1075,6 +1087,13 @@ function AppContent() {
         <Route path="/evaluacion-fase" element={
           <ProtectedRoute allowedRoles={['docente']}>
             <PhaseEvaluation />
+          </ProtectedRoute>
+        } />
+
+        {/* Ruta de perfil común para todos los roles autenticados */}
+        <Route path="/profile" element={
+          <ProtectedRoute>
+            <Profile />
           </ProtectedRoute>
         } />
         

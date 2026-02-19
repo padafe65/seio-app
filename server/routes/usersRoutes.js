@@ -4,6 +4,7 @@ import pool from '../config/db.js';
 import { verifyToken, isAdmin, isSuperAdmin } from '../middleware/authMiddleware.js';
 import bcrypt from 'bcrypt';
 import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
+import uploadProfileImage from '../middleware/uploadProfileImage.js';
 
 const router = express.Router();
 
@@ -38,6 +39,71 @@ const validateRoleAssignment = (userRole, assignedRole) => {
 // Aplicar verificación de token a todas las rutas
 router.use(verifyToken);
 
+// 🔐 GET: Obtener datos del usuario autenticado (perfil actual)
+router.get('/me', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    // Obtener datos básicos del usuario
+    const [user] = await pool.query(
+      `SELECT id, name, email, phone, institution, role, profile_image, estado, created_at FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    if (user.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    let userData = { ...user[0] };
+
+    // Si es docente, obtener también institución de teachers
+    if (userRole === 'docente') {
+      try {
+        const [teachers] = await pool.query(
+          'SELECT id, institution FROM teachers WHERE user_id = ?',
+          [userId]
+        );
+        if (teachers.length > 0 && teachers[0].institution) {
+          userData.institution = teachers[0].institution;
+        }
+      } catch (error) {
+        console.warn('⚠️ Error obteniendo datos de teachers:', error.message);
+      }
+    }
+
+    // Si es estudiante, obtener también institución de students
+    if (userRole === 'estudiante') {
+      try {
+        const [students] = await pool.query(
+          'SELECT id, institution FROM students WHERE user_id = ?',
+          [userId]
+        );
+        if (students.length > 0 && students[0].institution) {
+          userData.institution = students[0].institution;
+        }
+      } catch (error) {
+        console.warn('⚠️ Error obteniendo datos de students:', error.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: userData
+    });
+  } catch (error) {
+    console.error('Error al obtener perfil del usuario:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener perfil',
+      error: error.message
+    });
+  }
+});
+
 // Obtener todos los usuarios (administrador y super_administrador)
 router.get('/users', isAdminOrSuperAdmin, async (req, res) => {
   try {
@@ -66,7 +132,7 @@ router.get('/users', isAdminOrSuperAdmin, async (req, res) => {
     }
     
     const [users] = await pool.query(
-      `SELECT id, name, email, phone, role${institutionField},
+      `SELECT id, name, email, phone, role, profile_image${institutionField},
               CASE 
                 WHEN estado IS NULL THEN 1
                 WHEN estado = 'activo' THEN 1
@@ -118,7 +184,7 @@ router.get('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     }
     
     const [users] = await pool.query(
-      `SELECT id, name, email, phone, role${institutionField},
+      `SELECT id, name, email, phone, role, profile_image${institutionField},
               CASE 
                 WHEN estado IS NULL THEN 1
                 WHEN estado = 'activo' THEN 1
@@ -603,6 +669,323 @@ router.delete('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al eliminar usuario',
+      error: error.message
+    });
+  }
+});
+
+// 📸 POST: Subir imagen de perfil del usuario autenticado
+router.post('/upload-profile-image', uploadProfileImage.single('profileImage'), async (req, res) => {
+  try {
+    // Verificar que el usuario esté autenticado
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: 'Debe estar autenticado para subir imagen'
+      });
+    }
+
+    // Verificar que se haya subido un archivo
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se proporcionó archivo de imagen'
+      });
+    }
+
+    // Construir la ruta relativa de la imagen
+    const profileImagePath = `/uploads/profile-images/${req.file.filename}`;
+
+    // Actualizar el perfil del usuario con la nueva imagen
+    const [result] = await pool.query(
+      'UPDATE users SET profile_image = ? WHERE id = ?',
+      [profileImagePath, req.user.id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    // 📝 Registrar en auditoría
+    await logUpdate(
+      'users',
+      req.user.id,
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      { profile_image: 'sin imagen anterior' },
+      { profile_image: profileImagePath },
+      req
+    );
+
+    res.json({
+      success: true,
+      message: 'Imagen de perfil subida exitosamente',
+      data: {
+        profileImage: profileImagePath,
+        fileName: req.file.filename
+      }
+    });
+  } catch (error) {
+    console.error('Error al subir imagen de perfil:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al subir imagen de perfil',
+      error: error.message
+    });
+  }
+});
+
+// ✏️ PUT: Actualizar perfil del usuario
+router.put('/update-profile', verifyToken, async (req, res) => {
+  try {
+    const { name, phone, institution } = req.body;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
+    // Validar que al menos un campo sea proporcionado
+    if (!name && !phone && !institution) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe proporcionar al menos un campo para actualizar'
+      });
+    }
+
+    // Obtener datos actuales para auditoría
+    const [currentUser] = await pool.query('SELECT name, phone, institution, role FROM users WHERE id = ?', [userId]);
+
+    if (currentUser.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    const currentUserData = currentUser[0];
+
+    // Construir query dinámica para tabla users
+    let updateFields = [];
+    let updateValues = [];
+
+    if (name !== undefined) {
+      updateFields.push('name = ?');
+      updateValues.push(name);
+    }
+    if (phone !== undefined) {
+      updateFields.push('phone = ?');
+      updateValues.push(phone);
+    }
+    if (institution !== undefined) {
+      updateFields.push('institution = ?');
+      updateValues.push(institution);
+    }
+
+    updateFields.push('updated_at = NOW()');
+    updateValues.push(userId);
+
+    // Actualizar tabla users
+    const query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`;
+    const [result] = await pool.query(query, updateValues);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    // Si es docente, también actualizar la tabla teachers
+    if (userRole === 'docente' && institution !== undefined) {
+      try {
+        const [teachers] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [userId]);
+        if (teachers.length > 0) {
+          await pool.query(
+            'UPDATE teachers SET institution = ?, updated_at = NOW() WHERE user_id = ?',
+            [institution, userId]
+          );
+        }
+      } catch (error) {
+        console.warn('⚠️ No se pudo actualizar institución en tabla teachers:', error.message);
+      }
+    }
+
+    // Si es estudiante, también actualizar la tabla students
+    if (userRole === 'estudiante' && institution !== undefined) {
+      try {
+        const [students] = await pool.query('SELECT id FROM students WHERE user_id = ?', [userId]);
+        if (students.length > 0) {
+          await pool.query(
+            'UPDATE students SET institution = ?, updated_at = NOW() WHERE user_id = ?',
+            [institution, userId]
+          );
+        }
+      } catch (error) {
+        console.warn('⚠️ No se pudo actualizar institución en tabla students:', error.message);
+      }
+    }
+
+    // Obtener datos actualizados de todas las fuentes según el rol
+    let updatedUserData = {};
+    
+    const [usersData] = await pool.query(
+      `SELECT id, name, email, phone, institution, role, profile_image, estado, created_at 
+       FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    updatedUserData = usersData[0];
+
+    // Si es docente, obtener también datos de teachers
+    if (userRole === 'docente') {
+      const [teachersData] = await pool.query(
+        'SELECT id, institution FROM teachers WHERE user_id = ?',
+        [userId]
+      );
+      if (teachersData.length > 0 && teachersData[0].institution) {
+        updatedUserData.institution = teachersData[0].institution;
+      }
+    }
+
+    // Si es estudiante, obtener también datos de students
+    if (userRole === 'estudiante') {
+      const [studentsData] = await pool.query(
+        'SELECT id, institution FROM students WHERE user_id = ?',
+        [userId]
+      );
+      if (studentsData.length > 0 && studentsData[0].institution) {
+        updatedUserData.institution = studentsData[0].institution;
+      }
+    }
+
+    // 📝 Registrar en auditoría
+    const oldValues = {
+      name: currentUserData.name,
+      phone: currentUserData.phone,
+      institution: currentUserData.institution
+    };
+    const newValues = {
+      name: name || oldValues.name,
+      phone: phone || oldValues.phone,
+      institution: institution || oldValues.institution
+    };
+
+    await logUpdate(
+      'users',
+      userId,
+      req.user.id,
+      req.user.role,
+      req.user.name || 'Usuario',
+      oldValues,
+      newValues,
+      req
+    );
+
+    res.json(updatedUserData);
+  } catch (error) {
+    console.error('Error al actualizar perfil:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar perfil',
+      error: error.message
+    });
+  }
+});
+
+// 🔐 PUT: Cambiar contraseña del usuario
+router.put('/change-password', verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword, confirmPassword } = req.body;
+    const userId = req.user.id;
+
+    // Validar que los campos requeridos estén presentes
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe proporcionar contraseña actual, nueva contraseña y confirmación'
+      });
+    }
+
+    // Validar que las nuevas contraseñas coincidan
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Las contraseñas nuevas no coinciden'
+      });
+    }
+
+    // Validar longitud mínima de la nueva contraseña
+    if (newPassword.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'La contraseña debe tener al menos 8 caracteres'
+      });
+    }
+
+    // Validar que la nueva contraseña sea diferente a la actual
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'La nueva contraseña no puede ser igual a la actual'
+      });
+    }
+
+    // Obtener usuario actual con su contraseña hasheada
+    const [users] = await pool.query(
+      'SELECT id, password FROM users WHERE id = ?',
+      [userId]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    const user = users[0];
+
+    // Validar que la contraseña actual sea correcta
+    const isPasswordCorrect = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordCorrect) {
+      return res.status(401).json({
+        success: false,
+        message: 'La contraseña actual es incorrecta'
+      });
+    }
+
+    // Hash la nueva contraseña
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    // Actualizar contraseña en la BD
+    await pool.query(
+      'UPDATE users SET password = ?, updated_at = NOW() WHERE id = ?',
+      [hashedNewPassword, userId]
+    );
+
+    // 📝 Registrar en auditoría
+    await logUpdate(
+      'users',
+      userId,
+      userId,
+      req.user.role,
+      req.user.name || 'Usuario',
+      { password: 'oculta' },
+      { password: 'actualizada' },
+      req
+    );
+
+    res.json({
+      success: true,
+      message: 'Contraseña actualizada correctamente. Por favor inicia sesión nuevamente.'
+    });
+  } catch (error) {
+    console.error('Error al cambiar contraseña:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al cambiar la contraseña',
       error: error.message
     });
   }

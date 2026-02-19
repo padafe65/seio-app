@@ -15,7 +15,8 @@ export const getStudentProgress = async (req, res) => {
             SELECT 
                 s.id as student_id, 
                 u.name as student_name, 
-                u.email, 
+                u.email,
+                u.profile_image as student_profile_image,
                 qs.id as session_id, 
                 qs.status, 
                 qa.score,

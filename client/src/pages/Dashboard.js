@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Users, FileText, GraduationCap, Activity } from 'lucide-react';
 import axiosClient from '../api/axiosClient';
+import UserAvatar from '../components/UserAvatar';
 
 const Dashboard = () => {
   const { user, authToken, isAuthReady } = useAuth();
@@ -156,8 +157,14 @@ const Dashboard = () => {
               </h5>
             </div>
             <div className="card-body">
-              <div className="col-12">
-                <h1 className="h3">Bienvenido Profesor, {user.name}</h1>         
+              <div className="col-12 mb-4">
+                <div className="d-flex align-items-center gap-3">
+                  <UserAvatar user={user} size="lg" authToken={authToken} />
+                  <div>
+                    <h1 className="h3 mb-0">Bienvenido Profesor, {user.name}</h1>
+                    <small className="text-muted">{user.role === 'docente' ? 'Docente' : 'Usuario'}</small>
+                  </div>
+                </div>
               </div>
               {teacherLicenses.map((license, index) => {
                 const getStatusBadge = (status) => {

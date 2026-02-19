@@ -127,7 +127,7 @@ router.get('/results', verifyToken, async (req, res) => {
     // Obtener detalles de intentos para cada resultado
     const resultsWithAttempts = await Promise.all(results.map(async (result) => {
       const [attempts] = await connection.query(
-        `SELECT id, attempt_number, score, created_at 
+        `SELECT id, attempt_number, score, attempt_date 
          FROM quiz_attempts 
          WHERE student_id = ? AND questionnaire_id = ? 
          ORDER BY attempt_number ASC`,

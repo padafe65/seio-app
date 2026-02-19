@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Pencil, Users, Mail } from "lucide-react";
+import { Pencil, Users, Mail, User } from "lucide-react";
 import axiosClient from '../api/axiosClient';
+import UserAvatar from './UserAvatar';
 
 const Navbar = () => {
   const { authToken, logout, user, isAuthReady } = useAuth();
@@ -141,8 +142,33 @@ const Navbar = () => {
                     </li>
                   </>
                 )}
-                <li className="nav-item">
-                  <button className="btn btn-danger ms-3" onClick={() => { closeMenu(); handleLogout(); }}>Cerrar sesión</button>
+                <li className="nav-item dropdown">
+                  <a 
+                    className="nav-link dropdown-toggle d-flex align-items-center" 
+                    href="#" 
+                    id="profileDropdown" 
+                    role="button" 
+                    data-bs-toggle="dropdown" 
+                    aria-expanded="false"
+                  >
+                    <UserAvatar user={user} size="sm" authToken={authToken} />
+                    <span className="ms-2 text-white small d-none d-lg-inline">{user?.name?.split(' ')[0]}</span>
+                  </a>
+                  <ul className="dropdown-menu dropdown-menu-end" aria-labelledby="profileDropdown">
+                    <li>
+                      <Link to="/profile" className="dropdown-item" onClick={closeMenu}>
+                        <User size={16} className="me-2" />
+                        Mi Perfil
+                      </Link>
+                    </li>
+                    <li><hr className="dropdown-divider" /></li>
+                    <li>
+                      <button className="dropdown-item text-danger" onClick={() => { closeMenu(); handleLogout(); }}>
+                        <Mail size={16} className="me-2" />
+                        Cerrar sesión
+                      </button>
+                    </li>
+                  </ul>
                 </li>
               </>
             ) : (

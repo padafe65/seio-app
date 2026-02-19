@@ -49,6 +49,7 @@ export const login = async (req, res) => {
     
     // 3. Obtener información adicional según el rol
     let additionalData = {};
+    let institucionValue = user.institution || null; // Default de tabla users
     
     if (user.role === 'docente') {
       // Si es docente, obtener o crear la información del docente
@@ -64,6 +65,10 @@ export const login = async (req, res) => {
             ...(teacher.institution_id && { institution_id: teacher.institution_id }),
             ...(teacher.specialty && { specialty: teacher.specialty })
           };
+          // Preferir institución de tabla teachers si existe
+          if (teacher.institution) {
+            institucionValue = teacher.institution;
+          }
           console.log('✅ Docente encontrado en la base de datos:', additionalData);
         } else {
           // Si no existe, crear un nuevo registro de docente
@@ -101,6 +106,10 @@ export const login = async (req, res) => {
           user_id: user.id,           // ID de la tabla users
           ...students[0]              // Incluir todos los datos del estudiante
         };
+        // Preferir institución de tabla students si existe
+        if (students[0].institution) {
+          institucionValue = students[0].institution;
+        }
       }
     }
     
@@ -136,8 +145,10 @@ export const login = async (req, res) => {
       name: user.name,
       email: user.email,
       phone: user.phone || null,
+      institution: institucionValue,
       role: user.role,
       estado: user.estado,
+      profile_image: user.profile_image || null,
       ...additionalData
     };
     

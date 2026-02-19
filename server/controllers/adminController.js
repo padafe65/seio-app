@@ -4,7 +4,7 @@ import db from '../config/db.js';
 export const getStudents = async (req, res) => {
   try {
     const [students] = await db.query(`
-      SELECT s.*, u.name, u.email, u.phone, u.estado, u.role, 
+      SELECT s.*, u.name, u.email, u.phone, u.profile_image, u.estado, u.role, 
              r.name as role_name, r.description as role_description
       FROM students s
       JOIN users u ON s.user_id = u.id
@@ -29,7 +29,7 @@ export const getStudents = async (req, res) => {
 export const getTeachers = async (req, res) => {
   try {
     const [teachers] = await db.query(`
-      SELECT t.*, u.name, u.email, u.phone, u.estado, u.role, 
+      SELECT t.*, u.name, u.email, u.phone, u.profile_image, u.estado, u.role, 
              r.name as role_name, r.description as role_description
       FROM teachers t
       JOIN users u ON t.user_id = u.id
