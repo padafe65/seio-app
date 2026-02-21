@@ -704,6 +704,15 @@ const StudentForm = ({ isViewMode = false }) => {
                     </span>
                   )}
                 </label>
+                {/* Input para filtrar docentes por nombre o institución */}
+                <input
+                  type="text"
+                  className="form-control mb-2"
+                  placeholder="Buscar docente por nombre o institución"
+                  value={formData.teacherFilter || ''}
+                  onChange={e => setFormData(prev => ({ ...prev, teacherFilter: e.target.value }))}
+                  disabled={isViewMode}
+                />
                 {loading ? (
                   <div className="d-flex align-items-center">
                     <div className="spinner-border spinner-border-sm me-2" role="status">
@@ -716,67 +725,45 @@ const StudentForm = ({ isViewMode = false }) => {
                     <select
                       id="teacher_id"
                       name="teacher_id"
-                      className={`form-select ${!formData.teacher_id && 'is-invalid'}`}
+                      className="form-select"
                       value={formData.teacher_id || ''}
                       onChange={handleChange}
-                      required
-                      disabled={isViewMode || filteredTeachers.length === 0 || (!formData.grade && !formData.course_id && !userInstitution)}
+                      disabled={isViewMode || filteredTeachers.length === 0}
                     >
-                      <option value="">
-                        {!formData.grade && !formData.course_id && !userInstitution
-                          ? 'Primero selecciona un grado o curso'
-                          : 'Seleccione un docente'}
-                      </option>
-                      {filteredTeachers.length > 0 ? (
-                        filteredTeachers.map((teacher) => {
-                          // Manejar tanto teacher.id como teacher.user_id
+                      <option value="">Seleccione un docente (opcional)</option>
+                      {filteredTeachers
+                        .filter(teacher => {
                           const teacherId = teacher.id || teacher.user_id;
-                          const isSelected = formData.teacher_id === teacherId?.toString();
-                          // Usar el nombre del usuario si está disponible, de lo contrario un valor por defecto
+                          const displayName = teacher.user_name || teacher.name || `Docente #${teacherId}`;
+                          const institution = teacher.institution || '';
+                          const filterText = (formData.teacherFilter || '').toLowerCase();
+                          return (
+                            displayName.toLowerCase().includes(filterText) ||
+                            institution.toLowerCase().includes(filterText)
+                          );
+                        })
+                        .map((teacher) => {
+                          const teacherId = teacher.id || teacher.user_id;
                           const displayName = teacher.user_name || teacher.name || `Docente #${teacherId}`;
                           const subject = teacher.subject || '';
-                          
                           return (
-                            <option 
-                              key={teacherId}
-                              value={teacherId}
-                              className={isSelected ? 'fw-bold' : ''}
-                            >
-                              {isSelected ? '✓ ' : ''}{displayName}{subject ? ` - ${subject}` : ''}
+                            <option key={teacherId} value={teacherId}>
+                              {displayName}{subject ? ` - ${subject}` : ''}
                               {teacher.institution && teacher.institution !== userInstitution ? ` (${teacher.institution})` : ''}
                             </option>
                           );
-                        })
-                      ) : (
-                        <option value="" disabled>
-                          {formData.grade || formData.course_id || userInstitution
-                            ? `No hay docentes disponibles${userInstitution ? ` de ${userInstitution}` : ''}${formData.grade ? ` para grado ${formData.grade}°` : ''}${formData.course_id ? ' para este curso' : ''}`
-                            : 'No hay docentes disponibles'}
-                        </option>
-                      )}
+                        })}
                     </select>
                     <div className="form-text">
-                      {!formData.grade && !formData.course_id && !userInstitution ? (
-                        <span className="text-info">
-                          <i className="bi bi-info-circle-fill me-1"></i>
-                          Selecciona un grado o curso para ver los docentes disponibles
-                        </span>
-                      ) : userInstitution ? (
-                        <span className="text-info">
-                          <i className="bi bi-info-circle-fill me-1"></i>
-                          Mostrando docentes de la institución "{userInstitution}"{formData.grade ? ` del grado ${formData.grade}°` : ''}{formData.course_id ? ' de este curso' : ''}
-                        </span>
-                      ) : formData.teacher_id ? (
-                        <span className="text-success">
-                          <i className="bi bi-check-circle-fill me-1"></i>
-                          Docente seleccionado correctamente
-                        </span>
-                      ) : (
+                      {filteredTeachers.length === 0 ? (
                         <span className="text-warning">
                           <i className="bi bi-exclamation-triangle-fill me-1"></i>
-                          {filteredTeachers.length === 0 ? 
-                            `No hay docentes disponibles${userInstitution ? ` de ${userInstitution}` : ''}${formData.grade ? ` para grado ${formData.grade}°` : ''}${formData.course_id ? ' para este curso' : ''}` : 
-                            'Seleccione un docente para este estudiante'}
+                          No hay docentes disponibles
+                        </span>
+                      ) : (
+                        <span className="text-info">
+                          <i className="bi bi-info-circle-fill me-1"></i>
+                          Puedes filtrar por nombre o institución
                         </span>
                       )}
                     </div>
