@@ -265,7 +265,7 @@ router.get('/', verifyToken, async (req, res) => {
 });
 
 // Obtener un cuestionario específico por ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await pool.query(`
@@ -376,7 +376,7 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
     // Validar nivel de Prueba Saber si es tipo Prueba Saber
     let finalPruebaSaberLevel = null;
     if (is_prueba_saber === 'true' || is_prueba_saber === true) {
-      const validLevels = [3, 5, 9, 11];
+      const validLevels = [3, 5, 7, 9, 11];
       const level = parseInt(prueba_saber_level);
       if (!validLevels.includes(level)) {
         return res.status(400).json({ 
@@ -428,7 +428,7 @@ router.post('/', verifyToken, validateTeacherSubject, async (req, res) => {
 });
 
 // Actualizar un cuestionario existente
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, subject, category, grade, phase, course_id, description, is_prueba_saber, prueba_saber_level, questions_to_answer, time_limit_minutes } = req.body;
@@ -492,11 +492,11 @@ router.put('/:id', async (req, res) => {
     // Validar nivel de Prueba Saber si es tipo Prueba Saber
     let finalPruebaSaberLevel = null;
     if (is_prueba_saber === 'true' || is_prueba_saber === true) {
-      const validLevels = [3, 5, 9, 11];
+      const validLevels = [3, 5, 7, 9, 11];
       const level = parseInt(prueba_saber_level);
       if (!validLevels.includes(level)) {
         return res.status(400).json({ 
-          message: 'El nivel de Prueba Saber debe ser 3, 5, 9 o 11',
+          message: 'El nivel de Prueba Saber debe ser 3, 5, 7, 9 o 11',
           received: prueba_saber_level
         });
       }
@@ -544,7 +544,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // Eliminar un cuestionario
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     

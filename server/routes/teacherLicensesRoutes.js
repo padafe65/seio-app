@@ -345,6 +345,144 @@ router.put('/license/:licenseId/suspend', isAdminOrSuperAdmin, async (req, res) 
   }
 });
 
+router.put('/license/:licenseId/reactivate', isAdminOrSuperAdmin, async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const { licenseId } = req.params;
+    const { plan_type } = req.body; // 'monthly' o 'yearly'
+
+    const [license] = await connection.query(
+      'SELECT teacher_id, expiration_date, purchased_date FROM teacher_institutions WHERE id = ?',
+      [licenseId]
+    );
+
+    if (license.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Licencia no encontrada' });
+    }
+
+    const today = new Date();
+    let baseDate = new Date();
+    const currentExp = license[0].expiration_date ? new Date(license[0].expiration_date) : null;
+    
+    // 1. Determinar la duración del plan solicitado
+    const daysToAdd = (plan_type === 'yearly') ? 365 : 30;
+
+    // 2. LÓGICA DE SUMA O RESETEO
+    // Si la licencia tiene días vigentes y es la PRIMERA VEZ (se asume por el mes gratis)
+    // Para identificar si es el periodo inicial, miramos si la fecha de compra es igual a cuando se creó
+    // O simplemente si la fecha de expiración es menor a 31 días desde su creación.
+    
+    if (currentExp && currentExp > today) {
+        // Si le quedan días, sumamos los días del plan a la fecha de expiración actual
+        baseDate = currentExp;
+    } else {
+        // Si ya venció o está suspendida, empezamos desde hoy
+        baseDate = today;
+    }
+
+    let newExpiration = new Date(baseDate);
+    newExpiration.setDate(newExpiration.getDate() + daysToAdd);
+
+    // 3. APLICAR EL TOPE (Regla de negocio principal)
+    // El tiempo restante total NO puede ser mayor a (Plan contratado + 30 días de regalo máximo)
+    const maxDate = new Date(today);
+    maxDate.setDate(maxDate.getDate() + daysToAdd + 30); // Tope: Plan + mes de gracia
+
+    if (newExpiration > maxDate) {
+        newExpiration = maxDate;
+    }
+
+    const finalDateStr = newExpiration.toISOString().split('T')[0];
+
+    // 4. Actualizar DB
+    await connection.query(
+      `UPDATE teacher_institutions 
+       SET license_status = 'active',
+           expiration_date = ?,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [finalDateStr, licenseId]
+    );
+
+    await connection.query(
+      "UPDATE teachers SET active_licenses = (SELECT COUNT(*) FROM teacher_institutions WHERE teacher_id = ? AND license_status = 'active') WHERE id = ?",
+      [license[0].teacher_id, license[0].teacher_id]
+    );
+
+    await connection.commit();
+    res.json({ 
+        success: true, 
+        message: 'Licencia actualizada con éxito', 
+        new_expiration: finalDateStr 
+    });
+
+  } catch (error) {
+    await connection.rollback();
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    connection.release();
+  }
+});
+
+router.get('/licenses', isAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const { status, institution, teacher_id } = req.query;
+
+    let query = `
+      SELECT 
+        ti.*,
+        t.subject as teacher_subject,
+        u.name as teacher_name,
+        u.email as teacher_email,
+        (SELECT p.proof_image_url 
+         FROM payments p 
+         JOIN subscriptions s ON p.subscription_id = s.id 
+         WHERE s.teacher_id = ti.teacher_id 
+         ORDER BY p.payment_date DESC, p.id DESC LIMIT 1) as proof_image_url
+      FROM teacher_institutions ti
+      JOIN teachers t ON ti.teacher_id = t.id
+      JOIN users u ON t.user_id = u.id
+      WHERE 1=1
+    `;
+
+    const params = [];
+
+    if (status) {
+      query += ' AND ti.license_status = ?';
+      params.push(status);
+    }
+
+    if (institution) {
+      query += ' AND ti.institution LIKE ?';
+      params.push(`%${institution}%`);
+    }
+
+    if (teacher_id) {
+      query += ' AND ti.teacher_id = ?';
+      params.push(teacher_id);
+    }
+
+    query += ' ORDER BY ti.updated_at DESC';
+
+    const [licenses] = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      count: licenses.length,
+      data: licenses
+    });
+  } catch (error) {
+    console.error('❌ Error en SQL:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener licencias',
+      error: error.message
+    });
+  }
+});
+
 /**
  * Reactivar licencia (solo administradores/super_administradores)
  * Se usa cuando el docente paga la mensualidad/anualidad

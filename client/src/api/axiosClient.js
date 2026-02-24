@@ -28,26 +28,40 @@ axiosClient.interceptors.request.use(
 
 // Interceptor para manejar respuestas de error
 try {
-  axiosClient.interceptors.response.use(
-    (response) => response,
-    (error) => {
-      if (error.response) {
-        // Manejar errores específicos de autenticación
-        if (error.response.status === 401) {
-          // Si el token es inválido o ha expirado
-          localStorage.removeItem('authToken');
-          localStorage.removeItem('user');
-          localStorage.removeItem('userRole');
-          
-          // Redirigir al login si no estamos ya en esa página
-          if (window.location.pathname !== '/login') {
-            window.location.href = '/login';
-          }
+axiosClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+
+    if (error.response) {
+
+      // 🔒 Suscripción vencida
+      if (
+        error.response.status === 403 &&
+        (
+          error.response.data?.code === 'SUBSCRIPTION_EXPIRED' ||
+          error.response.data?.code === 'NO_SUBSCRIPTION'
+        )
+      ) {
+        if (window.location.pathname !== '/subscription-expired') {
+          window.location.href = '/subscription-expired';
         }
       }
-      return Promise.reject(error);
+
+      // 🔐 Token inválido
+      if (error.response.status === 401) {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('user');
+        localStorage.removeItem('userRole');
+
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+      }
     }
-  );
+
+    return Promise.reject(error);
+  }
+);
 } catch (e) {
   console.error('Error al configurar interceptor de respuesta:', e);
 }

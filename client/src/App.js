@@ -73,6 +73,7 @@ import AttendancePage from './pages/attendance/AttendancePage.js';
 import AttendanceValidatePage from './pages/attendance/AttendanceValidatePage.js';
 import ManageSessions from './pages/ManageSessions.jsx';
 import TeacherDashboard from './pages/TeacherDashboard.jsx';
+import SubscriptionExpired from './pages/SubscriptionExpired';
 
 // Componente para el temporizador de inactividad
 function IdleTimerContainer() {
@@ -476,6 +477,7 @@ function AppContent() {
           transition: 'margin-left 0.3s ease'
         }}>
           <Routes>
+            <Route path="/subscription-expired" element={<SubscriptionExpired />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/gestionar-sesiones" element={<ManageSessions />} />
@@ -539,17 +541,30 @@ function AppContent() {
   }
 
   // Componente Layout para rutas de super_administrador / administrador
+// Componente Layout para rutas de super_administrador / administrador
   function SuperAdminDashboardLayout() {
     const { user: authUser } = useAuth();
     const [show, setShow] = useState(false);
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+    
     const handleClose = () => setShow(false);
     const handleToggle = () => setShow(prev => !prev);
+
+    // Efecto para manejar el cambio de tamaño de pantalla (PC, Tablet, Móvil)
+    useEffect(() => {
+      const handleResize = () => {
+        setIsMobile(window.innerWidth < 768);
+      };
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
     const isAdmin = authUser?.role === 'administrador';
     const panelTitle = isAdmin ? 'Panel Admin' : '👑 Panel Super Admin';
 
     return (
       <div>
-        {/* Botón para mostrar/ocultar sidebar en móviles */}
+        {/* Botón hamburguesa para móviles y tablets */}
         <button 
           className="btn btn-dark d-md-none position-fixed" 
           style={{ top: '70px', left: '10px', zIndex: 1030 }} 
@@ -559,8 +574,16 @@ function AppContent() {
           <Menu size={20} />
         </button>
         
-        {/* Sidebar para pantallas medianas y grandes */}
-        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ width: '250px', height: '100vh', position: 'fixed', left: 0, top: '56px', overflowY: 'auto' }}>
+        {/* Sidebar para escritorio (PC) */}
+        <div className="d-none d-md-block sidebar bg-dark text-white" style={{ 
+          width: '250px', 
+          height: 'calc(100vh - 56px)', 
+          position: 'fixed', 
+          left: 0, 
+          top: '56px', 
+          overflowY: 'auto',
+          zIndex: 999 
+        }}>
           <div className="p-3">
             <h5 className="mb-3">{panelTitle}</h5>
             <ul className="nav flex-column">
@@ -582,6 +605,12 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/admin/licenses" className="nav-link text-info d-flex align-items-center">
                   <CreditCard size={18} className="me-2" /> Licencias
+                </Link>
+              </li>
+              {/* NUEVA RUTA DE PAGOS */}
+              <li className="nav-item mb-2">
+                <Link to="/admin/payments" className="nav-link text-success d-flex align-items-center">
+                  <CreditCard size={18} className="me-2" /> Historial de Pagos
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -639,13 +668,11 @@ function AppContent() {
                   <BookOpen size={18} className="me-2" /> Cursos
                 </Link>
               </li>
-
               <li className="nav-item mb-2">
                 <Link to="/gestionar-sesiones" className="nav-link text-white d-flex align-items-center">
                   <Activity size={18} className="me-2" /> Gestionar Sesiones
                 </Link>
               </li>
-
               <li className="nav-item mb-2">
                 <Link to="/crear-pregunta" className="nav-link bg-primary text-white d-flex align-items-center">
                   <PlusCircle size={18} className="me-2" /> Crear Pregunta
@@ -675,7 +702,7 @@ function AppContent() {
           </div>
         </div>
         
-        {/* Offcanvas para móviles */}
+        {/* Offcanvas (Sidebar deslizable) para móviles */}
         <Offcanvas show={show} onHide={handleClose} className="bg-dark text-white">
           <Offcanvas.Header closeButton className="border-bottom">
             <Offcanvas.Title>{panelTitle}</Offcanvas.Title>
@@ -700,6 +727,11 @@ function AppContent() {
               <li className="nav-item mb-2">
                 <Link to="/admin/licenses" className="nav-link text-info d-flex align-items-center" onClick={handleClose}>
                   <CreditCard size={18} className="me-2" /> Licencias
+                </Link>
+              </li>
+              <li className="nav-item mb-2">
+                <Link to="/admin/payments" className="nav-link text-success d-flex align-items-center" onClick={handleClose}>
+                  <CreditCard size={18} className="me-2" /> Historial de Pagos
                 </Link>
               </li>
               <li className="nav-item mb-2">
@@ -785,13 +817,15 @@ function AppContent() {
             </ul>
           </Offcanvas.Body>
         </Offcanvas>
-        
-        {/* Contenido principal */}
+
+        {/* Contenido principal adaptativo */}
         <div style={{ 
-          marginLeft: window.innerWidth >= 768 ? '250px' : '0', 
-          width: window.innerWidth >= 768 ? 'calc(100% - 250px)' : '100%', 
+          marginLeft: !isMobile ? '250px' : '0', 
+          width: !isMobile ? 'calc(100% - 250px)' : '100%', 
           padding: '20px', 
-          marginTop: '56px' 
+          minHeight: 'calc(100vh - 56px)',
+          marginTop: '56px',
+          transition: 'margin-left 0.3s ease'
         }}>
           <Routes>
             <Route path="/dashboard" element={<SuperAdminDashboard />} />
@@ -801,6 +835,7 @@ function AppContent() {
             <Route path="/admin/users/:id/edit" element={<UserForm />} />
             <Route path="/admin/audit" element={<AuditLogsPage />} />
             <Route path="/admin/licenses" element={<LicensesManagement />} />
+            <Route path="/admin/payments" element={<div>Aquí irá tu componente de Pagos</div>} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
             <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
             <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
@@ -843,7 +878,7 @@ function AppContent() {
             <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/preguntas" element={<CreateQuestionPage />} />
             
-            {/* Rutas para cursos (super_administrador) */}
+            {/* Rutas para cursos */}
             <Route path="/cursos" element={<CoursesList />} />
             <Route path="/cursos/nuevo" element={<CourseForm />} />
             <Route path="/cursos/:id/editar" element={<CourseForm />} />
@@ -860,19 +895,16 @@ function AppContent() {
             <Route path="/subir-guia" element={<UploadGuideForm />} />
             <Route path="/mis-guias" element={<TeacherGuidesManage />} />
 
-            {/* Prueba Saber (docente) */}
+            {/* Prueba Saber */}
             <Route path="/prueba-saber" element={<TeacherPruebaSaberPage />} />
             <Route path="/prueba-saber/resultados" element={<PruebaSaberResultsPage />} />
 
-            {/* Fallback interno: evita pantalla en blanco */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
-
           </Routes>
         </div>
       </div>
     );
   }
-
   // Componente Layout para rutas de estudiante
   function StudentDashboardLayout() {
     const [show, setShow] = useState(false);

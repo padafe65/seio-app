@@ -275,3 +275,18 @@ export const validateTeacherSubject = async (req, res, next) => {
     });
   }
 };
+
+/**
+ * Middleware para autorizar el acceso a rutas basado en el rol del usuario
+ */
+export const authorizeRoles = (roles) => {
+  return (req, res, next) => {
+    if (!req.user || !req.user.role) {
+      return res.status(403).json({ message: 'Acceso denegado. No tienes un rol asignado.' });
+    }
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ message: `Acceso denegado. Se requiere uno de los siguientes roles: ${roles.join(', ')}.` });
+    }
+    next();
+  };
+};

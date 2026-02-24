@@ -158,6 +158,11 @@ const Login = () => {
 
   console.log("Usuario autenticado:", user);
 
+const phone = process.env.REACT_APP_WHATSAPP_NUMBER;
+const message = encodeURIComponent(process.env.REACT_APP_WHATSAPP_MESSAGE);
+console.log("PHONE:", phone);
+console.log("MESSAGE:", message);
+
   // Dentro del componente Login
   const handleForgotPassword = () => {
     navigate('/reset-password');
@@ -229,7 +234,12 @@ const Login = () => {
             <a href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer" className="text-primary">
               <Facebook size={30} />
             </a>
-            <a href="https://wa.me/tunumerotelefonico" target="_blank" rel="noopener noreferrer" className="text-success">
+            <a
+              href={`https://wa.me/${phone}?text=${message}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-success"
+            >
               <MessageCircle size={30} />
             </a>
           </div>

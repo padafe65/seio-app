@@ -39,7 +39,7 @@ import attendanceRoutes from './routes/attendanceRoutes.js';
 import rateLimit from 'express-rate-limit';
 import pool from './config/db.js';
 import { syncSubjectCategories } from './utils/syncSubjectCategories.js';
-
+import subscriptionsRoutes from './routes/subscriptions.js';
 
 dotenv.config();
 
@@ -96,6 +96,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/subscriptions', subscriptionsRoutes);
 
 // Rate limiting para auth: protege contra fuerza bruta y abuso de recuperación de contraseña
 const authLimiter = rateLimit({

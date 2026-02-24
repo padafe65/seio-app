@@ -518,7 +518,7 @@ const QuestionnaireForm = () => {
       // Redirigir a la lista de cuestionarios
       navigate('/cuestionarios');
     } catch (err) {
-      console.error('Error al guardar cuestionario:', err);
+      console.error("❌ Error completo:", err.response?.data || err.message || err);
       MySwal.fire({
         icon: 'error',
         title: 'Error',
@@ -705,6 +705,7 @@ const QuestionnaireForm = () => {
                       <option value="">Seleccione el nivel</option>
                       <option value="3">Grado 3°</option>
                       <option value="5">Grado 5°</option>
+                      <option value="7">Grado 7°</option>
                       <option value="9">Grado 9°</option>
                       <option value="11">Grado 11°</option>
                     </select>

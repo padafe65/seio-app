@@ -77,16 +77,22 @@ const ImprovementPlanForm = () => {
           const planData = response.data;
           
           setFormData({
-            student_id: planData.student_id,
-            teacher_id: planData.teacher_id,
-            title: planData.title,
-            subject: planData.subject,
-            description: planData.description,
-            activities: planData.activities,
+            student_id: planData.student_id || '',
+            teacher_id: planData.teacher_id || '',
+            title: planData.title || '',
+            subject: planData.subject || '',
+            description: planData.description || '',
+            activities: planData.activities || '',
             deadline: planData.deadline ? planData.deadline.split('T')[0] : '',
             file_url: planData.file_url || '',
-            failed_achievements: planData.failed_achievements,
-            passed_achievements: planData.passed_achievements,
+            failed_achievements: planData.failed_achievements || '',
+            passed_achievements: planData.passed_achievements || '',
+            video_urls: planData.video_urls || '',
+            resource_links: planData.resource_links || '',
+            teacher_notes: planData.teacher_notes || '',
+            student_feedback: planData.student_feedback || '',
+            attempts_count: planData.attempts_count || 0,
+            activity_status: planData.activity_status || 'pending',
             completed: planData.completed === 1,
             email_sent: planData.email_sent === 1
           });

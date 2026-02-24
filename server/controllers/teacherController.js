@@ -13,7 +13,6 @@ export const createTeacherIfNotExists = async (req, res) => {
 
     console.log(`🔍 Verificando si existe profesor con user_id: ${userId}`);
     
-    // Verificar si el profesor ya existe
     const [existingTeachers] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [userId]
@@ -28,7 +27,6 @@ export const createTeacherIfNotExists = async (req, res) => {
       });
     }
 
-    // Obtener información del usuario
     const [users] = await pool.query(
       'SELECT id, name, email, role FROM users WHERE id = ?',
       [userId]
@@ -43,18 +41,39 @@ export const createTeacherIfNotExists = async (req, res) => {
 
     const user = users[0];
 
-    // Crear el registro del profesor
+    // --- NUEVA LÓGICA DE SUSCRIPCIÓN ---
+    // Definimos 30 días de prueba a partir de hoy
+    const fechaInicio = new Date();
+    const fechaVencimiento = new Date();
+    fechaVencimiento.setDate(fechaInicio.getDate() + 30); 
+    // ----------------------------------
+
+    // 1. Crear el registro del profesor
     const [result] = await pool.query(
       'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
       [userId, 'Sin asignar', 'Sin asignar']
     );
 
-    console.log(`✅ Profesor creado con ID: ${result.insertId}`);
+    const teacherId = result.insertId;
+
+    // 2. Crear suscripción de prueba (30 días)
+    await pool.query(
+      "INSERT INTO subscriptions (teacher_id, plan_type, status, current_period_start, current_period_end) VALUES (?, 'monthly', 'active', ?, ?)",
+      [teacherId, fechaInicio, fechaVencimiento]
+    );
+
+    // 3. Crear registro en teacher_institutions para el Dashboard
+    await pool.query(
+      "INSERT INTO teacher_institutions (teacher_id, institution, license_status, purchased_date, expiration_date) VALUES (?, ?, 'active', ?, ?)",
+      [teacherId, 'Sin asignar', 'active', fechaInicio, fechaVencimiento]
+    );
+
+    console.log(`✅ Profesor creado con ID: ${teacherId} y 30 días de prueba.`);
 
     res.status(201).json({
       success: true,
-      message: 'Profesor creado exitosamente',
-      teacher_id: result.insertId,
+      message: 'Profesor creado exitosamente con 30 días de prueba',
+      teacher_id: teacherId,
       user: user
     });
 

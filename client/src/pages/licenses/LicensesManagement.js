@@ -38,7 +38,9 @@ const LicensesManagement = () => {
     purchased_date: new Date().toISOString().split('T')[0]
   });
   const [suspendReason, setSuspendReason] = useState('');
-  const [extendYear, setExtendYear] = useState(true);
+  //const [extendYear, setExtendYear] = useState(true);
+  // Por esto (para manejar múltiples opciones):
+const [renewalPlan, setRenewalPlan] = useState('monthly'); // 'monthly' o 'yearly'
   const [teachers, setTeachers] = useState([]);
 
   useEffect(() => {
@@ -201,25 +203,24 @@ const LicensesManagement = () => {
     }
   };
 
-  const handleReactivateLicense = async () => {
+const handleReactivateLicense = async () => {
     if (!selectedLicense) return;
 
     try {
+      // Ahora enviamos plan_type en lugar de extend_year
       await axiosClient.put(`/teacher-licenses/license/${selectedLicense.id}/reactivate`, {
-        extend_year: extendYear
+        plan_type: renewalPlan 
       });
 
       Swal.fire({
         icon: 'success',
         title: 'Licencia reactivada',
-        html: extendYear 
-          ? 'La licencia ha sido reactivada y extendida 1 año adicional.'
-          : 'La licencia ha sido reactivada exitosamente.'
+        text: `La licencia ha sido extendida con éxito bajo el plan ${renewalPlan === 'monthly' ? 'Mensual' : 'Anual'}.`
       });
 
       setShowReactivateModal(false);
       setSelectedLicense(null);
-      setExtendYear(true);
+      setRenewalPlan('monthly'); // Resetear al valor por defecto
       fetchLicenses();
     } catch (error) {
       console.error('Error al reactivar licencia:', error);
@@ -411,7 +412,7 @@ const LicensesManagement = () => {
         </div>
       </div>
 
-      {/* Tabla de licencias */}
+{/* Tabla de licencias */}
       <div className="card">
         <div className="card-body">
           <div className="table-responsive">
@@ -425,13 +426,14 @@ const LicensesManagement = () => {
                   <th>Fecha Compra</th>
                   <th>Fecha Expiración</th>
                   <th>Días Restantes</th>
+                  <th>Comprobante</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredLicenses.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="text-center text-muted py-4">
+                    <td colSpan="9" className="text-center text-muted py-4">
                       No se encontraron licencias
                     </td>
                   </tr>
@@ -454,6 +456,22 @@ const LicensesManagement = () => {
                         {license.license_status === 'active' && license.expiration_date
                           ? `${calculateDaysRemaining(license.expiration_date)} días`
                           : '-'}
+                      </td>
+                      <td>
+                        {license.proof_image_url ? (
+                          <button 
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={() => Swal.fire({
+                              imageUrl: `${API_URL}${license.proof_image_url}`,
+                              imageAlt: 'Comprobante de pago',
+                              title: 'Soporte de Pago'
+                            })}
+                          >
+                            <Eye size={16} /> Ver
+                          </button>
+                        ) : (
+                          <small className="text-muted">Sin soporte</small>
+                        )}
                       </td>
                       <td>
                         <div className="d-flex gap-1">
@@ -490,7 +508,6 @@ const LicensesManagement = () => {
           </div>
         </div>
       </div>
-
       {/* Modal: Comprar Licencia */}
       {showPurchaseModal && (
         <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
@@ -624,65 +641,75 @@ const LicensesManagement = () => {
       )}
 
       {/* Modal: Reactivar Licencia */}
+{/* Modal: Reactivar Licencia */}
       {showReactivateModal && selectedLicense && (
-        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1050 }}>
           <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
+            <div className="modal-content border-0 shadow-lg">
               <div className="modal-header bg-success text-white">
-                <h5 className="modal-title">Reactivar Licencia</h5>
-                <button
-                  type="button"
-                  className="btn-close btn-close-white"
-                  onClick={() => {
-                    setShowReactivateModal(false);
-                    setSelectedLicense(null);
-                    setExtendYear(true);
-                  }}
+                <h5 className="modal-title fw-bold">Actualizar / Reactivar Licencia</h5>
+                <button 
+                  type="button" 
+                  className="btn-close btn-close-white" 
+                  onClick={() => setShowReactivateModal(false)}
                 ></button>
               </div>
-              <div className="modal-body">
-                <p><strong>Docente:</strong> {selectedLicense.teacher_name}</p>
-                <p><strong>Institución:</strong> {selectedLicense.institution}</p>
-                <div className="form-check mt-3">
-                  <input
-                    className="form-check-input"
-                    type="checkbox"
-                    checked={extendYear}
-                    onChange={(e) => setExtendYear(e.target.checked)}
-                    id="extendYear"
-                  />
-                  <label className="form-check-label" htmlFor="extendYear">
-                    Extender licencia 1 año adicional
-                  </label>
+              <div className="modal-body p-4">
+                <div className="mb-3">
+                    <p className="mb-1 text-muted small">Docente:</p>
+                    <h6 className="fw-bold">{selectedLicense.teacher_name}</h6>
                 </div>
-                {extendYear && selectedLicense.expiration_date && (
-                  <div className="alert alert-info mt-3">
-                    Nueva fecha de expiración: {
-                      new Date(new Date(selectedLicense.expiration_date).setFullYear(
-                        new Date(selectedLicense.expiration_date).getFullYear() + 1
-                      )).toLocaleDateString()
-                    }
+                
+                <div className="mb-4">
+                    <label className="form-label fw-bold text-primary">Seleccione el Plan pagado:</label>
+                    <select 
+                        className="form-select border-primary" 
+                        value={renewalPlan} 
+                        onChange={(e) => setRenewalPlan(e.target.value)}
+                    >
+                        <option value="monthly">Mensual (30 días)</option>
+                        <option value="yearly">Anual (365 días)</option>
+                    </select>
+                </div>
+
+                {selectedLicense.proof_image_url ? (
+                  <div className="mt-3 p-3 border rounded bg-light text-center">
+                    <p className="small fw-bold mb-2"><Eye size={14} className="me-1"/> Comprobante de Pago recibido:</p>
+                    <img 
+                      src={`${API_URL}${selectedLicense.proof_image_url}`} 
+                      alt="Comprobante de pago" 
+                      className="img-fluid rounded shadow-sm"
+                      style={{ maxHeight: '250px', cursor: 'pointer' }}
+                      onClick={() => window.open(`${API_URL}${selectedLicense.proof_image_url}`, '_blank')}
+                    />
+                    <div className="mt-2">
+                        <small className="text-muted">Haz clic en la imagen para ampliar</small>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="alert alert-secondary py-2 small text-center">
+                    <AlertCircle size={16} className="me-1"/> No hay comprobante adjunto para esta licencia.
                   </div>
                 )}
+
+                <div className="alert alert-info mt-4 mb-0 py-2">
+                  <small className="d-block">
+                    <strong>Nota:</strong> El sistema sumará los días automáticamente al vencimiento actual.
+                  </small>
+                </div>
               </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setShowReactivateModal(false);
-                    setSelectedLicense(null);
-                    setExtendYear(true);
-                  }}
+              <div className="modal-footer bg-light">
+                <button 
+                    className="btn btn-outline-secondary" 
+                    onClick={() => setShowReactivateModal(false)}
                 >
-                  Cancelar
+                    Cancelar
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-success"
+                <button 
+                  className="btn btn-success px-4 fw-bold" 
                   onClick={handleReactivateLicense}
                 >
-                  Reactivar Licencia
+                  Confirmar y Activar
                 </button>
               </div>
             </div>
