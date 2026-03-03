@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import axiosClient from '../api/axiosClient';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import withReactContent from 'sweetalert2-react-content';
-import api from '../config/axios'; // ✨ AGREGADO: usar la instancia configurada de axios
+//import api from '../config/axios'; // ✨ AGREGADO: usar la instancia configurada de axios
 
 const notiMySwal = withReactContent(Swal);
 
@@ -13,6 +13,7 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const CompletarDocente = () => {
   const userId = localStorage.getItem('user_id') || '';
   const navigate = useNavigate();
+  const [instituciones, setInstituciones] = useState([]); // 👈 AGREGA ESTA LÍNEA
   const [teacher, setTeacher] = useState({
     subject: '',
     institution: '',
@@ -26,7 +27,7 @@ const CompletarDocente = () => {
   useEffect(() => {
     const fetchSubjects = async () => {
       try {
-        const response = await axios.get(`${API_URL}/api/subject-categories-list/subjects`);
+        const response = await axiosClient.get(`${API_URL}/api/subject-categories-list/subjects`);
         const subjectsList = response.data || [];
         // Extraer materias únicas
         const uniqueSubjects = [...new Set(subjectsList.map(s => s.subject))];
@@ -50,7 +51,7 @@ const CompletarDocente = () => {
       }
 
       try {
-        const response = await axios.get(`${API_URL}/api/subject-categories/${encodeURIComponent(teacher.subject)}`);
+        const response = await axiosClient.get(`${API_URL}/api/subject-categories/${encodeURIComponent(teacher.subject)}`);
         const categoriesList = response.data || [];
         setCategories(categoriesList);
         console.log(`📚 Categorías cargadas para ${teacher.subject}:`, categoriesList);
@@ -62,6 +63,23 @@ const CompletarDocente = () => {
 
     fetchCategories();
   }, [teacher.subject]);
+
+  useEffect(() => {
+  const loadInstitutions = async () => {
+try {
+      // Al usar axiosClient, automáticamente se envía el token y se usa la baseURL /api
+      const response = await axiosClient.get('/admin/institutions/list');
+      
+      if (response.data && response.data.success) {
+        setInstituciones(response.data.data);
+      }
+    } catch (error) {
+      console.error("Error cargando instituciones:", error);
+      // El interceptor de axiosClient ya manejará el redireccionamiento si el token expira
+    }
+  };
+  loadInstitutions();
+}, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -84,7 +102,8 @@ const CompletarDocente = () => {
           'Content-Type': 'application/json'
         }
       };
-      await api.post('/teachers', teacher, config);
+// ✅ Usa axiosClient que ya tienes importado arriba
+      await axiosClient.post('/teachers', teacher);
       
       // Verificar si fue creado por admin
       const createdByAdmin = localStorage.getItem('created_by_admin') === 'true';
@@ -199,11 +218,17 @@ const CompletarDocente = () => {
                 id="institution"
                 name="institution"
                 value={teacher.institution}
-                placeholder="Ej: Colegio La Chucua"
                 onChange={handleChange}
                 className="form-control"
                 required
+                list="institutions-db-list" // ✨ Esto conecta con el ID de abajo
               />
+
+              <datalist id="institutions-db-list">
+                {instituciones.map((inst, index) => (
+                  <option key={index} value={inst} />
+                ))}
+              </datalist>
               <small className="form-text text-muted">
                 Institución educativa donde trabajas
               </small>

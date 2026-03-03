@@ -40,7 +40,7 @@ export default function SubscriptionForm({ teacherId }) {
 
       {method === 'nequi' && (
         <div className="alert alert-info">
-          <p>Envía <b>$50,000</b> al Nequi: <b>300 123 4567</b></p>
+          <p>Envía <b>$50,000</b> al Nequi: <b>314 2999 274</b></p>
           <label>Sube el pantallazo:</label>
           <input type="file" className="form-control" onChange={(e) => setFile(e.target.files[0])} required />
         </div>

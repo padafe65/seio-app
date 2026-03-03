@@ -128,23 +128,28 @@ router.get('/users', isAdminOrSuperAdmin, async (req, res) => {
     // Si es administrador (no super), filtrar para que solo vea estudiantes y docentes
     let roleFilter = '';
     if (req.user.role === 'administrador') {
-      roleFilter = " WHERE role IN ('estudiante', 'docente')";
+      roleFilter = " AND u.role IN ('estudiante', 'docente')";
     }
     
+// 💡 CAMBIO CLAVE: Hacemos JOIN con la tabla teachers para traer 'subject' y el 'teacher_id'
     const [users] = await pool.query(
-      `SELECT id, name, email, phone, role, profile_image${institutionField},
-              CASE 
-                WHEN estado IS NULL THEN 1
-                WHEN estado = 'activo' THEN 1
-                WHEN estado = 'pendiente' THEN 0
-                WHEN estado = 'suspendido' THEN 0
-                WHEN estado = 1 THEN 1
-                WHEN estado = 0 THEN 0
-                ELSE 1
-              END as estado,
-              created_at 
-       FROM users${roleFilter}
-       ORDER BY created_at DESC`
+      `SELECT 
+        u.id, 
+        u.name, 
+        u.email, 
+        u.phone, 
+        u.role, 
+        u.institution,
+        t.id as teacher_id, 
+        t.subject,
+        CASE 
+          WHEN u.estado = 'activo' THEN 1 
+          ELSE 0 
+        END as estado
+      FROM users u
+      LEFT JOIN teachers t ON u.id = t.user_id
+      WHERE 1=1 ${roleFilter}
+      ORDER BY u.created_at DESC`
     );
     
     res.json({
@@ -183,23 +188,25 @@ router.get('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       // Ignorar error
     }
     
+// 🛠️ CAMBIO EN BACKEND: JOIN para traer nombre del creador
     const [users] = await pool.query(
-      `SELECT id, name, email, phone, role, profile_image${institutionField},
-              CASE 
-                WHEN estado IS NULL THEN 1
-                WHEN estado = 'activo' THEN 1
-                WHEN estado = 'pendiente' THEN 0
-                WHEN estado = 'suspendido' THEN 0
-                WHEN estado = 1 THEN 1
-                WHEN estado = 0 THEN 0
-                ELSE 1
-              END as estado,
-              created_at 
-       FROM users 
-       WHERE id = ?`,
+      `SELECT 
+        u.id, u.name, u.email, u.phone, u.role, u.profile_image, u.institution, u.created_by,
+        c.name as creator_name, 
+        c.role as creator_role,
+        CASE 
+          WHEN u.estado IS NULL THEN 1
+          WHEN u.estado = 'activo' THEN 1
+          WHEN u.estado = 'pendiente' THEN 0
+          WHEN u.estado = 'suspendido' THEN 0
+          ELSE 1
+        END as estado,
+        u.created_at 
+      FROM users u
+      LEFT JOIN users c ON u.created_by = c.id 
+      WHERE u.id = ?`,
       [id]
-    );
-    
+    );    
     if (users.length === 0) {
       return res.status(404).json({
         success: false,
@@ -224,7 +231,9 @@ router.get('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
 // Crear un nuevo usuario (administrador o super_administrador)
 router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
   try {
-    const { name, email, phone, password, role, institution } = req.body;
+    // 1. Capturar el ID del que está creando (Admin/Docente)
+    const creatorId = req.user ? req.user.id : null;
+    const { name, email, phone, password, role, institution, course_name, grade } = req.body;
     const userRole = req.user.role; // Rol del usuario que está creando
     
     // Validar campos requeridos
@@ -248,7 +257,7 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
     if (!validateRoleAssignment(userRole, role)) {
       return res.status(403).json({
         success: false,
-        message: `No tienes permisos para asignar el rol '${role}'. Los administradores solo pueden asignar roles de 'estudiante' o 'docente'.`,
+        message: `No tienes permisos para asignar el rol '${role}'.`,
         code: 'ROLE_ASSIGNMENT_DENIED',
         yourRole: userRole,
         attemptedRole: role
@@ -282,54 +291,78 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
         AND COLUMN_NAME = 'institution'
       `);
       hasInstitution = columns.length > 0;
-    } catch (error) {
-      // Ignorar error
-    }
+    } catch (error) {}
     
-    // Insertar usuario
-    // NOTA: El ENUM de estado en la BD es: ('pendiente','activo','suspendido')
-    // Por defecto se crea como 'activo'
-    let insertQuery, insertValues, selectFields;
+    // --- 🛠️ MODIFICACIÓN: INSERTAR PRIMERO PARA OBTENER EL ID ---
+    let insertQuery, insertValues;
     if (hasInstitution) {
-      insertQuery = 'INSERT INTO users (name, email, phone, password, role, estado, institution) VALUES (?, ?, ?, ?, ?, ?, ?)';
-      insertValues = [name, email, phone || null, hashedPassword, role, 'activo', institution || null];
-      selectFields = 'id, name, email, phone, role, institution';
+      insertQuery = 'INSERT INTO users (name, email, phone, password, role, estado, institution, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+      insertValues = [name, email, phone || null, hashedPassword, role, 'activo', institution || null, creatorId];
     } else {
-      insertQuery = 'INSERT INTO users (name, email, phone, password, role, estado) VALUES (?, ?, ?, ?, ?, ?)';
-      insertValues = [name, email, phone || null, hashedPassword, role, 'activo'];
-      selectFields = 'id, name, email, phone, role';
+      insertQuery = 'INSERT INTO users (name, email, phone, password, role, estado, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)';
+      insertValues = [name, email, phone || null, hashedPassword, role, 'activo', creatorId];
     }
-    
+
     const [result] = await pool.query(insertQuery, insertValues);
     const newUserId = result.insertId;
+
+    // --- 🛠️ MODIFICACIÓN: LÓGICA DE AUTOREGISTRO (Ahora con newUserId definido) ---
+    if (!creatorId) {
+      await pool.query(
+        'UPDATE users SET created_by = ?, updated_by = ? WHERE id = ?',
+        [newUserId, newUserId, newUserId]
+      );
+    }
     
-    // Obtener el usuario creado (sin la contraseña)
-    const [newUser] = await pool.query(
-      `SELECT ${selectFields},
-              CASE 
-                WHEN estado IS NULL THEN 1
-                WHEN estado = 'activo' THEN 1
-                WHEN estado = 'pendiente' THEN 0
-                WHEN estado = 'suspendido' THEN 0
-                WHEN estado = 1 THEN 1
-                WHEN estado = 0 THEN 0
-                ELSE 1
-              END as estado,
-              created_at 
-       FROM users 
-       WHERE id = ?`,
-      [newUserId]
-    );
+    // >>> INICIO DE LA AUTOMATIZACIÓN PARA DOCENTES <<<
+    if (role === 'docente' && institution && course_name) {
+      try {
+        const [teacherRes] = await pool.query(
+          'INSERT INTO teachers (user_id, institution, subject) VALUES (?, ?, ?)',
+          [newUserId, institution, course_name]
+        );
+        const newTeacherId = teacherRes.insertId;
+
+        const [existingCourse] = await pool.query(
+          "SELECT id FROM courses WHERE name = ? AND institution = ?",
+          [course_name, institution]
+        );
+
+        let courseId;
+        if (existingCourse.length === 0) {
+          const [newCourse] = await pool.query(
+            "INSERT INTO courses (name, grade, institution, teacher_id, created_by) VALUES (?, ?, ?, ?, ?)",
+            [course_name, grade || 'N/A', institution, newTeacherId, creatorId || newUserId]
+          );
+          courseId = newCourse.insertId;
+        } else {
+          courseId = existingCourse[0].id;
+        }
+
+        await pool.query(
+          "INSERT IGNORE INTO teacher_courses (teacher_id, course_id, assigned_date, role) VALUES (?, ?, NOW(), ?)",
+          [newTeacherId, courseId, 'principal']
+        );
+      } catch (autoError) {
+        console.error('⚠️ Error en la automatización de curso:', autoError.message);
+      }
+    }
     
     // 📝 Registrar en auditoría
     await logCreate(
       'users',
       newUserId,
-      req.user.id,
-      req.user.role,
+      creatorId,
+      userRole,
       req.user.name || 'Usuario',
-      { name, email, role, institution: institution || null },
+      { name, email, role, institution, course_name },
       req
+    ); 
+
+    // Obtener el usuario creado para la respuesta
+    const [newUser] = await pool.query(
+      `SELECT id, name, email, phone, role ${hasInstitution ? ', institution' : ''}, estado, created_by FROM users WHERE id = ?`,
+      [newUserId]
     );
     
     res.status(201).json({
@@ -346,12 +379,15 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
     });
   }
 });
-
 // Actualizar un usuario (administrador o super_administrador)
 router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, email, phone, role, estado, password, institution } = req.body;
+    // Al principio del método, captura quién edita:
+    const updaterId = req.user.id;
+    // ✨ SE AGREGÓ: course_name y grade a la desestructuración del body
+    // 🛠️ ADICIÓN: Se extrae created_by del body para permitir su actualización
+    const { name, email, phone, role, estado, password, institution, course_name, grade, created_by } = req.body;
     const userRole = req.user.role; // Rol del usuario que está haciendo la actualización
     
     // Verificar que el usuario existe
@@ -449,6 +485,12 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       updates.push('phone = ?');
       values.push(phone);
     }
+
+    // 🛠️ ADICIÓN: Permite actualizar el campo created_by si viene en el body
+    if (created_by !== undefined) {
+      updates.push('created_by = ?');
+      values.push(created_by);
+    }
     
     // Verificar si la columna institution existe antes de actualizarla
     let hasInstitution = false;
@@ -475,26 +517,20 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       values.push(role);
     }
     if (estado !== undefined) {
-      // Convertir número a string según el ENUM de la BD: ('pendiente','activo','suspendido')
-      // Si estado es 1, guardar como 'activo', si es 0, guardar como 'pendiente'
-      // NOTA: La BD tiene ENUM('pendiente','activo','suspendido'), NO tiene 'inactivo'
       let estadoValue;
       if (typeof estado === 'number') {
         estadoValue = estado === 1 ? 'activo' : 'pendiente';
       } else if (typeof estado === 'string') {
-        // Si ya es string, validar que sea uno de los valores válidos del ENUM
         const estadoLower = estado.toLowerCase();
         if (estadoLower === 'activo' || estadoLower === 'pendiente' || estadoLower === 'suspendido') {
           estadoValue = estadoLower;
         } else if (estadoLower === 'inactivo') {
-          // 'inactivo' no existe en el ENUM, convertir a 'pendiente'
           estadoValue = 'pendiente';
         } else if (estado === '1' || estado === 1) {
           estadoValue = 'activo';
         } else if (estado === '0' || estado === 0) {
           estadoValue = 'pendiente';
         } else {
-          // Por defecto, activo
           estadoValue = 'activo';
         }
       } else {
@@ -503,8 +539,7 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       updates.push('estado = ?');
       values.push(estadoValue);
     }
-    // SEGURIDAD: No permitir cambiar contraseña desde este endpoint
-    // Los usuarios deben usar el sistema de recuperación de contraseña
+
     if (password !== undefined && password !== '') {
       return res.status(403).json({
         success: false,
@@ -535,6 +570,44 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
       values
     );
+
+    // ✨ AGREGADO: LÓGICA DE ACTUALIZACIÓN/CREACIÓN DE CURSO PARA DOCENTES
+    if ((role === 'docente' || targetUser.role === 'docente') && institution && course_name) {
+      try {
+        const [teacherCheck] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [id]);
+        let teacherId;
+        if (teacherCheck.length === 0) {
+          const [tRes] = await pool.query('INSERT INTO teachers (user_id, institution, subject) VALUES (?, ?, ?)', [id, institution, course_name]);
+          teacherId = tRes.insertId;
+        } else {
+          teacherId = teacherCheck[0].id;
+          await pool.query('UPDATE teachers SET institution = ? WHERE id = ?', [institution, teacherId]);
+        }
+
+        const [existingCourse] = await pool.query(
+          "SELECT id FROM courses WHERE name = ? AND institution = ?",
+          [course_name, institution]
+        );
+
+        let finalCourseId;
+        if (existingCourse.length === 0) {
+          const [newC] = await pool.query(
+            "INSERT INTO courses (name, grade, institution, teacher_id, created_by) VALUES (?, ?, ?, ?, ?)",
+            [course_name, grade || 'N/A', institution, teacherId, req.user.id]
+          );
+          finalCourseId = newC.insertId;
+        } else {
+          finalCourseId = existingCourse[0].id;
+        }
+
+        await pool.query(
+          "INSERT IGNORE INTO teacher_courses (teacher_id, course_id, assigned_date, role) VALUES (?, ?, NOW(), 'principal')",
+          [teacherId, finalCourseId]
+        );
+      } catch (autoErr) {
+        console.error('⚠️ Error actualizando curso en edición:', autoErr.message);
+      }
+    }
     
     // 📝 Registrar en auditoría
     await logUpdate(
@@ -544,37 +617,23 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
       req.user.role,
       req.user.name || 'Usuario',
       oldValues,
-      { name, email, phone, role, estado, institution },
+      { name, email, phone, role, estado, institution, course_name },
       req
     );
     
-    // Verificar si la columna institution existe para el SELECT
+    // Obtener el usuario actualizado para el response
     let institutionField = '';
     try {
-      const [columns] = await pool.query(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'users' 
-        AND COLUMN_NAME = 'institution'
-      `);
-      if (columns.length > 0) {
-        institutionField = ', institution';
-      }
-    } catch (error) {
-      // Ignorar error
-    }
+      const [columns] = await pool.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'institution'`);
+      if (columns.length > 0) institutionField = ', institution';
+    } catch (error) {}
     
-    // Obtener el usuario actualizado
     const [updatedUser] = await pool.query(
       `SELECT id, name, email, phone, role${institutionField},
               CASE 
-                WHEN estado IS NULL THEN 1
                 WHEN estado = 'activo' THEN 1
                 WHEN estado = 'pendiente' THEN 0
                 WHEN estado = 'suspendido' THEN 0
-                WHEN estado = 1 THEN 1
-                WHEN estado = 0 THEN 0
                 ELSE 1
               END as estado,
               created_at 
@@ -597,7 +656,6 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     });
   }
 });
-
 // Eliminar un usuario (administrador y super_administrador con restricciones)
 router.delete('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   try {
@@ -988,6 +1046,22 @@ router.put('/change-password', verifyToken, async (req, res) => {
       message: 'Error al cambiar la contraseña',
       error: error.message
     });
+  }
+});
+
+// 🏢 GET: Obtener lista de instituciones únicas para los selectores (combos)
+router.get('/institutions/list', async (req, res) => {
+  try {
+    // Traemos los nombres únicos de la tabla de cursos
+    const [rows] = await pool.query('SELECT DISTINCT institution FROM courses WHERE institution IS NOT NULL AND institution != "" ORDER BY institution ASC');
+    
+    res.json({
+      success: true,
+      data: rows.map(row => row.institution)
+    });
+  } catch (error) {
+    console.error('Error al obtener lista de instituciones:', error);
+    res.status(500).json({ success: false, message: 'Error al obtener instituciones' });
   }
 });
 

@@ -11,16 +11,23 @@ const UserForm = () => {
   const { user, isAuthReady } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    password: '',
-    role: '',
-    estado: 1,
-    institution: ''
-  });
+  const [creatorInfo, setCreatorInfo] = useState(null); // 🛠️ ADICIÓN: Estado para info del creador
+  const [instituciones, setInstituciones] = useState([]);
+const [formData, setFormData] = useState({
+  name: '',
+  email: '',
+  phone: '',
+  password: '',
+  role: '',
+  estado: 1,
+  institution: '',
+  course_name: '',
+  grade: '',
+  created_by: '' // <-- Centralizado aquí
+});
 
+// Este lo dejamos solo para mostrar el NOMBRE legible (ej: "Juan Perez")
+const [creatorName, setCreatorName] = useState('');
   useEffect(() => {
     if (!isAuthReady) return;
     
@@ -58,66 +65,92 @@ const UserForm = () => {
     contact_name: ''
   });
 
-  const fetchUser = async () => {
+  useEffect(() => {
+  const loadInstitutions = async () => {
     try {
-      setLoading(true);
-      const response = await axiosClient.get(`/admin/users/${id}`);
-      const userData = response.data.data || response.data;
-      
-      // 🔒 Validar permisos: administrador no puede editar otros administradores o super_administradores
-      if (user.role === 'administrador' && 
-          (userData.role === 'administrador' || userData.role === 'super_administrador')) {
-        Swal.fire({
-          icon: 'error',
-          title: 'Acceso denegado',
-          text: 'No tienes permisos para editar usuarios con rol de administrador o super administrador.',
-          confirmButtonText: 'OK'
-        }).then(() => {
-          navigate('/admin/users');
-        });
-        return;
-      }
-      
-      setFormData({
-        name: userData.name || '',
-        email: userData.email || '',
-        phone: userData.phone || '',
-        password: '', // No cargar la contraseña
-        role: userData.role || '',
-        estado: userData.estado !== undefined ? userData.estado : 1,
-        institution: userData.institution || ''
-      });
-      
-      // Si el usuario es estudiante, cargar datos de contacto adicionales
-      if (userData.role === 'estudiante' && id) {
-        try {
-          // axiosClient ya tiene /api como baseURL, así que no agregar /api/ de nuevo
-          const studentResponse = await axiosClient.get(`/students/user/${id}`);
-          if (studentResponse.data) {
-            setStudentContactData({
-              contact_phone: studentResponse.data.contact_phone || '',
-              contact_email: studentResponse.data.contact_email || '',
-              contact_name: studentResponse.data.contact_name || ''
-            });
-            console.log('📋 Datos de contacto del estudiante cargados:', studentResponse.data);
-          }
-        } catch (studentError) {
-          // Si no hay datos de estudiante aún, es normal (registro incompleto)
-          console.log('ℹ️ No se encontraron datos adicionales de estudiante:', studentError.response?.status);
-        }
-      }
-    } catch (error) {
-      console.error('Error al cargar usuario:', error);
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: 'No se pudo cargar el usuario',
-        confirmButtonText: 'OK'
-      }).then(() => navigate('/admin/users'));
-    } finally {
-      setLoading(false);
+      const res = await axiosClient.get('/admin/institutions/list');
+      setInstituciones(res.data.data || []);
+    } catch (err) {
+      console.error("Error cargando lista de instituciones", err);
     }
   };
+  loadInstitutions();
+}, []);
+
+const fetchUser = async () => {
+  try {
+    setLoading(true);
+    const response = await axiosClient.get(`/admin/users/${id}`);
+    const userData = response.data.data || response.data;
+
+    // 🛠️ AGREGADO: Capturamos la información legible del creador 
+    // (Nombre y Rol para mostrar en la interfaz)
+    if (userData.creator_name) {
+      setCreatorInfo({
+        name: userData.creator_name,
+        role: userData.creator_role
+      });
+    }
+
+    // ✨ LÓGICA EXISTENTE: Obtener el curso actual si es docente
+    let courseInfo = { name: '', grade: '' };
+    if (userData.role === 'docente') {
+      try {
+        const tIdRes = await axiosClient.get(`/teacher-courses/teacher-id/${id}`);
+        const coursesRes = await axiosClient.get(`/teacher-courses/teacher/${tIdRes.data.teacherId}`);
+        
+        if (coursesRes.data && coursesRes.data.length > 0) {
+          courseInfo.name = coursesRes.data[0].course_name;
+          courseInfo.grade = coursesRes.data[0].grade;
+        }
+      } catch (e) {
+        console.log("El docente aún no tiene cursos asignados");
+      }
+    }
+
+    // 🛠️ ACTUALIZACIÓN DEL FORMULARIO:
+    // Se mapean todos los campos de la tabla 'users' + la info de cursos
+    setFormData({
+      name: userData.name || '',
+      email: userData.email || '',
+      phone: userData.phone || '',
+      password: '', // La contraseña siempre inicia vacía por seguridad
+      role: userData.role || '',
+      estado: userData.estado !== undefined ? userData.estado : 1,
+      institution: userData.institution || '',
+      course_name: courseInfo.name, 
+      grade: courseInfo.grade,
+      // 🛠️ AGREGADO: Guardamos el ID del creador en el estado del formulario
+      created_by: userData.created_by || ''
+    });
+
+    // Carga de datos de contacto adicionales si es estudiante
+    if (userData.role === 'estudiante' && id) {
+      try {
+        const studentResponse = await axiosClient.get(`/students/user/${id}`);
+        if (studentResponse.data) {
+          setStudentContactData({
+            contact_phone: studentResponse.data.contact_phone || '',
+            contact_email: studentResponse.data.contact_email || '',
+            contact_name: studentResponse.data.contact_name || ''
+          });
+        }
+      } catch (studentError) {
+        console.log('ℹ️ No se encontraron datos adicionales de estudiante');
+      }
+    }
+  } catch (error) {
+    console.error('Error al cargar usuario:', error);
+    Swal.fire({
+      icon: 'error',
+      title: 'Error',
+      text: 'No se pudo cargar el usuario',
+      confirmButtonText: 'OK'
+    }).then(() => navigate('/admin/users'));
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -393,7 +426,7 @@ const UserForm = () => {
               </div>
             )}
 
-            <div className="row">
+            <div className="row align-items-end"> {/* align-items-end nivela el cuadro con el input */}
               <div className="col-md-6 mb-3">
                 <label htmlFor="institution" className="form-label">
                   Institución <span className="text-muted">(Opcional)</span>
@@ -405,21 +438,66 @@ const UserForm = () => {
                   name="institution"
                   value={formData.institution}
                   onChange={handleChange}
-                  placeholder="Ej: Colegio La Chucua, Universidad Nacional, etc."
+                  placeholder="Ej: Colegio La Chucua..."
                   list="institutions-list"
                 />
-                <datalist id="institutions-list">
-                  {/* Opcional: lista de instituciones comunes */}
-                  <option value="Colegio La Chucua" />
-                  <option value="Inem" />
-                  <option value="Universidad Nacional" />
-                  <option value="Universidad de los Andes" />
-                </datalist>
-                <small className="form-text text-muted">
-                  Institución educativa a la que pertenece el usuario
-                </small>
+                {/* ... datalist y small igual ... */}
               </div>
+
+              {/* BLOQUE NUEVO: Mostrar info del creador al lado derecho */}
+              {id && (formData.created_by || creatorInfo) && (
+                <div className="col-md-6 mb-3">
+                  <div className="p-2 border rounded bg-light shadow-sm" style={{ borderLeft: '4px solid #0d6efd', minHeight: '38px' }}>
+                    <small className="text-muted d-block" style={{ fontSize: '0.65rem' }}>REGISTRO CREADO POR:</small>
+                    <div className="d-flex align-items-center">
+                      <strong className="text-primary" style={{ fontSize: '0.85rem' }}>
+                        {creatorInfo?.name || `ID: ${formData.created_by}`}
+                      </strong>
+                      {creatorInfo?.role && (
+                        <span className="badge bg-secondary ms-2 text-capitalize" style={{ fontSize: '0.7rem' }}>
+                          {creatorInfo.role.replace('_', ' ')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {/* 👇 PEGA ESTO AQUÍ (NUEVO BLOQUE PARA DOCENTES) */}
+            {formData.role === 'docente' && (
+              <div className="row p-3 mb-3 border rounded bg-light mx-1 shadow-sm">
+                <div className="col-12">
+                  <h6 className="text-primary mb-3">📚 Configuración de Curso (Nuevo Docente)</h6>
+                </div>
+                <div className="col-md-6 mb-3">
+                  <label htmlFor="course_name" className="form-label">Nombre del Curso <span className="text-danger">*</span></label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    id="course_name"
+                    name="course_name"
+                    value={formData.course_name}
+                    onChange={handleChange}
+                    placeholder="Ej: 11A, Física I"
+                    required={formData.role === 'docente'}
+                  />
+                </div>
+                <div className="col-md-6 mb-3">
+                  <label htmlFor="grade" className="form-label">Grado / Nivel</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    id="grade"
+                    name="grade"
+                    value={formData.grade}
+                    onChange={handleChange}
+                    placeholder="Ej: 11, 7, Universitario"
+                  />
+                </div>
+              </div>
+            )}
+            {/* 👆 HASTA AQUÍ EL BLOQUE NUEVO */}
 
             <div className="row">
               <div className="col-md-6 mb-3">

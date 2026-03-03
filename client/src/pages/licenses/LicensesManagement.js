@@ -42,6 +42,7 @@ const LicensesManagement = () => {
   // Por esto (para manejar múltiples opciones):
 const [renewalPlan, setRenewalPlan] = useState('monthly'); // 'monthly' o 'yearly'
   const [teachers, setTeachers] = useState([]);
+ 
 
   useEffect(() => {
     if (!isAuthReady || !authToken) {
@@ -92,22 +93,24 @@ const [renewalPlan, setRenewalPlan] = useState('monthly'); // 'monthly' o 'yearl
     }
   };
 
-  const fetchTeachers = async () => {
-    try {
-      const response = await axiosClient.get('/admin/users');
-      const users = response.data?.data || [];
-      const teachersList = users.filter(u => u.role === 'docente').map(u => ({
-        id: u.teacher_id || u.id,
+const fetchTeachers = async () => {
+  try {
+    const response = await axiosClient.get('/admin/users'); // Asegúrate que la ruta sea correcta
+    const allUsers = response.data?.data || [];
+    
+    const teachersList = allUsers
+      .filter(u => u.role === 'docente')
+      .map(u => ({
+        id: u.teacher_id || u.id, // Prioriza el 5 sobre el 39
         name: u.name,
-        email: u.email,
-        subject: u.subject || 'N/A'
+        subject: u.subject || 'Sin materia',
+        institution: u.institution || ''
       }));
-      setTeachers(teachersList);
-    } catch (error) {
-      console.error('Error al cargar docentes:', error);
-    }
-  };
-
+    setTeachers(teachersList);
+  } catch (error) {
+    console.error('Error al cargar docentes:', error);
+  }
+};
   const filterLicenses = () => {
     let filtered = [...licenses];
 
@@ -128,52 +131,65 @@ const [renewalPlan, setRenewalPlan] = useState('monthly'); // 'monthly' o 'yearl
     setFilteredLicenses(filtered);
   };
 
-  const handlePurchaseLicense = async (e) => {
-    e.preventDefault();
+const handlePurchaseLicense = async (e) => {
+  e.preventDefault();
+  
+  // 1. Verificación de campos
+  if (!purchaseForm.teacher_id || !purchaseForm.institution) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Campos requeridos',
+      text: 'Por favor seleccione un docente y asegúrese de que la institución esté presente.'
+    });
+    return;
+  }
+
+  try {
+    // 2. CORRECCIÓN DE LA URL: 
+    // Debe incluir el prefijo '/api/teacher-licenses' que definiste en app.use de server.js
+    // Si tu axiosClient ya tiene '/api', solo agrega '/teacher-licenses'
+    const response = await axiosClient.post(
+      `/teacher-licenses/teacher/${purchaseForm.teacher_id}/purchase-license`,
+      {
+        institution: purchaseForm.institution,
+        purchased_date: purchaseForm.purchased_date
+      }
+    );
+
+    // 3. Éxito
+    Swal.fire({
+      icon: 'success',
+      title: '¡Éxito!',
+      html: `
+        <p>Licencia creada exitosamente para <strong>${purchaseForm.institution}</strong></p>
+        <p><strong>Fecha de expiración:</strong> ${response.data.data.expiration_date}</p>
+      `
+    });
+
+    // 4. Limpieza de estado
+    setShowPurchaseModal(false);
+    setPurchaseForm({
+      teacher_id: '',
+      institution: '',
+      purchased_date: new Date().toISOString().split('T')[0]
+    });
     
-    if (!purchaseForm.teacher_id || !purchaseForm.institution) {
-      Swal.fire({
-        icon: 'warning',
-        title: 'Campos requeridos',
-        text: 'Por favor complete todos los campos'
-      });
-      return;
-    }
+    // Recargar la lista de licencias para ver la nueva
+    if (typeof fetchLicenses === 'function') fetchLicenses();
 
-    try {
-      const response = await axiosClient.post(
-        `/teacher-licenses/teacher/${purchaseForm.teacher_id}/purchase-license`,
-        {
-          institution: purchaseForm.institution,
-          purchased_date: purchaseForm.purchased_date
-        }
-      );
-
-      Swal.fire({
-        icon: 'success',
-        title: 'Licencia comprada',
-        html: `
-          <p>Licencia creada exitosamente</p>
-          <p><strong>Fecha de expiración:</strong> ${response.data.data.expiration_date}</p>
-        `
-      });
-
-      setShowPurchaseModal(false);
-      setPurchaseForm({
-        teacher_id: '',
-        institution: '',
-        purchased_date: new Date().toISOString().split('T')[0]
-      });
-      fetchLicenses();
-    } catch (error) {
-      console.error('Error al comprar licencia:', error);
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: error.response?.data?.message || 'No se pudo comprar la licencia'
-      });
-    }
-  };
+  } catch (error) {
+    console.error('Error al comprar licencia:', error);
+    
+    // Manejo de errores detallado
+    const errorMsg = error.response?.data?.message || 'No se pudo procesar la compra';
+    
+    Swal.fire({
+      icon: 'error',
+      title: 'Error al procesar',
+      text: errorMsg
+    });
+  }
+};
 
   const handleSuspendLicense = async () => {
     if (!selectedLicense) return;
@@ -521,61 +537,75 @@ const handleReactivateLicense = async () => {
                   onClick={() => setShowPurchaseModal(false)}
                 ></button>
               </div>
-              <form onSubmit={handlePurchaseLicense}>
-                <div className="modal-body">
-                  <div className="mb-3">
-                    <label className="form-label">Docente <span className="text-danger">*</span></label>
-                    <select
-                      className="form-select"
-                      value={purchaseForm.teacher_id}
-                      onChange={(e) => setPurchaseForm({ ...purchaseForm, teacher_id: e.target.value })}
-                      required
+                <form onSubmit={handlePurchaseLicense}>
+                  <div className="modal-body">
+                    <div className="mb-3">
+                      <label className="form-label">Docente <span className="text-danger">*</span></label>
+                      <select
+                        className="form-select"
+                        value={purchaseForm.teacher_id}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          // Buscamos al docente en la lista 'teachers' que ya tiene los datos del JOIN
+                          const teacherData = teachers.find(t => t.id == val);
+                          
+                          setPurchaseForm({ 
+                            ...purchaseForm, 
+                            teacher_id: val,
+                            // 💡 Si el docente ya tiene institución en la DB, se pone sola. 
+                            // Si no, dejamos lo que el usuario haya escrito.
+                            institution: teacherData?.institution || purchaseForm.institution 
+                          });
+                        }}
+                        required
+                      >
+                        <option value="">Seleccione un docente</option>
+                        {teachers.map(teacher => (
+                          <option key={teacher.id} value={teacher.id}>
+                            {teacher.name} - {teacher.subject}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="mb-3">
+                      <label className="form-label">Institución <span className="text-danger">*</span></label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={purchaseForm.institution}
+                        onChange={(e) => setPurchaseForm({ ...purchaseForm, institution: e.target.value })}
+                        placeholder="Ej: Colegio La Chucua"
+                        required
+                      />
+                    </div>
+
+                    <div className="mb-3">
+                      <label className="form-label">Fecha de Compra</label>
+                      <input
+                        type="date"
+                        className="form-control"
+                        value={purchaseForm.purchased_date}
+                        onChange={(e) => setPurchaseForm({ ...purchaseForm, purchased_date: e.target.value })}
+                      />
+                      <small className="form-text text-muted">
+                        La fecha de expiración se calculará automáticamente (1 año después)
+                      </small>
+                    </div>
+                  </div>
+
+                  <div className="modal-footer">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setShowPurchaseModal(false)}
                     >
-                      <option value="">Seleccione un docente</option>
-                      {teachers.map(teacher => (
-                        <option key={teacher.id} value={teacher.id}>
-                          {teacher.name} - {teacher.subject}
-                        </option>
-                      ))}
-                    </select>
+                      Cancelar
+                    </button>
+                    <button type="submit" className="btn btn-success">
+                      Comprar Licencia
+                    </button>
                   </div>
-                  <div className="mb-3">
-                    <label className="form-label">Institución <span className="text-danger">*</span></label>
-                    <input
-                      type="text"
-                      className="form-control"
-                      value={purchaseForm.institution}
-                      onChange={(e) => setPurchaseForm({ ...purchaseForm, institution: e.target.value })}
-                      placeholder="Ej: Colegio La Chucua"
-                      required
-                    />
-                  </div>
-                  <div className="mb-3">
-                    <label className="form-label">Fecha de Compra</label>
-                    <input
-                      type="date"
-                      className="form-control"
-                      value={purchaseForm.purchased_date}
-                      onChange={(e) => setPurchaseForm({ ...purchaseForm, purchased_date: e.target.value })}
-                    />
-                    <small className="form-text text-muted">
-                      La fecha de expiración se calculará automáticamente (1 año después)
-                    </small>
-                  </div>
-                </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setShowPurchaseModal(false)}
-                  >
-                    Cancelar
-                  </button>
-                  <button type="submit" className="btn btn-success">
-                    Comprar Licencia
-                  </button>
-                </div>
-              </form>
+                </form>
             </div>
           </div>
         </div>

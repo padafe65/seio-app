@@ -154,7 +154,7 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
                 <p className="mb-0 text-primary fw-bold">
                     💰 Pago Nequi: 314 2999 274
                 </p>
-                <small className="text-primary">A nombre de: Vilma Mejia</small>
+                <small className="text-primary">A nombre de Vilma Mejia</small>
             </div>
 
             <div className="text-start bg-white border rounded p-4 mb-4 shadow-sm">
