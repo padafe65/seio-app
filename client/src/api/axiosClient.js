@@ -1,7 +1,8 @@
 // src/api/axiosClient.js
 import axios from "axios";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+const configuredApiUrl = process.env.REACT_APP_API_URL || "http://localhost:5000";
+const API_URL = configuredApiUrl.replace(/\/+$/, '').replace(/\/api$/, '');
 
 const axiosClient = axios.create({
   baseURL: `${API_URL}/api`,
@@ -15,6 +16,10 @@ const axiosClient = axios.create({
 // Interceptor para añadir el token a las peticiones
 axiosClient.interceptors.request.use(
   (config) => {
+    // Compatibilidad con pantallas que aún incluyen /api en el endpoint.
+    if (config.url && /^\/api(?:\/|$)/.test(config.url)) {
+      config.url = config.url.replace(/^\/api/, '') || '/';
+    }
     const token = localStorage.getItem("authToken");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;

@@ -1,6 +1,8 @@
 // routes/teacherCoursesRoutes.js
 import express from 'express';
 import pool from '../config/db.js';
+import { verifyToken, isTeacherOrAdmin, isAdmin } from '../middleware/authMiddleware.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -87,7 +89,7 @@ router.get('/teacher-id/:userId', async (req, res) => {
 });
 
 // Asignar un curso a un profesor
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { teacher_id, course_id, role } = req.body;
     
@@ -133,6 +135,12 @@ router.post('/', async (req, res) => {
         [teacher_id, course_id]
       );
     }
+
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'teacher_courses', recordId: result.insertId,
+      description: `Asignó el curso ${course_id} al docente ${teacher_id}.`,
+      newValues: { teacher_id: Number(teacher_id), course_id: Number(course_id), role: role || 'co-docente' }
+    });
     
     res.status(201).json({ 
       id: result.insertId,
@@ -148,14 +156,14 @@ router.post('/', async (req, res) => {
 });
 
 // Actualizar la asignación de un curso
-router.put('/:id', async (req, res) => {
+router.put('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { course_id, teacher_id, role } = req.body;
     
     // Verificar si la asignación existe y obtener datos actuales
     const [existing] = await pool.query(
-      'SELECT teacher_id, course_id FROM teacher_courses WHERE id = ?',
+      'SELECT * FROM teacher_courses WHERE id = ?',
       [id]
     );
     
@@ -223,10 +231,17 @@ router.put('/:id', async (req, res) => {
       `UPDATE teacher_courses SET ${updates.join(', ')} WHERE id = ?`,
       params
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Asignación no encontrada' });
     }
+
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teacher_courses', recordId: Number(id),
+      description: `Actualizó la asignación docente-curso ${id}.`,
+      oldValues: existing[0],
+      newValues: { teacher_id: currentTeacherId, course_id: currentCourseId, role: role ?? existing[0].role }
+    });
     
     // Si se cambió el course_id o teacher_id, también actualizar courses.teacher_id si corresponde
     // (solo si el curso tenía este docente como principal)
@@ -256,14 +271,21 @@ router.put('/:id', async (req, res) => {
 });
 
 // Eliminar la asignación de un curso a un profesor
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const [existing] = await pool.query('SELECT * FROM teacher_courses WHERE id = ?', [id]);
+    if (!existing.length) return res.status(404).json({ message: 'AsignaciÃ³n no encontrada' });
     
     const [result] = await pool.query(
       'DELETE FROM teacher_courses WHERE id = ?',
       [id]
     );
+
+    await logRequestAudit(req, {
+      action: 'DELETE', tableName: 'teacher_courses', recordId: Number(id),
+      description: `Eliminó la asignación docente-curso ${id}.`, oldValues: existing[0]
+    });
     
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Asignación no encontrada' });
@@ -277,11 +299,19 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Actualizar el assigned_date de registros existentes con NULL
-router.patch('/fix-dates', async (req, res) => {
+router.patch('/fix-dates', verifyToken, isAdmin, async (req, res) => {
   try {
     const [result] = await pool.query(
       'UPDATE teacher_courses SET assigned_date = NOW() WHERE assigned_date IS NULL'
     );
+
+    if (result.affectedRows > 0) {
+      await logRequestAudit(req, {
+        action: 'UPDATE', tableName: 'teacher_courses', recordId: null,
+        description: `Actualizó la fecha de ${result.affectedRows} asignaciones docente-curso.`,
+        newValues: { affected_rows: result.affectedRows }
+      });
+    }
     
     res.json({ 
       message: 'Fechas actualizadas correctamente',

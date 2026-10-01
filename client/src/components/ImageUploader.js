@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Upload, X } from 'lucide-react';
 import Swal from 'sweetalert2';
 
-const ImageUploader = ({ onImageUpload, currentImage = null }) => {
+const ImageUploader = ({ onImageUpload, currentImage = null, deferUpload = false }) => {
   const [preview, setPreview] = useState(currentImage);
   const [loading, setLoading] = useState(false);
 
@@ -37,6 +37,11 @@ const ImageUploader = ({ onImageUpload, currentImage = null }) => {
     const reader = new FileReader();
     reader.onload = (event) => setPreview(event.target.result);
     reader.readAsDataURL(file);
+
+    if (deferUpload) {
+      onImageUpload?.(file);
+      return;
+    }
 
     // Subir archivo
     setLoading(true);

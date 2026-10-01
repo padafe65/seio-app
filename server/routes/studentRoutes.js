@@ -114,6 +114,7 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
                 SELECT 
                     s.id,
                     s.user_id,
+                    s.institution,
                     s.contact_phone,
                     s.contact_email,
                     s.age,
@@ -146,7 +147,8 @@ router.get('/teacher/:teacherId', isTeacherOrAdmin, async (req, res) => {
                     contact_phone: student.contact_phone,
                     contact_email: student.contact_email,
                     grade: student.grade,
-                    course_name: student.course_name
+                    course_name: student.course_name,
+                    institution: student.institution
                 }))
             });
         }

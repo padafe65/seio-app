@@ -1,10 +1,8 @@
 // src/pages/ResultsPage.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios';
+import axiosClient from '../api/axiosClient';
 import { Link } from 'react-router-dom';
-
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 const ResultsPage = () => {
   const { user } = useAuth();
@@ -23,15 +21,15 @@ const ResultsPage = () => {
         setLoading(true);
         
         // Obtener los mejores resultados (evaluation_results)
-        const evaluationsResponse = await axios.get(`${API_URL}/api/student/evaluation-results/${user.id}`);
+        const evaluationsResponse = await axiosClient.get(`/student/evaluation-results/${user.id}`);
         setEvaluationResults(evaluationsResponse.data);
         
         // Obtener todos los intentos (quiz_attempts)
-        const attemptsResponse = await axios.get(`${API_URL}/api/student/attempts/${user.id}`);
+        const attemptsResponse = await axiosClient.get(`/student/attempts/${user.id}`);
         setQuizAttempts(attemptsResponse.data);
         
         // Obtener promedios por fase
-        const phaseResponse = await axios.get(`${API_URL}/api/quiz/evaluations-by-phase/${user.id}`);
+        const phaseResponse = await axiosClient.get(`/quiz/evaluations-by-phase/${user.id}`);
         setPhaseAverages(phaseResponse.data);
         
         setLoading(false);

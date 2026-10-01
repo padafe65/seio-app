@@ -3,6 +3,7 @@ import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin, isTeacherOrAdmin, isSuperAdmin } from '../middleware/authMiddleware.js';
 import { uploadGuide, getFilePath, getFileUrl } from '../config/storage.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -765,6 +766,11 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
        WHERE er.id = ?`,
       [result.insertId]
     );
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'educational_resources', recordId: result.insertId,
+      description: `Creó el recurso educativo "${title}".`,
+      newValues: { subject, area, topic: topic || null, title, resource_type: resource_type || 'otro', grade_level: grade_level || null, phase: phase || null, institution_id: institution_id || null }
+    });
     
     res.status(201).json({
       success: true,
@@ -882,6 +888,11 @@ router.post('/upload-guide', verifyToken, isTeacherOrAdmin, uploadGuide.single('
        WHERE er.id = ?`,
       [result.insertId]
     );
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'educational_resources', recordId: result.insertId,
+      description: `Subió la guía educativa "${title}".`,
+      newValues: { subject, area, topic: topic || null, title, resource_type: 'guia', grade_level: grade_level || null, phase: phase || null, institution_id: institution_id || null, file_path: filePath }
+    });
     
     // Agregar URL completa del archivo a la respuesta
     const resourceWithUrl = {
@@ -1262,6 +1273,11 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
       `SELECT * FROM educational_resources WHERE id = ?`,
       [id]
     );
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'educational_resources', recordId: Number(id),
+      description: `Actualizó el recurso educativo ${id}.`,
+      oldValues: existing[0], newValues: updated[0]
+    });
     
     res.json({
       success: true,
@@ -1320,6 +1336,10 @@ router.delete('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
         `DELETE FROM educational_resources WHERE id = ?`,
         [id]
       );
+      await logRequestAudit(req, {
+        action: 'DELETE', tableName: 'educational_resources', recordId: Number(id),
+        description: `Eliminó permanentemente el recurso educativo ${id}.`, oldValues: existing[0]
+      });
       
       return res.json({
         success: true,
@@ -1332,6 +1352,11 @@ router.delete('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
       `UPDATE educational_resources SET is_active = FALSE WHERE id = ?`,
       [id]
     );
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'educational_resources', recordId: Number(id),
+      description: `Desactivó el recurso educativo ${id}.`,
+      oldValues: { is_active: existing[0].is_active }, newValues: { is_active: false }
+    });
     
     res.json({
       success: true,

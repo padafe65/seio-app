@@ -24,7 +24,21 @@ export const getStudents = async (req, res) => {
         u.profile_image as user_profile_image,
         u.role, u.id as user_id, u.name as user_name, u.created_at as user_created_at,
         u.estado as user_estado,
-        c.name as course_name
+        u.institution as user_institution,
+        c.institution as course_institution,
+        c.name as course_name,
+        (
+          SELECT GROUP_CONCAT(DISTINCT tu.name ORDER BY tu.name SEPARATOR ', ')
+          FROM teacher_students ts
+          JOIN teachers t ON t.id = ts.teacher_id
+          JOIN users tu ON tu.id = t.user_id
+          WHERE ts.student_id = s.id
+        ) as teacher_name,
+        (
+          SELECT GROUP_CONCAT(DISTINCT pa.phase ORDER BY pa.phase SEPARATOR ', ')
+          FROM phase_averages pa
+          WHERE pa.student_id = s.id
+        ) as phases
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN courses c ON s.course_id = c.id
@@ -509,6 +523,7 @@ export const createStudent = async (req, res) => {
       name, 
       email, 
       phone, 
+      institution,
       contact_phone, 
       contact_email, 
       age, 
@@ -519,9 +534,19 @@ export const createStudent = async (req, res) => {
 
     // 1. Crear usuario primero
     const hashedPassword = await bcrypt.hash('password123', 10);
+    const [userInstitutionColumn] = await connection.query(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'institution'
+    `);
+    const userInsertColumns = ['name', 'email', 'phone', 'password', 'role'];
+    const userInsertValues = [name, email, phone, hashedPassword, 'estudiante'];
+    if (userInstitutionColumn.length > 0) {
+      userInsertColumns.push('institution');
+      userInsertValues.push(institution || null);
+    }
     const [userResult] = await connection.query(
-      'INSERT INTO users (name, email, phone, password, role) VALUES (?, ?, ?, ?, ?)',
-      [name, email, phone, hashedPassword, 'estudiante']
+      `INSERT INTO users (${userInsertColumns.join(', ')}) VALUES (${userInsertColumns.map(() => '?').join(', ')})`,
+      userInsertValues
     );
 
     const userId = userResult.insertId;
@@ -533,11 +558,19 @@ export const createStudent = async (req, res) => {
     }
 
     // 2. Crear estudiante
+    const [studentInstitutionColumn] = await connection.query(`
+      SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'students' AND COLUMN_NAME = 'institution'
+    `);
+    const studentInsertColumns = ['user_id', 'contact_phone', 'contact_email', 'age', 'grade', 'course_id', 'profile_image'];
+    const studentInsertValues = [userId, contact_phone, contact_email, age, grade, course_id, profileImage];
+    if (studentInstitutionColumn.length > 0) {
+      studentInsertColumns.push('institution');
+      studentInsertValues.push(institution || null);
+    }
     const [studentResult] = await connection.query(
-      `INSERT INTO students 
-       (user_id, contact_phone, contact_email, age, grade, course_id, profile_image) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [userId, contact_phone, contact_email, age, grade, course_id, profileImage]
+      `INSERT INTO students (${studentInsertColumns.join(', ')}) VALUES (${studentInsertColumns.map(() => '?').join(', ')})`,
+      studentInsertValues
     );
 
     // 3. Si se especificó un profesor, crear la relación (con academic_year)
@@ -558,7 +591,7 @@ export const createStudent = async (req, res) => {
       req.user.id,
       req.user.role,
       req.user.name || 'Usuario',
-      { name, email, age, grade, course_id, teacher_id },
+      { name, email, institution, age, grade, course_id, teacher_id },
       req
     );
     

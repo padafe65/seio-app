@@ -2,6 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = Router();
 const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -42,11 +43,16 @@ router.post('/sessions', verifyToken, isTeacherOrAdmin, async (req, res) => {
     const token = crypto.randomBytes(24).toString('hex');
     const shortCode = await ensureUniqueShortCode();
     const expiresAt = new Date(Date.now() + 20 * 60 * 1000);
-    await pool.query(
+    const [insertResult] = await pool.query(
       `INSERT INTO attendance_sessions (teacher_id, name, session_date, grade, course_id, token, short_code, expires_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [tid, name || null, sessionDate, grade || null, course_id ?? null, token, shortCode, expiresAt]
     );
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'attendance_sessions', recordId: insertResult.insertId,
+      description: `Creó una sesión de asistencia para docente ${tid}.`,
+      newValues: { teacher_id: tid, name: name || null, session_date: sessionDate, grade: grade || null, course_id: course_id ?? null }
+    });
     const [[row]] = await pool.query('SELECT * FROM attendance_sessions WHERE token = ?', [token]);
     res.status(201).json({ success: true, data: row });
   } catch (e) {
@@ -191,12 +197,25 @@ router.post('/records', verifyToken, isTeacherOrAdmin, async (req, res) => {
       const studentId = Number(r.student_id);
       const status = r.status === 'absent' ? 'absent' : 'present';
       if (!studentId) continue;
-      await pool.query(
+      const [existing] = await pool.query(
+        'SELECT id, status FROM attendance_records WHERE session_id = ? AND student_id = ?',
+        [session_id, studentId]
+      );
+      const [recordResult] = await pool.query(
         `INSERT INTO attendance_records (session_id, student_id, status, source, registered_at)
          VALUES (?, ?, ?, 'manual', NOW())
          ON DUPLICATE KEY UPDATE status = VALUES(status), source = 'manual', registered_at = NOW()`,
         [session_id, studentId, status]
       );
+      if (!existing.length || existing[0].status !== status) {
+        await logRequestAudit(req, {
+          action: existing.length ? 'UPDATE' : 'CREATE', tableName: 'attendance_records',
+          recordId: existing[0]?.id || recordResult.insertId,
+          description: `Marcó asistencia manual del estudiante ${studentId} en la sesión ${session_id}.`,
+          oldValues: existing.length ? { status: existing[0].status } : null,
+          newValues: { session_id: Number(session_id), student_id: studentId, status, source: 'manual' }
+        });
+      }
     }
     const [recs] = await pool.query(
       `SELECT ar.*, u.name as student_name
@@ -217,7 +236,10 @@ router.post('/records', verifyToken, isTeacherOrAdmin, async (req, res) => {
 router.delete('/sessions/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const [sessions] = await pool.query('SELECT teacher_id FROM attendance_sessions WHERE id = ?', [id]);
+    const [sessions] = await pool.query(
+      'SELECT id, teacher_id, name, session_date, grade, course_id, expires_at FROM attendance_sessions WHERE id = ?',
+      [id]
+    );
     
     if (!sessions.length) {
       return res.status(404).json({ success: false, message: 'Sesión no encontrada.' });
@@ -229,6 +251,10 @@ router.delete('/sessions/:id', verifyToken, isTeacherOrAdmin, async (req, res) =
     }
 
     await pool.query('DELETE FROM attendance_sessions WHERE id = ?', [id]);
+    await logRequestAudit(req, {
+      action: 'DELETE', tableName: 'attendance_sessions', recordId: id,
+      description: `Eliminó la sesión de asistencia ${id} y sus registros asociados.`, oldValues: sessions[0]
+    });
     res.json({ success: true, message: 'Sesión eliminada correctamente.' });
   } catch (e) {
     console.error('Error deleting attendance session:', e);
@@ -305,12 +331,25 @@ router.post('/validate/:token', verifyToken, async (req, res) => {
       return res.status(403).json({ success: false, message: 'No estás asignado a este profesor para esta sesión.' });
     }
 
-    await pool.query(
+    const [existingRecord] = await pool.query(
+      'SELECT id, status FROM attendance_records WHERE session_id = ? AND student_id = ?',
+      [s.id, studentId]
+    );
+    const [recordResult] = await pool.query(
       `INSERT INTO attendance_records (session_id, student_id, status, source, registered_at)
        VALUES (?, ?, 'present', 'qr', NOW())
        ON DUPLICATE KEY UPDATE status = 'present', source = 'qr', registered_at = NOW()`,
       [s.id, studentId]
     );
+    if (!existingRecord.length || existingRecord[0].status !== 'present') {
+      await logRequestAudit(req, {
+        action: existingRecord.length ? 'UPDATE' : 'CREATE', tableName: 'attendance_records',
+        recordId: existingRecord[0]?.id || recordResult.insertId,
+        description: `El estudiante ${studentId} registró asistencia por QR en la sesión ${s.id}.`,
+        oldValues: existingRecord.length ? { status: existingRecord[0].status } : null,
+        newValues: { session_id: s.id, student_id: studentId, status: 'present', source: 'qr' }
+      });
+    }
     res.json({ success: true, message: 'Asistencia registrada.' });
   } catch (e) {
     console.error('Error registering attendance via QR:', e);

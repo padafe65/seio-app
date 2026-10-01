@@ -6,6 +6,9 @@ import axiosClient from '../api/axiosClient';
 import LearningResourcesSection from '../components/educational-resources/LearningResourcesSection';
 import StudentGuidesPanel from '../components/educational-resources/StudentGuidesPanel';
 import Swal from 'sweetalert2';
+import { FileText } from 'lucide-react';
+// 1. Agrega el import al inicio
+import { generateGradePDF } from '../utils/pdfGenerator';
 
 const StudentDashboardPage = () => {
   const { user } = useAuth();
@@ -125,6 +128,18 @@ const StudentDashboardPage = () => {
       </div>
     );
   }
+
+  const handleDownloadMyReport = async () => {
+  try {
+    // Usamos el id del registro de estudiante (studentData.id)
+    const response = await axiosClient.get('/reports/generate-grade-report', {
+      params: { studentId: studentData.id }
+    });
+    generateGradePDF(response.data, 'individual');
+  } catch (error) {
+    console.error("Error al descargar mi reporte", error);
+  }
+};
 
   // Filtrar evaluaciones e intentos por docente seleccionado
   const filteredEvaluations = selectedTeacherId 
@@ -393,6 +408,12 @@ const StudentDashboardPage = () => {
           <div className="card">
             <div className="card-header">
               <h5 className="mb-0">Acciones Rápidas</h5>
+            </div>
+            !-- 2. En el bloque 3 (Dashboard Completo), junto al Promedio General o Acciones Rápidas:--!
+            <div className="card h-100"> ... Promedio General ...
+              <button onClick={handleDownloadMyReport} className="btn btn-sm btn-danger mt-2">
+                  <FileText size={16} className="me-2" /> Descargar mi Boletín PDF
+              </button>
             </div>
             <div className="card-body">
               <div className="d-flex flex-wrap gap-2">

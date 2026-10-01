@@ -2,18 +2,26 @@
 console.log('🔧 Cargando rutas de improvementPlans...');
 import express from 'express';
 import pool from '../config/db.js';
-import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
+import { verifyToken, isAdmin, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { processQuestionnaireResults, processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
+// El router se monta bajo /api; proteger solo sus propios endpoints para no
+// interceptar login, registro ni otros módulos montados en el mismo prefijo.
+router.use((req, res, next) => {
+  const isImprovementPlanEndpoint = /^\/(?:improvement-plans|resources|activities)(?:\/|$)/.test(req.path)
+    || /^\/test(?:-db)?$/.test(req.path);
+  return isImprovementPlanEndpoint ? verifyToken(req, res, next) : next();
+});
 
 // Ruta de prueba sin autenticación
-router.get('/test', (req, res) => {
+router.get('/test', isAdmin, (req, res) => {
   res.json({ message: 'Rutas de improvement plans funcionando correctamente' });
 });
 
 // Ruta de prueba para verificar la conexión a la base de datos
-router.get('/test-db', async (req, res) => {
+router.get('/test-db', isAdmin, async (req, res) => {
   try {
     const [result] = await pool.query('SELECT COUNT(*) as total FROM improvement_plans');
     res.json({ 
@@ -140,6 +148,9 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
 // Obtener planes de mejoramiento por estudiante (usando user_id)
 router.get('/improvement-plans/student/:userId', async (req, res) => {
   try {
+    if (req.user.role === 'estudiante' && Number(req.params.userId) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tus propios planes.' });
+    }
     // Primero obtenemos el student_id asociado con este user_id
     const [students] = await pool.query(
       'SELECT id FROM students WHERE user_id = ?',
@@ -491,7 +502,7 @@ router.get('/improvement-plans/:id', async (req, res) => {
 });
 
 // Crear un nuevo plan de mejoramiento
-router.post('/improvement-plans', async (req, res) => {
+router.post('/improvement-plans', isTeacherOrAdmin, async (req, res) => {
   try {
     const { 
       student_id, 
@@ -578,6 +589,11 @@ router.post('/improvement-plans', async (req, res) => {
        activity_status || 'pending', teacher_notes, student_feedback, attempts_count || 0, last_activity_date,
        currentAcademicYear]
     );
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'improvement_plans', recordId: result.insertId,
+      description: `Creó un plan de mejoramiento para el estudiante ${student_id}.`,
+      newValues: { student_id: Number(student_id), teacher_id: Number(teacher_id), title, subject, activity_status: activity_status || 'pending', deadline, academic_year: currentAcademicYear }
+    });
     
     // Si hay email, enviar notificación (implementar después)
     // TODO: Implementar envío de email
@@ -594,7 +610,7 @@ router.post('/improvement-plans', async (req, res) => {
 });
 
 // Actualizar un plan de mejoramiento
-router.put('/improvement-plans/:id', async (req, res) => {
+router.put('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { 
@@ -638,6 +654,12 @@ router.put('/improvement-plans/:id', async (req, res) => {
        activity_status, completion_date, teacher_notes, student_feedback, 
        attempts_count, last_activity_date, completed, email_sent, id]
     );
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'improvement_plans', recordId: Number(id),
+      description: `Actualizó el plan de mejoramiento ${id}.`,
+      oldValues: { title: planCheck[0].title, subject: planCheck[0].subject, activity_status: planCheck[0].activity_status, completed: planCheck[0].completed },
+      newValues: { title, subject, activity_status, completed }
+    });
     
     res.json({ message: 'Plan de mejoramiento actualizado correctamente' });
   } catch (error) {
@@ -647,7 +669,7 @@ router.put('/improvement-plans/:id', async (req, res) => {
 });
 
 // Eliminar un plan de mejoramiento
-router.delete('/improvement-plans/:id', async (req, res) => {
+router.delete('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -659,6 +681,11 @@ router.delete('/improvement-plans/:id', async (req, res) => {
     
     // Eliminar el plan
     await pool.query('DELETE FROM improvement_plans WHERE id = ?', [id]);
+    await logRequestAudit(req, {
+      action: 'DELETE', tableName: 'improvement_plans', recordId: Number(id),
+      description: `Eliminó el plan de mejoramiento ${id}.`,
+      oldValues: { student_id: planCheck[0].student_id, teacher_id: planCheck[0].teacher_id, title: planCheck[0].title, subject: planCheck[0].subject, activity_status: planCheck[0].activity_status }
+    });
     
     res.json({ message: 'Plan de mejoramiento eliminado correctamente' });
   } catch (error) {
@@ -1134,7 +1161,7 @@ router.get('/improvement-plans/:id/progress/:studentId', async (req, res) => {
 });
 
 // Procesar planes de mejoramiento automáticamente para un estudiante específico
-router.post('/improvement-plans/process-student/:studentId/:questionnaireId', verifyToken, async (req, res) => {
+router.post('/improvement-plans/process-student/:studentId/:questionnaireId', isTeacherOrAdmin, async (req, res) => {
   try {
     const { studentId, questionnaireId } = req.params;
     

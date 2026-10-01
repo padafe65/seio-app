@@ -2,7 +2,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { PlusCircle, Edit, Eye, Search, UserPlus, Users, BookOpen } from 'lucide-react';
+import { PlusCircle, Edit, Eye, Search, UserPlus, Users, BookOpen, FileText, Trash2 } from 'lucide-react';
+// Añade esta importación (ajusta la ruta según tu carpeta utils)
+import { generateGradePDF } from '../../utils/pdfGenerator';
 import axiosClient from '../../api/axiosClient';
 import Swal from 'sweetalert2';
 
@@ -96,7 +98,7 @@ const TeacherStudentsList = () => {
         setError(null);
         
         console.log(`🔍 Solicitando estudiantes para el docente ID: ${tid}`);
-        const response = await axiosClient.get(`/students/teacher/${tid}`);
+        const response = await axiosClient.get(`/students/teacher/${tid}`);//esta en studentRoutes.js y usa es la ruta router.get('/teacher/:teacherId', ...
         
         // Cargar cursos del docente
         const coursesResponse = await axiosClient.get(`/teacher-courses/teacher/${tid}`);
@@ -155,6 +157,43 @@ const TeacherStudentsList = () => {
     
     fetchStudents();
   }, [user, isAuthReady, navigate]);
+
+  // --- COPIAR ESTO DESPUÉS DE LOS ESTADOS ---
+// Dentro de TeacherStudentsList.js, reemplaza handlePrint y handlePrintPlanillaCurso con esto:
+
+const handlePrint = async (id, tipo) => {
+  try {
+    // Si es grupal y no pasamos un ID, intentamos tomar el ID del curso seleccionado en los filtros
+    let finalId = id;
+    if (tipo === 'group' && !id) {
+      // Buscamos el ID del curso basado en el nombre del filtro 'filters.course'
+      const selectedCourse = courses.find(c => c.course_name === filters.course);
+      finalId = selectedCourse?.course_id || selectedCourse?.id;
+    }
+
+    if (tipo === 'group' && !finalId) {
+      return Swal.fire('Aviso', 'Por favor selecciona un curso en los filtros para generar su planilla.', 'info');
+    }
+
+    Swal.fire({ title: 'Generando PDF...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+
+    // Petición unificada al backend
+    const response = await axiosClient.get('/reports/generate-grade-report', {
+      params: tipo === 'individual' ? { studentId: finalId } : { courseId: finalId }
+    });
+    
+    if (response.data && response.data.length > 0) {
+      // Usamos el generador que ya maneja 'group' y 'individual'
+      await generateGradePDF(response.data, tipo, user);
+      Swal.close();
+    } else {
+      Swal.fire('Atención', 'No hay datos de notas registrados para esta selección', 'info');
+    }
+  } catch (error) {
+    console.error("Error al generar reporte", error);
+    Swal.fire('Error', 'No se pudo generar el reporte PDF. Verifica la conexión.', 'error');
+  }
+};
   
   // Función para cargar estudiantes sin profesor asignado
   const fetchUnassignedStudents = async (tid) => {
@@ -327,6 +366,16 @@ const TeacherStudentsList = () => {
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="mb-0">Mis Estudiantes</h2>
         <div className="d-flex gap-2">
+          {/* Botón de Planilla Grupal - Se pone rojo sólido cuando detecta un curso en el filtro */}
+          <button
+            className={`btn d-flex align-items-center ${filters.course ? 'btn-danger' : 'btn-outline-danger'}`}
+            onClick={() => handlePrint(null, 'group')}
+            title={filters.course ? `Imprimir planilla de ${filters.course}` : "Selecciona un curso en los filtros para imprimir planilla"}
+          >
+            <FileText size={18} className="me-2" />
+            <span className="d-none d-md-inline">Planilla Grupal</span>
+          </button>
+
           <button
             className="btn btn-outline-info d-flex align-items-center"
             onClick={() => setShowUnassigned(!showUnassigned)}
@@ -334,6 +383,7 @@ const TeacherStudentsList = () => {
             <Users size={18} className="me-2" />
             {showUnassigned ? 'Ocultar' : 'Ver'} Sin Asignar ({unassignedStudents.length})
           </button>
+          
           <Link to="/registro" className="btn btn-primary d-flex align-items-center">
             <PlusCircle size={18} className="me-2" /> Nuevo Estudiante
           </Link>
@@ -521,6 +571,7 @@ const TeacherStudentsList = () => {
                 <tr>
                   <th>Nombre</th>
                   <th>Email</th>
+                  <th>Institución</th>
                   <th>Teléfono</th>
                   <th>Contacto</th>
                   <th>Grado</th>
@@ -548,6 +599,12 @@ const TeacherStudentsList = () => {
                         </div>
                       </td>
                       <td>{student.email || '-'}</td>
+                      {/* --- AÑADIR ESTA CELDA --- */}
+                      <td>
+                        <span className="badge bg-info text-dark" style={{ fontSize: '10px' }}>
+                          {student.institution || student.user_institution || 'N/A'}
+                        </span>
+                      </td>
                       <td>{student.phone || '-'}</td>
                       <td>
                         <div className="small">
@@ -581,6 +638,15 @@ const TeacherStudentsList = () => {
                             <span className="d-none d-md-inline">Calificaciones</span>
                             <span className="d-inline d-md-none">Notas</span>
                           </Link>
+
+                          <button 
+                                onClick={() => handlePrint(student.id, 'individual')} 
+                                className="btn btn-outline-danger" 
+                                title="Descargar Reporte PDF"
+                              >
+                                <FileText size={16} />
+                              </button>
+
                         </div>
                       </td>
                     </tr>

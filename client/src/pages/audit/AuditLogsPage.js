@@ -34,6 +34,7 @@ const AuditLogsPage = () => {
   const { user, isAuthReady } = useAuth();
   const navigate = useNavigate();
   const [logs, setLogs] = useState([]);
+  const [auditTables, setAuditTables] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(true);
   const [selectedLog, setSelectedLog] = useState(null);
@@ -62,8 +63,19 @@ const AuditLogsPage = () => {
       return;
     }
     
+    fetchAuditTables();
     fetchAuditLogs();
   }, [user, isAuthReady, navigate]);
+
+  const fetchAuditTables = async () => {
+    try {
+      const response = await axiosClient.get('/audit/tables');
+      setAuditTables(response.data?.data || []);
+    } catch (error) {
+      console.error('Error al cargar tablas auditadas:', error);
+      setAuditTables([]);
+    }
+  };
 
   const fetchAuditLogs = async () => {
     try {
@@ -427,11 +439,11 @@ const AuditLogsPage = () => {
                   onChange={(e) => handleFilterChange('tableName', e.target.value)}
                 >
                   <option value="">Todas las tablas</option>
-                  <option value="users">Usuarios</option>
-                  <option value="students">Estudiantes</option>
-                  <option value="courses">Cursos</option>
-                  <option value="questionnaires">Cuestionarios</option>
-                  <option value="teachers">Docentes</option>
+                  {auditTables.map(tableName => (
+                    <option key={tableName} value={tableName}>
+                      {{ users: 'Usuarios', students: 'Estudiantes', courses: 'Cursos', questionnaires: 'Cuestionarios', teachers: 'Docentes' }[tableName] || tableName}
+                    </option>
+                  ))}
                 </select>
               </div>
 

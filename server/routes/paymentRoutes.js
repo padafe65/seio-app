@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -52,6 +53,11 @@ router.post('/manual-register', isAdminRole, async (req, res) => {
              VALUES (?, ?, ?, ?, ?, NOW())`,
             [subscription_id, amount, payment_method || 'manual', status || 'pending', transaction_id || null]
         );
+        await logRequestAudit(req, {
+            action: 'CREATE', tableName: 'payments', recordId: result.insertId,
+            description: `Registró manualmente el pago ${result.insertId} para la suscripción ${subscription_id}.`,
+            newValues: { subscription_id: Number(subscription_id), amount: Number(amount), payment_method: payment_method || 'manual', status: status || 'pending', transaction_id: transaction_id || null }
+        });
         res.json({ success: true, message: 'Pago registrado', id: result.insertId });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -65,7 +71,14 @@ router.put('/:id/status', isAdminRole, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body; // 'success' o 'failed'
     try {
+        const [existing] = await pool.query('SELECT status, subscription_id, amount FROM payments WHERE id = ?', [id]);
+        if (!existing.length) return res.status(404).json({ success: false, message: 'Pago no encontrado' });
         await pool.query('UPDATE payments SET status = ? WHERE id = ?', [status, id]);
+        await logRequestAudit(req, {
+            action: 'UPDATE', tableName: 'payments', recordId: Number(id),
+            description: `Actualizó el estado del pago ${id}.`,
+            oldValues: { status: existing[0].status }, newValues: { status }
+        });
         res.json({ success: true, message: 'Estado de pago actualizado' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

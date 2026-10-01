@@ -97,7 +97,6 @@ export const verifyToken = async (req, res, next) => {
         success: false,
         error: 'Token de autenticación no válido.',
         code: 'INVALID_TOKEN',
-        details: error.message
       });
     }
   } catch (error) {

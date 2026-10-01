@@ -7,6 +7,8 @@ import {
   Shield, Database, Activity
 } from 'lucide-react';
 import axiosClient from '../api/axiosClient';
+// 1. Importar
+import { generateGradePDF } from '../utils/pdfGenerator';
 
 const SuperAdminDashboard = () => {
   const { user, authToken, isAuthReady } = useAuth();
@@ -98,6 +100,22 @@ const SuperAdminDashboard = () => {
 
     fetchData();
   }, [user, authToken, isAuthReady]);
+
+  // 2. Función
+const handleAdminPrint = async () => {
+   // Ejemplo: Imprimir reporte de un curso global (puedes pedir el ID con un prompt o select)
+   const courseId = prompt("Ingrese el ID del curso para generar planilla:");
+   if(!courseId) return;
+   
+   try {
+     const response = await axiosClient.get('/reports/generate-grade-report', {
+       params: { courseId }
+     });
+     generateGradePDF(response.data, 'course');
+   } catch (error) {
+     alert("Error al obtener datos del curso");
+   }
+};
 
   if (loading) {
     return (
@@ -347,6 +365,10 @@ const SuperAdminDashboard = () => {
             <Activity size={20} className="me-2" />
             Acciones Rápidas
           </h5>
+          !--// 3. En el return, dentro de "Acciones Rápidas":--!
+          <button onClick={handleAdminPrint} className="btn btn-danger">
+            <FileText size={18} className="me-2" /> Reporte Global PDF
+          </button>
         </div>
         <div className="card-body">
           <div className="d-flex flex-wrap gap-2">

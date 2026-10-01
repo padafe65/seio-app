@@ -11,9 +11,9 @@ const StudentForm = ({ isViewMode = false }) => {
   const { user } = useAuth(); // Se mantiene por si se necesita en el futuro
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState([]);
+  const [institutions, setInstitutions] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [filteredTeachers, setFilteredTeachers] = useState([]);
-  const [userInstitution, setUserInstitution] = useState(null);
   const [showGradesEditor, setShowGradesEditor] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
@@ -51,6 +51,16 @@ const StudentForm = ({ isViewMode = false }) => {
           title: 'Error',
           text: 'No se pudieron cargar los cursos. Por favor, intente más tarde.'
         });
+      }
+    };
+
+    const fetchInstitutions = async () => {
+      try {
+        const response = await api.get('/admin/institutions/list', getAuthConfig());
+        const listedInstitutions = response.data?.data || [];
+        setInstitutions([...new Set(listedInstitutions.map(value => String(value).trim()).filter(Boolean))]);
+      } catch (error) {
+        console.warn('No se pudo cargar la lista de instituciones:', error);
       }
     };
 
@@ -177,7 +187,9 @@ const StudentForm = ({ isViewMode = false }) => {
             user_id: teacherData.user_id,  // Este es users.id (solo para referencia)
             name: teacherData.user_name || teacherData.name || `Docente #${teacherId}`,
             email: teacherData.user_email || teacherData.email || '',
-            phone: teacherData.phone || ''
+            phone: teacherData.phone || '',
+            subject: teacherData.subject || '',
+            institution: teacherData.institution || ''
           };
         });
         
@@ -259,7 +271,6 @@ const StudentForm = ({ isViewMode = false }) => {
         
         // Obtener la institución del estudiante/usuario
         if (studentData.institution || studentData.user_institution) {
-          setUserInstitution(studentData.institution || studentData.user_institution);
           console.log('🏫 Institución del estudiante:', studentData.institution || studentData.user_institution);
         } else {
           // Si no hay institución, el campo quedará vacío (esto es normal si el estudiante no tiene institución asignada)
@@ -329,6 +340,7 @@ const StudentForm = ({ isViewMode = false }) => {
         
         // 1. Cargar cursos
         await fetchCourses();
+        await fetchInstitutions();
         
         // 2. Si hay un ID, cargar datos del estudiante
         if (id) {
@@ -357,7 +369,7 @@ const StudentForm = ({ isViewMode = false }) => {
   // Filtrar profesores cuando cambia el curso, grado o institución
   useEffect(() => {
     const filterTeachers = async () => {
-      if (!formData.grade && !formData.course_id && !userInstitution) {
+      if (!formData.grade && !formData.course_id && !formData.institution) {
         setFilteredTeachers(teachers);
         return;
       }
@@ -377,8 +389,8 @@ const StudentForm = ({ isViewMode = false }) => {
         }
         
         // Agregar institución si está disponible
-        if (userInstitution) {
-          queryParams.push(`institution=${encodeURIComponent(userInstitution)}`);
+        if (formData.institution) {
+          queryParams.push(`institution=${encodeURIComponent(formData.institution)}`);
         }
         
         // Si hay filtros, hacer la consulta filtrada
@@ -387,7 +399,7 @@ const StudentForm = ({ isViewMode = false }) => {
           const response = await api.get(`/teachers/list?${queryString}`, config);
           filtered = response.data || [];
           console.log('👨‍🏫 Profesores filtrados:', { 
-            filters: { course_id: formData.course_id, grade: formData.grade, institution: userInstitution },
+            filters: { course_id: formData.course_id, grade: formData.grade, institution: formData.institution },
             count: filtered.length 
           });
         } else {
@@ -416,7 +428,45 @@ const StudentForm = ({ isViewMode = false }) => {
       filterTeachers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.course_id, formData.grade, userInstitution, teachers]);
+  }, [formData.course_id, formData.grade, formData.institution, teachers]);
+
+  const normalizedInstitution = value => String(value || '').trim().toLocaleLowerCase();
+  const coursesForInstitution = courses.filter(course =>
+    !formData.institution || normalizedInstitution(course.institution) === normalizedInstitution(formData.institution)
+  );
+  const availableGrades = [...new Set(coursesForInstitution
+    .map(course => String(course.grade ?? '').trim())
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  const availableCourses = coursesForInstitution.filter(course =>
+    !formData.grade || String(course.grade) === String(formData.grade)
+  );
+  const institutionOptions = [...new Set([
+    ...institutions,
+    ...courses.map(course => String(course.institution || '').trim()).filter(Boolean),
+    String(formData.institution || '').trim()
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+  const handleInstitutionChange = event => {
+    const institution = event.target.value;
+    setFormData(prev => ({ ...prev, institution, grade: '', course_id: '', teacher_id: '' }));
+  };
+
+  const handleGradeChange = event => {
+    setFormData(prev => ({ ...prev, grade: event.target.value, course_id: '', teacher_id: '' }));
+  };
+
+  const handleCourseChange = event => {
+    const courseId = event.target.value;
+    const selectedCourse = courses.find(course => String(course.id) === String(courseId));
+    setFormData(prev => ({
+      ...prev,
+      course_id: courseId,
+      grade: selectedCourse ? String(selectedCourse.grade) : prev.grade,
+      institution: selectedCourse?.institution || prev.institution,
+      teacher_id: ''
+    }));
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -643,6 +693,29 @@ const StudentForm = ({ isViewMode = false }) => {
             </div>
             
             <div className="row">
+              <div className="col-md-12 mb-3">
+                <label htmlFor="institution" className="form-label">Institución</label>
+                <select
+                  className="form-select"
+                  id="institution"
+                  name="institution"
+                  value={formData.institution}
+                  onChange={handleInstitutionChange}
+                  required
+                  disabled={isViewMode}
+                >
+                  <option value="">Seleccionar institución</option>
+                  {institutionOptions.map(institution => (
+                    <option key={institution} value={institution}>{institution}</option>
+                  ))}
+                </select>
+                <small className="form-text text-muted">
+                  Selecciona una institución existente. Para agregar otra, crea primero un curso en el módulo Cursos.
+                </small>
+              </div>
+            </div>
+
+            <div className="row">
               <div className="col-md-6 mb-3">
                 <label htmlFor="grade" className="form-label">Grado</label>
                 <select
@@ -650,16 +723,14 @@ const StudentForm = ({ isViewMode = false }) => {
                   id="grade"
                   name="grade"
                   value={formData.grade}
-                  onChange={handleChange}
+                  onChange={handleGradeChange}
                   required
-                  disabled={isViewMode}
+                  disabled={isViewMode || !formData.institution}
                 >
                   <option value="">Seleccionar grado</option>
-                  <option value="7">7°</option>
-                  <option value="8">8°</option>
-                  <option value="9">9°</option>
-                  <option value="10">10°</option>
-                  <option value="11">11°</option>
+                  {availableGrades.map(grade => (
+                    <option key={grade} value={grade}>{grade}°</option>
+                  ))}
                 </select>
               </div>
               
@@ -670,26 +741,26 @@ const StudentForm = ({ isViewMode = false }) => {
                   id="course_id"
                   name="course_id"
                   value={formData.course_id}
-                  onChange={handleChange}
-                  disabled={isViewMode}
+                  onChange={handleCourseChange}
+                  disabled={isViewMode || !formData.institution}
                 >
                   <option value="">Seleccionar curso (opcional)</option>
-                  {courses.length > 0 ? (
-                    courses
-                      .filter(course => !formData.grade || course.grade === formData.grade)
-                      .map(course => (
+                  {availableCourses.length > 0 ? (
+                    availableCourses.map(course => (
                         <option key={course.id} value={course.id}>
                           {course.name} - Grado {course.grade}
                         </option>
                       ))
                   ) : (
-                    <option value="" disabled>No hay cursos disponibles</option>
+                    <option value="" disabled>No hay cursos para esta institución y grado</option>
                   )}
                 </select>
                 <small className="form-text text-muted">
-                  {formData.grade 
-                    ? `Cursos disponibles para grado ${formData.grade}°`
-                    : 'Selecciona un grado para filtrar cursos'}
+                  {!formData.institution
+                    ? 'Selecciona primero una institución'
+                    : formData.grade
+                      ? `Cursos de ${formData.institution} para grado ${formData.grade}°`
+                      : `Cursos disponibles en ${formData.institution}`}
                 </small>
               </div>
             </div>
@@ -698,9 +769,9 @@ const StudentForm = ({ isViewMode = false }) => {
               <div className="col-md-12 mb-3">
                 <label htmlFor="teacher_id" className="form-label">
                   Docente Asignado
-                  {userInstitution && (
-                    <span className="badge bg-info ms-2" title={`Filtrado por institución: ${userInstitution}`}>
-                      {userInstitution}
+                  {formData.institution && (
+                    <span className="badge bg-info ms-2" title={`Filtrado por institución: ${formData.institution}`}>
+                      {formData.institution}
                     </span>
                   )}
                 </label>
@@ -748,13 +819,16 @@ const StudentForm = ({ isViewMode = false }) => {
                           const subject = teacher.subject || '';
                           return (
                             <option key={teacherId} value={teacherId}>
-                              {displayName}{subject ? ` - ${subject}` : ''}
-                              {teacher.institution && teacher.institution !== userInstitution ? ` (${teacher.institution})` : ''}
+                          {displayName}{subject ? ` - ${subject}` : ''}
+                              {teacher.institution ? ` (${teacher.institution})` : ''}
                             </option>
                           );
                         })}
                     </select>
                     <div className="form-text">
+                      <span className="text-muted d-block mb-1">
+                        Asigna un docente responsable del estudiante; esto no asigna automáticamente a todos los docentes de sus cursos.
+                      </span>
                       {filteredTeachers.length === 0 ? (
                         <span className="text-warning">
                           <i className="bi bi-exclamation-triangle-fill me-1"></i>
@@ -769,19 +843,6 @@ const StudentForm = ({ isViewMode = false }) => {
                     </div>
                   </>
                 )}
-              </div>
-              <div className="col-md-6 mb-3">
-                <label htmlFor="contact_email" className="form-label">Institución: </label>
-                <input
-                  type="text"
-                  className="form-control"
-                  id="institution"
-                  name="institution"
-                  value={formData.institution}
-                  onChange={handleChange}
-                  required
-                  disabled={isViewMode}
-                />
               </div>
             </div>
             

@@ -95,7 +95,10 @@ const StudentsList = () => {
         ...student,
         user_name: student.user_name || student.name,
         user_email: student.user_email || student.email,
-        course_name: student.course_name || student.course
+        course_name: student.course_name || student.course,
+        institution: String(student.institution || student.user_institution || student.course_institution || ''),
+        teacher_name: String(student.teacher_name || student.teacher_names || ''),
+        phases: String(student.phases || student.phase || '')
       }));
       
       setStudents(normalizedStudents);
@@ -159,7 +162,9 @@ const StudentsList = () => {
       (student.user_email || '').toLowerCase().includes(searchLower) ||
       (student.grade || '').toString().includes(searchLower) ||
       (student.course_name || '').toLowerCase().includes(searchLower) ||
-      (student.institution || student.user_institution || '').toLowerCase().includes(searchLower)  // ✨ AGREGADO: buscar en institución
+      (student.institution || '').toLowerCase().includes(searchLower) ||
+      (student.teacher_name || '').toLowerCase().includes(searchLower) ||
+      (student.phases || '').toLowerCase().includes(searchLower)
     );
 
     // Filtros específicos
@@ -168,9 +173,13 @@ const StudentsList = () => {
     const matchesCourse = !filters.course || (student.course_name || '').toLowerCase().includes(filters.course.toLowerCase());
     const matchesGrade = !filters.grade || (student.grade || '').toString() === filters.grade || (student.grade || '').toString().includes(filters.grade);
     const matchesInstitution = !filters.institution || 
-      (student.institution || student.user_institution || '').toLowerCase().includes(filters.institution.toLowerCase());  // ✨ AGREGADO: filtro por institución
+      (student.institution || '').toLowerCase().includes(filters.institution.toLowerCase());
+    const matchesTeacher = !filters.teacher ||
+      (student.teacher_name || '').toLowerCase().includes(filters.teacher.toLowerCase());
+    const matchesPhase = !filters.phase ||
+      (student.phases || '').split(',').some(phase => phase.trim() === filters.phase.trim());
 
-    return matchesSearch && matchesName && matchesEmail && matchesCourse && matchesGrade && matchesInstitution;
+    return matchesSearch && matchesName && matchesEmail && matchesCourse && matchesGrade && matchesInstitution && matchesTeacher && matchesPhase;
   });
 
   const handleFilterChange = (field, value) => {
@@ -220,7 +229,7 @@ const StudentsList = () => {
           <TextField
             fullWidth
             variant="outlined"
-            placeholder="Búsqueda rápida (nombre, email, curso, grado)..."
+            placeholder="Búsqueda rápida (nombre, email, institución, docente, curso, grado o fase)..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             InputProps={{
@@ -331,8 +340,11 @@ const StudentsList = () => {
               <TableRow>
                 <TableCell>Nombre</TableCell>
                 <TableCell>Email</TableCell>
+                <TableCell>Institución</TableCell>
+                <TableCell>Docente(s)</TableCell>
                 <TableCell>Grado</TableCell>
                 <TableCell>Curso</TableCell>
+                <TableCell>Fase(s)</TableCell>
                 <TableCell>Estado</TableCell>
                 <TableCell align="right">Acciones</TableCell>
               </TableRow>
@@ -353,6 +365,8 @@ const StudentsList = () => {
                         {student.user_email}
                       </Box>
                     </TableCell>
+                    <TableCell>{student.institution || 'Sin institución'}</TableCell>
+                    <TableCell>{student.teacher_name || 'Sin docente asignado'}</TableCell>
                     <TableCell>
                       <Box display="flex" alignItems="center">
                         <SchoolIcon color="action" sx={{ mr: 1, fontSize: 20 }} />
@@ -362,6 +376,7 @@ const StudentsList = () => {
                     <TableCell>
                       {student.course_name || 'Sin asignar'}
                     </TableCell>
+                    <TableCell>{student.phases || 'Sin fases'}</TableCell>
                     <TableCell>
                       <Chip 
                         label={student.user_estado === 'activo' ? 'Activo' : 'Inactivo'}
@@ -401,7 +416,7 @@ const StudentsList = () => {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 3 }}>
                     <Typography color="textSecondary">
                       {searchTerm ? 'No se encontraron estudiantes que coincidan con la búsqueda' : 'No hay estudiantes registrados'}
                     </Typography>

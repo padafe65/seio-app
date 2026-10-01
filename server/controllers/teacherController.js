@@ -131,7 +131,7 @@ export const getTeacherByUserId = async (req, res) => {
 
     // Obtener los estudiantes asignados al profesor
     const [students] = await pool.query(
-      `SELECT s.*, u.name, u.email, u.phone, c.name as course_name
+      `SELECT s.*, u.name, u.email, u.phone, c.name as course_name, c.institution
        FROM teacher_students ts
        JOIN students s ON ts.student_id = s.id
        JOIN users u ON s.user_id = u.id

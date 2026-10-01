@@ -5,6 +5,8 @@ import { PlusCircle, Users, FileText, GraduationCap, Activity, Lock, MessageCirc
 import axiosClient from '../api/axiosClient';
 import UserAvatar from '../components/UserAvatar';
 import SubscriptionForm from '../components/SubscriptionForm';
+// 1. Agrega el import al inicio del archivo Dashboard.js
+import { generateGradePDF } from '../utils/pdfGenerator';
 
 const Dashboard = () => {
   const { user, authToken, isAuthReady } = useAuth();
@@ -104,6 +106,24 @@ const Dashboard = () => {
   const clearStudentFilters = () => {
     setStudentFilters({ name: '', email: '', course: '', grade: '' });
   };
+
+  // ... (dentro del componente Dashboard, antes del return)
+
+const handlePrint = async (id, tipo) => {
+  try {
+    const response = await axiosClient.get('/reports/generate-grade-report', {
+      params: tipo === 'individual' ? { studentId: id } : { courseId: id }
+    });
+    
+    if (response.data && response.data.length > 0) {
+      // IMPORTANTE: Agregamos 'await' y pasamos el objeto 'user'
+      // que contiene la imagen y la marca blanca del docente
+      await generateGradePDF(response.data, tipo, user);
+    }
+  } catch (error) {
+    console.error("Error al generar reporte", error);
+  }
+};
 
   // --- BLOQUE 1: PANTALLA DE CARGA ---
   if (loading) {
@@ -378,7 +398,7 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredTeacherStudents.slice(0, 5).map(student => (
+                    {filteredTeacherStudents.slice(0, 9).map(student => (
                       <tr key={student.id}>
                         <td>{student.name}</td>
                         <td className="small text-muted">{student.email}</td>

@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -128,6 +129,12 @@ router.post('/question', verifyToken, isTeacherOrAdmin, upload.single('image'), 
         finalPruebaSaberLevel
       ]
     );
+
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'questions', recordId: result.insertId,
+      description: `Creó una pregunta para el cuestionario ${questionnaire_id}.`,
+      newValues: { questionnaire_id: Number(questionnaire_id), question_text, category: finalCategory, is_prueba_saber: Boolean(is_prueba_saber), prueba_saber_level: finalPruebaSaberLevel }
+    });
 
     res.status(201).json({
       success: true,
@@ -266,6 +273,11 @@ router.delete('/questions/:id', verifyToken, isTeacherOrAdmin, async (req, res) 
     }
 
     await pool.query('DELETE FROM questions WHERE id = ?', [id]);
+    await logRequestAudit(req, {
+      action: 'DELETE', tableName: 'questions', recordId: Number(id),
+      description: `Eliminó una pregunta del cuestionario ${existingQuestion[0].questionnaire_id}.`,
+      oldValues: { questionnaire_id: existingQuestion[0].questionnaire_id, question_text: existingQuestion[0].question_text, category: existingQuestion[0].category }
+    });
     
     res.json({ 
       success: true,
@@ -440,6 +452,13 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
         message: 'No se encontró la pregunta para actualizar' 
       });
     }
+
+    const [updatedQuestion] = await pool.query('SELECT * FROM questions WHERE id = ?', [id]);
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'questions', recordId: Number(id),
+      description: `Actualizó una pregunta del cuestionario ${existingQuestion[0].questionnaire_id}.`,
+      oldValues: existingQuestion[0], newValues: updatedQuestion[0]
+    });
 
     res.json({ 
       success: true, 

@@ -4,11 +4,26 @@
 import express from 'express';
 import { verifyToken, isSuperAdmin } from '../middleware/authMiddleware.js';
 import { getAuditLogs, getAuditHistory } from '../utils/auditLogger.js';
+import pool from '../config/db.js';
 
 const router = express.Router();
 
 // Aplicar verificación de token a todas las rutas
 router.use(verifyToken);
+
+// Tablas que tienen eventos registrados; permite poblar filtros sin mantener
+// una lista fija en el frontend.
+router.get('/tables', isSuperAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT DISTINCT table_name FROM audit_logs ORDER BY table_name'
+    );
+    res.json({ success: true, data: rows.map(row => row.table_name) });
+  } catch (error) {
+    console.error('Error al obtener tablas auditadas:', error);
+    res.status(500).json({ success: false, message: 'Error al obtener tablas auditadas.' });
+  }
+});
 
 /**
  * GET /audit/logs

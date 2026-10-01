@@ -228,6 +228,26 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const establishSession = (token, userData) => {
+    if (!token || !userData?.id) return false;
+    const userToStore = {
+      id: userData.id,
+      name: userData.name,
+      email: userData.email,
+      role: userData.role,
+      phone: userData.phone || null,
+      estado: userData.estado || 'activo',
+      profile_image: userData.profile_image || null
+    };
+    setAuthToken(token);
+    setUserRole(userToStore.role);
+    setUser(userToStore);
+    localStorage.setItem('authToken', token);
+    localStorage.setItem('userRole', userToStore.role);
+    localStorage.setItem('user', JSON.stringify(userToStore));
+    return userToStore;
+  };
+
   const logout = () => {
     setAuthToken(null);
     setUserRole(null);
@@ -253,6 +273,7 @@ export const AuthProvider = ({ children }) => {
       userRole, 
       user, 
       login, 
+      establishSession,
       logout, 
       isAuthReady,
       verifyToken,

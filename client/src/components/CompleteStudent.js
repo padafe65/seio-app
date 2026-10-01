@@ -9,6 +9,12 @@ const notiMySwal = withReactContent(Swal);
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
+// Los nombres como 1A/1B representan grupos escolares; las asignaturas
+// representan cursos universitarios cuando comparten el mismo número de grado.
+const getCourseLevel = (course) => /^\d{1,2}\s*°?\s*[- ]?\s*[A-Z]$/i.test(String(course.name || '').trim())
+  ? 'colegio'
+  : 'universidad';
+
 const CompletarEstudiante = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -55,10 +61,26 @@ const CompletarEstudiante = () => {
   });
   
   const [courses, setCourses] = useState([]);
+  const [gradeLevel, setGradeLevel] = useState('');
   const [teachers, setTeachers] = useState([]); // Nuevo estado para profesores
   const [filteredTeachers, setFilteredTeachers] = useState([]); // Profesores filtrados por curso/grado
   const [userInstitution, setUserInstitution] = useState(null); // Institución del usuario/estudiante
   const [loading, setLoading] = useState(true);
+  const availableGrades = Object.values(courses.reduce((groups, course) => {
+    const grade = String(course.grade ?? '').trim();
+    if (!grade) return groups;
+    const level = getCourseLevel(course);
+    const key = `${grade}|${level}`;
+    if (!groups[key]) groups[key] = { grade, level, names: [] };
+    if (course.name && !groups[key].names.includes(course.name)) groups[key].names.push(course.name);
+    return groups;
+  }, {})).sort((a, b) => Number(a.grade) - Number(b.grade)
+    || (a.level === 'colegio' ? -1 : 1));
+
+  useEffect(() => {
+    const selectedCourse = courses.find(course => String(course.id) === String(student.course_id));
+    if (selectedCourse) setGradeLevel(getCourseLevel(selectedCourse));
+  }, [courses, student.course_id]);
 
   // Cargar la lista de cursos y profesores al montar el componente
   // También verificar si hay datos existentes si es un registro incompleto
@@ -167,7 +189,9 @@ const CompletarEstudiante = () => {
         }
         
         // Agregar institución si está disponible
-        if (userInstitution) {
+        // Una vez elegido un curso, su relación con docentes es la fuente
+        // confiable; el campo institution del perfil docente puede estar vacío.
+        if (userInstitution && !student.course_id) {
           queryParams.push(`institution=${encodeURIComponent(userInstitution)}`);
         }
         
@@ -224,11 +248,13 @@ const CompletarEstudiante = () => {
     
     // Si cambia el grado, limpiar course_id si el curso seleccionado no corresponde al nuevo grado
     if (name === 'grade') {
-      const newGrade = value;
+      const [newGrade, newLevel] = value.split('|');
       const selectedCourse = courses.find(c => c.id === parseInt(student.course_id));
+      setGradeLevel(newLevel || '');
       
-      // Si hay un curso seleccionado y no corresponde al nuevo grado, limpiarlo
-      if (selectedCourse && selectedCourse.grade !== parseInt(newGrade)) {
+      // El mismo número puede existir en colegio y universidad: comparar ambos datos.
+      if (selectedCourse && (parseInt(selectedCourse.grade, 10) !== parseInt(newGrade, 10)
+        || getCourseLevel(selectedCourse) !== newLevel)) {
         setStudent({ ...student, grade: newGrade, course_id: '' });
       } else {
         setStudent({ ...student, grade: newGrade });
@@ -281,6 +307,15 @@ const CompletarEstudiante = () => {
         }
       }
     }
+
+    if (student.teacher_id && !student.course_id) {
+      await notiMySwal.fire({
+        icon: 'warning',
+        title: 'Selecciona un curso',
+        text: 'Para solicitar un docente, primero debes seleccionar el curso correspondiente.'
+      });
+      return;
+    }
     
     try {
       // Obtener token para autenticación
@@ -288,8 +323,9 @@ const CompletarEstudiante = () => {
       const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
       
       // Preparar datos para enviar (convertir course_id vacío a null si no es requerido)
+      const { teacher_id: selectedTeacherId, ...studentFields } = student;
       const studentData = {
-        ...student,
+        ...studentFields,
         course_id: student.course_id || null
       };
       
@@ -308,26 +344,15 @@ const CompletarEstudiante = () => {
       }
       
       // Si se seleccionó un profesor, crear/actualizar la relación en teacher_students
-      if (student.teacher_id) {
+      if (selectedTeacherId) {
         try {
-          // Primero intentar eliminar relaciones existentes (si hay)
-          try {
-            await axios.delete(`${API_URL}/api/teacher/student/${studentId}/teacher`, config);
-          } catch (deleteError) {
-            // Ignorar 404 (no hay relaciones previas) u otros errores no críticos
-            if (deleteError.response?.status !== 404) {
-              console.log('⚠️ Error al eliminar relación previa (continuando):', deleteError.message);
-            }
-          }
-          
-          // Crear nueva relación
           await axios.post(`${API_URL}/api/teacher/assign-student`, {
-            teacher_id: student.teacher_id,
+            teacher_id: selectedTeacherId,
             student_id: studentId
           }, config);
         } catch (relError) {
           console.error('❌ Error al manejar relación teacher_students:', relError);
-          // No lanzar el error - la relación es importante pero no debería romper el guardado
+          throw relError;
         }
       } else {
         // Si no se seleccionó profesor, registrar que el estudiante necesita asignación
@@ -375,10 +400,18 @@ const CompletarEstudiante = () => {
 
     } catch (error) {
       console.error('Error al registrar/actualizar estudiante:', error);
+      const errorMessage = error.response?.data?.message || 'Hubo un problema al guardar los datos. Por favor, intenta nuevamente.';
+      const selectedTeacher = [...filteredTeachers, ...teachers].find(
+        teacher => String(teacher.id) === String(student.teacher_id)
+      );
+      const assignmentNotConfigured = error.response?.status === 403
+        && errorMessage.toLowerCase().includes('asignado al curso');
       notiMySwal.fire({
         icon: 'error',
         title: 'Error',
-        text: error.response?.data?.message || 'Hubo un problema al guardar los datos. Por favor, intenta nuevamente.'
+        text: assignmentNotConfigured && selectedTeacher
+          ? `${errorMessage}\n\nSugerencia: comunícate con ${selectedTeacher.name}, el docente seleccionado, para confirmar la asignación. Un administrador debe asociarlo con este curso en SEIO.`
+          : errorMessage
       });
     }
   };
@@ -450,13 +483,14 @@ const CompletarEstudiante = () => {
                   onChange={handleChange}
                   className="form-select"
                   required
+                  value={student.grade ? `${student.grade}|${gradeLevel}` : ''}
                 >
                   <option value="">Selecciona un grado</option>
-                  <option value="7">7°</option>
-                  <option value="8">8°</option>
-                  <option value="9">9°</option>
-                  <option value="10">10°</option>
-                  <option value="11">11°</option>
+                  {availableGrades.map(({ grade, level, names }) => (
+                    <option key={`${grade}|${level}`} value={`${grade}|${level}`}>
+                      {grade}° — {level === 'colegio' ? 'Colegio' : 'Universidad'} ({names.slice(0, 3).join(', ')}{names.length > 3 ? ', …' : ''})
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -487,6 +521,7 @@ const CompletarEstudiante = () => {
                     const courseGrade = typeof course.grade === 'string' ? parseInt(course.grade) : course.grade;
                     const selectedGrade = student.grade ? parseInt(student.grade) : null;
                     const gradeMatch = !selectedGrade || courseGrade === selectedGrade;
+                    const levelMatch = !gradeLevel || getCourseLevel(course) === gradeLevel;
                     
                     // Filtrar por institución si está disponible
                     const institutionMatch = !userInstitution || 
@@ -494,7 +529,7 @@ const CompletarEstudiante = () => {
                       course.institution === userInstitution ||
                       course.institution.toLowerCase() === userInstitution.toLowerCase();
                     
-                    return gradeMatch && institutionMatch;
+                    return gradeMatch && levelMatch && institutionMatch;
                   });
                   
                   // Debug: Log para verificar el filtrado

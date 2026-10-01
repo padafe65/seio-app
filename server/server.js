@@ -1,13 +1,14 @@
 // Core modules
 import express from 'express';
 import cors from 'cors';
-import mysql from 'mysql2/promise';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { createHash, randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { dirname } from 'path';
 import dotenv from 'dotenv';
+import reportsRoutes from './routes/reportsRoutes.js';
 
 // Route imports
 import questionRoutes from './routes/questionRoutes.js';
@@ -23,7 +24,7 @@ import educationalResourcesRoutes from './routes/educationalResources.js';
 import pruebaSaberRoutes from './routes/pruebaSaberRoutes.js';
 
 // Middleware imports
-import { verifyToken, isAdmin, isSuperAdmin } from './middleware/authMiddleware.js';
+import { verifyToken, isAdmin, isSuperAdmin, isTeacherOrAdmin } from './middleware/authMiddleware.js';
 import { recalculatePhaseAverages, recalculateAllStudentsPhaseAverages } from './utils/recalculatePhaseAverages.js';
 import { syncTeacherStudentData } from './utils/syncTeacherStudentData.js';
 import { logCreate, logUpdate, logDelete } from './utils/auditLogger.js';
@@ -66,18 +67,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Conexión a MySQL
-const db = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-});
+// Usar un solo pool para toda la aplicación y no agotar conexiones de XAMPP.
+const db = pool;
 
 // Verificar conexión al iniciar
 db.getConnection()
 .then(conn => {
-  console.log('✅ Conexión exitosa a TiDB');
+  console.log('✅ Conexión exitosa a MariaDB/MySQL');
   conn.release();
 })
 .catch(err => {
@@ -85,6 +81,20 @@ db.getConnection()
 });
 
 const app = express();
+
+const isAdministratorRole = (role) => ['admin', 'administrador', 'super_administrador'].includes(role);
+const canAccessStudent = async (user, studentId) => {
+  if (isAdministratorRole(user.role)) return true;
+  if (user.role === 'estudiante') {
+    const [rows] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [studentId, user.id]);
+    return rows.length > 0;
+  }
+  if (user.role === 'docente') {
+    const [rows] = await pool.query('SELECT id FROM teacher_students WHERE student_id = ? AND teacher_id = ?', [studentId, user.teacher_id]);
+    return rows.length > 0;
+  }
+  return false;
+};
 
 // Configuración de CORS
 const corsOptions = {
@@ -97,6 +107,8 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/subscriptions', subscriptionsRoutes);
+// ... debajo de tus otras rutas
+app.use('/api/reports', reportsRoutes);
 
 // Rate limiting para auth: protege contra fuerza bruta y abuso de recuperación de contraseña
 const authLimiter = rateLimit({
@@ -116,14 +128,35 @@ const authLimiter = rateLimit({
 // para que tenga prioridad sobre router.post('/', ...) que crea usuarios nuevos
 
 // Ruta para completar datos de estudiante (debe ir ANTES de studentRoutes)
-app.post('/api/students', async (req, res) => {
+app.post('/api/students', verifyToken, async (req, res) => {
   try {
     const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
-    
-    console.log("Datos recibidos para estudiante:", req.body);
+
+    const isStaff = ['admin', 'administrador', 'super_administrador', 'docente'].includes(req.user.role);
+    const targetUserId = Number(user_id || (req.user.role === 'estudiante' ? req.user.id : 0));
+    if (!isStaff && targetUserId !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo puedes completar tu propio registro.' });
+    }
+    if (req.user.role === 'docente') {
+      if (!course_id) return res.status(400).json({ message: 'El docente debe seleccionar un curso.' });
+      const [teacherCourse] = await db.query(
+        'SELECT id FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+        [req.user.teacher_id, course_id]
+      );
+      if (!teacherCourse.length) return res.status(403).json({ message: 'Solo puedes registrar estudiantes en tus cursos asignados.' });
+    }
+    if (!isStaff && teacher_id) {
+      return res.status(403).json({ message: 'La asignación de docente debe realizarse desde una cuenta autorizada.' });
+    }
+    if (req.user.role === 'docente' && teacher_id && Number(teacher_id) !== Number(req.user.teacher_id)) {
+      return res.status(403).json({ message: 'Solo puedes asignar estudiantes a tu propio perfil docente.' });
+    }
+    if (!targetUserId) {
+      return res.status(400).json({ message: 'Debes indicar el usuario que va a completar el registro.' });
+    }
     
     // Si no hay user_id pero hay name, crear primero el usuario
-    let userId = user_id;
+    let userId = targetUserId;
     
     if (!userId && name) {
       // Crear un nuevo usuario con estado 'activo'
@@ -266,7 +299,7 @@ app.post('/api/students', async (req, res) => {
     console.error('📌 Error code:', error.code);
     console.error('📌 Error message:', error.message);
     console.error('📌 SQL State:', error.sqlState);
-    console.error('📌 Request body:', req.body);
+      console.error('📌 Request body omitted to avoid logging personal data.');
     
     // Si es error de duplicado en teacher_students, ignorarlo y continuar
     if (error.code === 'ER_DUP_ENTRY') {
@@ -300,9 +333,15 @@ app.post('/api/students', async (req, res) => {
 
 // ⚠️ RUTA DIRECTA PARA COMPLETAR REGISTRO DE DOCENTE (debe ir ANTES del router)
 // Ruta para completar datos de teacher (pública para permitir completar registro inicial)
-app.post('/api/teachers', async (req, res) => {
+app.post('/api/teachers', verifyToken, async (req, res) => {
   try {
     const { user_id, subject, institution } = req.body;
+
+    const targetUserId = Number(user_id);
+    const isStaff = ['admin', 'administrador', 'super_administrador'].includes(req.user.role);
+    if (!isStaff && (req.user.role !== 'docente' || targetUserId !== Number(req.user.id))) {
+      return res.status(403).json({ success: false, message: 'No puedes crear el perfil de otro docente.' });
+    }
 
     console.log("📝 Datos recibidos para docente:", req.body);
 
@@ -322,16 +361,19 @@ app.post('/api/teachers', async (req, res) => {
     }
 
     // 2. Crear el registro en la tabla teachers
+    if (!targetUserId || !subject) {
+      return res.status(400).json({ success: false, message: 'user_id y subject son obligatorios.' });
+    }
     const result = await db.query(
       'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
-      [user_id, subject, institution]
+      [targetUserId, subject, institution]
     );
 
     // 3. Actualizar institution en la tabla users si existe el campo
     if (hasInstitution && institution) {
       await db.query(
         'UPDATE users SET institution = ? WHERE id = ?',
-        [institution, user_id]
+        [institution, targetUserId]
       );
       console.log('✅ Campo institution actualizado en users:', institution);
     } else if (institution) {
@@ -480,35 +522,30 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 });
 
 // ⚠️ RUTA DE REGISTRO - También debe ir antes de rutas que requieren token
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
-    const { name, phone, email, password, role } = req.body;
-    console.log("📥 Datos recibidos:", req.body);
-
-    // 🔒 SEGURIDAD: Forzar role='estudiante' para registros públicos
-    // Solo administradores pueden asignar otros roles
-    const finalRole = 'estudiante';
-    
-    if (role && role !== 'estudiante') {
-      console.log(`⚠️ Intento de registro con rol '${role}' bloqueado. Forzando 'estudiante'.`);
+    const { name, phone, email, password } = req.body;
+    if (!name?.trim() || !phone?.trim() || !email?.trim() || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ message: 'Nombre, teléfono, correo y contraseña (mínimo 8 caracteres) son obligatorios.' });
     }
 
+    // El registro público solo crea cuentas de estudiante.
+    const finalRole = 'estudiante';
+
     // Verificar si el usuario ya existe
-    const [existingUser] = await db.query('SELECT * FROM users WHERE name = ? OR email = ?', [name, email]);
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    const [existingUser] = await db.query('SELECT id, name, email FROM users WHERE name = ? OR email = ?', [normalizedName, normalizedEmail]);
     
     if (existingUser.length > 0) {
       const usuarioExistente = existingUser[0];
 
-      // Si intenta registrar de nuevo al admin ya existente
-      if (usuarioExistente.name === 'Padafe65') {
-        return res.status(400).json({ message: 'El administrador ya está registrado' });
-      }
-      if (usuarioExistente.name === name && usuarioExistente.email === email) {
-        return res.status(400).json({ message: 'El nombre de usuario y el correo ya están en uso' });
-      } else if (usuarioExistente.name === name) {
+      if (usuarioExistente.name === normalizedName) {
         return res.status(400).json({ message: 'El nombre de usuario ya está en uso' });
-      } else if (usuarioExistente.email === email) {
+      } else if (usuarioExistente.email?.toLowerCase() === normalizedEmail) {
         return res.status(400).json({ message: 'El correo electrónico ya está en uso' });
+      } else {
+        return res.status(400).json({ message: 'El nombre de usuario o el correo ya están en uso' });
       }
     }
 
@@ -518,7 +555,7 @@ app.post('/api/auth/register', async (req, res) => {
     // Guardar en la base de datos (siempre como 'estudiante' para registros públicos)
     const [result] = await db.query(
       "INSERT INTO users (name, phone, email, password, role) VALUES (?, ?, ?, ?, ?)",
-      [name, phone, email, hashedPassword, finalRole]
+      [normalizedName, phone.trim(), normalizedEmail, hashedPassword, finalRole]
     );
 
     console.log("✅ Usuario registrado", result);
@@ -527,10 +564,13 @@ app.post('/api/auth/register', async (req, res) => {
     const [userRows] = await db.query('SELECT id, name, phone, email, role FROM users WHERE id = ?', [result.insertId]);
     const newUser = userRows[0];
 
-    // Devolver el usuario completo
+    const token = jwt.sign({ id: newUser.id, role: newUser.role }, JWT_SECRET, { expiresIn: '2h' });
+
+    // Iniciar sesión para completar el perfil con las rutas protegidas.
     res.status(201).json({
       message: "Usuario registrado con éxito",
-      user: newUser
+      user: newUser,
+      token
     });
 
   } catch (error) {
@@ -539,25 +579,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// ⚠️ AHORA montamos las rutas que requieren autenticación
-// Configuración de rutas protegidas (después de rutas públicas de auth)
-app.use('/api/students', studentRoutes);
-app.use('/api/questions', questionRoutes);
-app.use('/api/questionnaires', questionnaireRoutes);
-app.use('/api/quiz', quizRoutes);
-app.use('/api/evaluation-results', evaluationResultsRoutes);
-app.use('/api/phase-evaluation', phaseEvaluationRoutes);
-app.use('/api/teachers', teachers);
-app.use('/api/teacher', teacherRoutes);
-app.use('/api/teacher-courses', teacherCoursesRoutes);
-app.use('/api/teacher-licenses', teacherLicensesRoutes);
-app.use('/api/questionnaire-indicators', questionnaireIndicatorsRoutes);
-app.use('/api/indicator-evaluation', indicatorEvaluationRoutes);
-app.use('/api/indicators', indicatorsRoutes);
-app.use('/api', improvementPlansRoutes);
-app.use('/api/educational-resources', educationalResourcesRoutes);
-// ⚠️ usersRoutes aplica verifyToken, por eso debe ir DESPUÉS de las rutas públicas de auth
-app.use('/api/admin', usersRoutes);  // Cambiado de '/api' a '/api/admin' para evitar conflictos
 app.use('/api/audit', auditRoutes);  // Rutas de auditoría (solo super_administrador)
 
 const verificarToken = (req, res, next) => {
@@ -632,8 +653,8 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     const user = rows[0];
 
     // Generar token único y seguro
-    const crypto = await import('crypto');
-    const token = crypto.default.randomBytes(32).toString('hex');
+    const token = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 1); // Token válido por 1 hora
 
@@ -646,7 +667,7 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     // Guardar token en la base de datos
     await pool.query(
       "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
-      [user.id, token, expiresAt]
+      [user.id, tokenHash, expiresAt]
     );
 
     // Generar URL de recuperación
@@ -661,15 +682,12 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
         console.warn('⚠️ No se pudo enviar el correo, pero el token fue generado');
         // En desarrollo, mostrar el link en consola
         if (process.env.NODE_ENV === 'development') {
-          console.log(`📧 [DEV] Link de recuperación para ${email}:`);
-          console.log(`🔗 ${resetUrl}`);
+          console.warn('Correo de recuperación no enviado; configura SMTP para habilitar restablecimientos.');
         }
       }
     } else {
       // Si no hay configuración de correo, mostrar en consola (solo desarrollo)
-      console.log(`📧 [DEV] No hay configuración de correo. Link de recuperación para ${email}:`);
-      console.log(`🔐 Token: ${token}`);
-      console.log(`🔗 URL: ${resetUrl}`);
+      console.warn('Correo de recuperación no configurado; no se mostró el enlace ni el token en consola.');
     }
 
     res.json({ 
@@ -690,13 +708,14 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
 app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
   try {
     const { token } = req.params;
+    const tokenHash = createHash('sha256').update(token).digest('hex');
 
     const [rows] = await pool.query(
       `SELECT prt.user_id, prt.expires_at, prt.used, u.email, u.name
        FROM password_reset_tokens prt
        JOIN users u ON prt.user_id = u.id
        WHERE prt.token = ?`,
-      [token]
+      [tokenHash]
     );
 
     if (rows.length === 0) {
@@ -751,10 +770,10 @@ app.post('/api/auth/reset-password', async (req, res) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
       return res.status(400).json({ 
         success: false,
-        error: "La contraseña debe tener al menos 6 caracteres" 
+        error: "La contraseña debe tener al menos 8 caracteres"
       });
     }
 
@@ -772,11 +791,12 @@ app.post('/api/auth/reset-password', async (req, res) => {
     }
 
     // Verificar token
+    const tokenHash = createHash('sha256').update(token).digest('hex');
     const [tokenRows] = await pool.query(
       `SELECT prt.user_id, prt.expires_at, prt.used
        FROM password_reset_tokens prt
        WHERE prt.token = ?`,
-      [token]
+      [tokenHash]
     );
 
     if (tokenRows.length === 0) {
@@ -807,29 +827,31 @@ app.post('/api/auth/reset-password', async (req, res) => {
     // Hashear la nueva contraseña
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Actualizar contraseña y marcar token como usado
-    await pool.query("BEGIN");
-    
+    // Actualizar contraseña y marcar token como usado en una sola conexión.
+    const connection = await pool.getConnection();
     try {
-      await pool.query(
+      await connection.beginTransaction();
+      await connection.query(
         "UPDATE users SET password = ? WHERE id = ?",
         [hashedPassword, tokenData.user_id]
       );
 
-      await pool.query(
+      await connection.query(
         "UPDATE password_reset_tokens SET used = TRUE WHERE token = ?",
-        [token]
+        [tokenHash]
       );
 
-      await pool.query("COMMIT");
+      await connection.commit();
 
       res.json({ 
         success: true,
         message: "Contraseña actualizada correctamente" 
       });
     } catch (error) {
-      await pool.query("ROLLBACK");
+      await connection.rollback();
       throw error;
+    } finally {
+      connection.release();
     }
 
   } catch (error) {
@@ -1524,7 +1546,7 @@ app.post('/api/students', async (req, res) => {
   try {
     const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
     
-    console.log("Datos recibidos para estudiante:", req.body);
+    console.log('Solicitud autenticada para completar datos de estudiante.');
     
     // Si no hay user_id pero hay name, crear primero el usuario
     let userId = user_id;
@@ -1661,7 +1683,7 @@ app.post('/api/students', async (req, res) => {
     console.error('📌 Error code:', error.code);
     console.error('📌 Error message:', error.message);
     console.error('📌 SQL State:', error.sqlState);
-    console.error('📌 Request body:', req.body);
+    console.error('Error al completar datos; se omite el contenido personal de la solicitud.');
     
     // Si es error de duplicado en teacher_students, ignorarlo y continuar
     if (error.code === 'ER_DUP_ENTRY') {
@@ -1716,8 +1738,9 @@ app.get('/api/students', async (req, res) => {
 });
 
 // Ruta para obtener estudiantes con datos completos (para el dashboard del docente)
-app.get('/api/students/complete', async (req, res) => {
+app.get('/api/students/complete', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
+    const isTeacher = req.user.role === 'docente';
     const [rows] = await db.query(`
       SELECT 
         s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id,
@@ -1726,7 +1749,8 @@ app.get('/api/students/complete', async (req, res) => {
       FROM students s
       JOIN users u ON s.user_id = u.id
       LEFT JOIN courses c ON s.course_id = c.id
-    `);
+      ${isTeacher ? 'WHERE EXISTS (SELECT 1 FROM teacher_students ts WHERE ts.student_id = s.id AND ts.teacher_id = ?)' : ''}
+    `, isTeacher ? [req.user.teacher_id] : []);
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener estudiantes:', error);
@@ -1783,9 +1807,19 @@ app.get('/api/students/:id', async (req, res) => {
 });
 
 // Ruta para obtener estudiante por user_id (útil para completar registros)
-app.get('/api/students/user/:userId', async (req, res) => {
+app.get('/api/students/user/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    if (req.user.role === 'estudiante' && Number(userId) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tu propio registro.' });
+    }
+    if (req.user.role === 'docente') {
+      const [assigned] = await db.query(
+        'SELECT s.id FROM students s JOIN teacher_students ts ON ts.student_id = s.id WHERE s.user_id = ? AND ts.teacher_id = ?',
+        [userId, req.user.teacher_id]
+      );
+      if (!assigned.length) return res.status(403).json({ message: 'No tienes acceso a este estudiante.' });
+    }
     
     // Verificar si institution existe
     let hasInstitution = false;
@@ -1830,9 +1864,12 @@ app.get('/api/students/user/:userId', async (req, res) => {
 });
 
 // Ruta para obtener la institución de un usuario (útil cuando aún no hay registro de estudiante)
-app.get('/api/users/:userId/institution', async (req, res) => {
+app.get('/api/users/:userId/institution', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    if (req.user.role === 'estudiante' && Number(userId) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tu propia institución.' });
+    }
     
     // Verificar si institution existe
     let hasInstitution = false;
@@ -1870,7 +1907,7 @@ app.get('/api/users/:userId/institution', async (req, res) => {
 });
 
 // Ruta para obtener usuarios con registros incompletos (estudiantes sin datos en tabla students)
-app.get('/api/users/incomplete/students', async (req, res) => {
+app.get('/api/users/incomplete/students', verifyToken, isAdmin, async (req, res) => {
   try {
     console.log('📋 [GET] /api/users/incomplete/students - Obteniendo estudiantes incompletos');
     const [rows] = await db.query(`
@@ -1893,7 +1930,7 @@ app.get('/api/users/incomplete/students', async (req, res) => {
 });
 
 // Ruta para obtener usuarios con registros incompletos (docentes sin datos en tabla teachers)
-app.get('/api/users/incomplete/teachers', async (req, res) => {
+app.get('/api/users/incomplete/teachers', verifyToken, isAdmin, async (req, res) => {
   try {
     console.log('📋 [GET] /api/users/incomplete/teachers - Obteniendo docentes incompletos');
     const [rows] = await db.query(`
@@ -1916,7 +1953,7 @@ app.get('/api/users/incomplete/teachers', async (req, res) => {
 });
 
 // Ruta para actualizar datos de estudiante
-app.put('/api/students/:id', async (req, res) => {
+app.put('/api/students/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { contact_phone, contact_email, age, grade, course_id, name, email, phone, teacher_id } = req.body;
@@ -1929,6 +1966,33 @@ app.put('/api/students/:id', async (req, res) => {
     
     if (studentRows.length === 0) {
       return res.status(404).json({ message: 'Estudiante no encontrado' });
+    }
+
+    const targetUserId = Number(studentRows[0].user_id);
+    if (req.user.role === 'estudiante' && targetUserId !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo puedes actualizar tu propio registro.' });
+    }
+    if (req.user.role === 'estudiante' && teacher_id) {
+      return res.status(403).json({ message: 'La asignación de docente debe solicitarse por la ruta de asignaciones.' });
+    }
+    if (req.user.role === 'docente') {
+      if (teacher_id && Number(teacher_id) !== Number(req.user.teacher_id)) {
+        return res.status(403).json({ message: 'Solo puedes asignar estudiantes a tu propio perfil docente.' });
+      }
+      const [assigned] = await db.query(
+        'SELECT id FROM teacher_students WHERE student_id = ? AND teacher_id = ?',
+        [id, req.user.teacher_id]
+      );
+      if (!assigned.length) return res.status(403).json({ message: 'No tienes acceso a este estudiante.' });
+      if (course_id) {
+        const [teacherCourse] = await db.query(
+          'SELECT id FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+          [req.user.teacher_id, course_id]
+        );
+        if (!teacherCourse.length) return res.status(403).json({ message: 'No puedes asignar al estudiante a un curso que no dictas.' });
+      }
+    } else if (!['estudiante', 'admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para editar estudiantes.' });
     }
     
     const userId = studentRows[0].user_id;
@@ -2021,7 +2085,7 @@ app.put('/api/students/:id', async (req, res) => {
 });
 
 // Ruta para eliminar estudiante
-app.delete('/api/students/:id', async (req, res) => {
+app.delete('/api/students/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -2068,6 +2132,15 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
         message: 'No tienes permiso para ver esta información',
         error: 'FORBIDDEN'
       });
+    }
+    if (userRole === 'docente') {
+      const [assigned] = await db.query(
+        'SELECT s.id FROM students s JOIN teacher_students ts ON ts.student_id = s.id WHERE s.user_id = ? AND ts.teacher_id = ?',
+        [userId, req.user.teacher_id]
+      );
+      if (!assigned.length) {
+        return res.status(403).json({ success: false, message: 'No tienes acceso a este estudiante.' });
+      }
     }
     
     // Verificar si institution existe en students
@@ -2200,7 +2273,7 @@ app.get('/api/students/by-user/:userId/teachers', verifyToken, async (req, res) 
 });
 
 // Agregar esta ruta en server.js
-app.get('/api/student/attempts/:student_id', async (req, res) => {
+app.get('/api/student/attempts/:student_id', verifyToken, async (req, res) => {
   const { student_id } = req.params;
 
   try {
@@ -2212,6 +2285,9 @@ app.get('/api/student/attempts/:student_id', async (req, res) => {
 
     if (studentRows.length === 0) {
       return res.json([]);
+    }
+    if (!(await canAccessStudent(req.user, studentRows[0].id))) {
+      return res.status(403).json({ message: 'No tienes acceso a estos intentos.' });
     }
 
     const realStudentId = studentRows[0].id;
@@ -2379,9 +2455,12 @@ app.get('/api/subjects', async (req, res) => {
 });
 
 // Ruta para obtener la materia del docente
-app.get('/api/teacher/subject/:userId', async (req, res) => {
+app.get('/api/teacher/subject/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    if (Number(userId) !== Number(req.user.id) && !isAdministratorRole(req.user.role)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tu propia materia.' });
+    }
     
     const [rows] = await pool.query(
       'SELECT subject FROM teachers WHERE user_id = ?',
@@ -2569,9 +2648,12 @@ app.get('/api/subject-categories-all', async (req, res) => {
 });
 
 // Ruta para obtener el ID del profesor por ID de usuario
-app.get('/api/teachers/by-user/:userId', async (req, res) => {
+app.get('/api/teachers/by-user/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    if (Number(userId) !== Number(req.user.id) && !isAdministratorRole(req.user.role)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tu propio perfil docente.' });
+    }
     
     const [rows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
@@ -2590,7 +2672,7 @@ app.get('/api/teachers/by-user/:userId', async (req, res) => {
 });
 
 // Obtener preguntas con filtros múltiples (questionnaire_id, created_by, subject)
-app.get('/api/questions', async (req, res) => {
+app.get('/api/questions', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { questionnaire_id, created_by, subject } = req.query;
     
@@ -2623,9 +2705,15 @@ app.get('/api/questions', async (req, res) => {
 });
 
 // Obtener estudiantes de un profesor específico - MODIFICADA
-app.get('/api/teacher/students/:userId', async (req, res) => {
+app.get('/api/teacher/students/:userId', verifyToken, async (req, res) => {
   try {
     const userId = req.params.userId;
+    if (Number(userId) !== Number(req.user.id) && !isAdministratorRole(req.user.role)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tus propios estudiantes.' });
+    }
+    if (!isAdministratorRole(req.user.role) && req.user.role !== 'docente') {
+      return res.status(403).json({ message: 'Se requiere rol docente o administrador.' });
+    }
     
     // Primero obtener el teacher_id a partir del user_id
     const [teacherRows] = await pool.query(
@@ -2674,9 +2762,15 @@ app.get('/api/teacher/students/:userId', async (req, res) => {
 });
 
 // Obtener calificaciones por fase de los estudiantes de un docente (grades + phase_averages: sistema/manual)
-app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
+app.get('/api/teacher/student-grades/:teacherId', verifyToken, async (req, res) => {
   try {
     const { teacherId } = req.params;
+    if (req.user.role === 'docente' && Number(teacherId) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar las calificaciones de tus estudiantes.' });
+    }
+    if (!isAdministratorRole(req.user.role) && req.user.role !== 'docente') {
+      return res.status(403).json({ message: 'No tienes permiso para consultar calificaciones docentes.' });
+    }
     
     const [teacherRows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
@@ -2732,8 +2826,12 @@ app.get('/api/teacher/student-grades/:teacherId', async (req, res) => {
 });
 
 // Obtener detalles de un intento de quiz específico
-app.get('/api/quiz-attempts/:id', async (req, res) => {
+app.get('/api/quiz-attempts/:id', verifyToken, async (req, res) => {
   try {
+    const [attemptOwner] = await pool.query('SELECT student_id FROM quiz_attempts WHERE id = ?', [req.params.id]);
+    if (!attemptOwner.length || !(await canAccessStudent(req.user, attemptOwner[0].student_id))) {
+      return res.status(403).json({ message: 'No tienes acceso a este intento.' });
+    }
     const [attempts] = await pool.query(`
       SELECT qa.*,
              u.name as student_name,
@@ -2757,9 +2855,12 @@ app.get('/api/quiz-attempts/:id', async (req, res) => {
 });
 
 // Obtener todos los intentos de un estudiante para un cuestionario específico
-app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', async (req, res) => {
+app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', verifyToken, async (req, res) => {
   try {
     const { studentId, questionnaireId } = req.params;
+    if (!(await canAccessStudent(req.user, studentId))) {
+      return res.status(403).json({ message: 'No tienes acceso a estos intentos.' });
+    }
     
     const [attempts] = await pool.query(`
       SELECT qa.*,
@@ -2782,9 +2883,12 @@ app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', 
 });
 
 // Obtener todos los intentos de un estudiante
-app.get('/api/quiz-attempts/student/:studentId', async (req, res) => {
+app.get('/api/quiz-attempts/student/:studentId', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
+    if (!(await canAccessStudent(req.user, studentId))) {
+      return res.status(403).json({ message: 'No tienes acceso a estos intentos.' });
+    }
     
     const [attempts] = await pool.query(`
       SELECT qa.*,
@@ -2807,8 +2911,14 @@ app.get('/api/quiz-attempts/student/:studentId', async (req, res) => {
 });
 
 // Obtener cursos asignados a un profesor
-app.get('/api/teachers/:id/courses', async (req, res) => {
+app.get('/api/teachers/:id/courses', verifyToken, async (req, res) => {
   try {
+    if (req.user.role === 'docente' && Number(req.params.id) !== Number(req.user.teacher_id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tus propios cursos.' });
+    }
+    if (!isAdministratorRole(req.user.role) && req.user.role !== 'docente') {
+      return res.status(403).json({ message: 'Se requiere rol docente o administrador.' });
+    }
     const [courses] = await pool.query(`
       SELECT DISTINCT c.*
       FROM courses c
@@ -2842,7 +2952,6 @@ app.get('/api/students/:studentId/grades', verifyToken, async (req, res) => {
       ORDER BY g.created_at DESC
     `, [studentId, currentAcademicYear]);
     
-    console.log(`📊 Notas obtenidas para estudiante ${studentId}:`, grades);
     res.json(grades);
   } catch (error) {
     console.error('Error al obtener notas del estudiante:', error);
@@ -2856,7 +2965,6 @@ app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
     const { studentId } = req.params;
     const { phase1, phase2, phase3, phase4, average } = req.body;
     
-    console.log(`📝 Actualizando notas para estudiante ${studentId}:`, req.body);
     
     // Obtener año académico actual
     const currentAcademicYear = new Date().getFullYear();
@@ -2906,10 +3014,19 @@ app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
 });
 
 // Actualizar un intento de quiz específico
-app.put('/api/quiz-attempts/:attemptId', verifyToken, async (req, res) => {
+app.put('/api/quiz-attempts/:attemptId', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { attemptId } = req.params;
     const { score } = req.body;
+
+    const [attemptAccess] = await pool.query('SELECT student_id FROM quiz_attempts WHERE id = ?', [attemptId]);
+    if (!attemptAccess.length || !(await canAccessStudent(req.user, attemptAccess[0].student_id))) {
+      return res.status(403).json({ message: 'No tienes permiso para editar este intento.' });
+    }
+    const numericScore = Number(score);
+    if (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 5) {
+      return res.status(400).json({ message: 'La calificación debe estar entre 0 y 5.' });
+    }
     
     console.log(`📝 Actualizando intento ${attemptId} con puntaje ${score}`);
     
@@ -2990,7 +3107,33 @@ app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
       teacher_id = teacherRows[0].id;
     }
     
-    // Si el usuario es docente, verificar que esté asignando a sí mismo
+    if (req.user.role === 'docente') {
+      if (teacher_id && Number(teacher_id) !== Number(req.user.teacher_id)) {
+        return res.status(403).json({ message: 'Solo puedes asignar estudiantes a tu propio perfil docente.' });
+      }
+      teacher_id = req.user.teacher_id;
+      const [courseMatch] = await pool.query(
+        'SELECT s.id FROM students s JOIN teacher_courses tc ON tc.course_id = s.course_id WHERE s.id = ? AND tc.teacher_id = ?',
+        [student_id, teacher_id]
+      );
+      if (!courseMatch.length) return res.status(403).json({ message: 'Solo puedes asignar estudiantes de tus cursos.' });
+    } else if (req.user.role === 'estudiante') {
+      const [studentRows] = await pool.query(
+        'SELECT id, course_id FROM students WHERE id = ? AND user_id = ?',
+        [student_id, req.user.id]
+      );
+      if (!studentRows.length) return res.status(403).json({ message: 'Solo puedes solicitar una asignación para tu propio usuario.' });
+      if (!studentRows[0].course_id) return res.status(400).json({ message: 'Selecciona un curso antes de solicitar un docente.' });
+      const [courseAssignment] = await pool.query(
+        'SELECT id FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+        [teacher_id, studentRows[0].course_id]
+      );
+      if (!courseAssignment.length) return res.status(403).json({ message: 'El docente no está asignado al curso seleccionado.' });
+    } else if (!['admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para asignar estudiantes.' });
+    }
+
+    // Si no se proporcionó el ID y es un docente, usa el perfil del usuario autenticado.
     if (req.user.role === 'docente' && !teacher_id) {
       const [teacherRows] = await pool.query(
         'SELECT id FROM teachers WHERE user_id = ?',
@@ -3055,10 +3198,14 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
     
     // Si el usuario es docente, usar su teacher_id
     let finalTeacherId = teacher_id;
-    if (userRole === 'docente' && !teacher_id) {
+    if (userRole === 'docente') {
+      if (teacher_id && Number(teacher_id) !== Number(req.user.teacher_id)) {
+        return res.status(403).json({ success: false, message: 'Solo puedes asignar estudiantes a tus cursos.' });
+      }
+      finalTeacherId = req.user.teacher_id;
       const [teacherRows] = await pool.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
-        [userId]
+        'SELECT id FROM teachers WHERE user_id = ? AND id = ?',
+        [userId, finalTeacherId]
       );
       if (teacherRows.length > 0) {
         finalTeacherId = teacherRows[0].id;
@@ -3068,6 +3215,13 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
           message: 'Profesor no encontrado' 
         });
       }
+      const [courseAssignment] = await pool.query(
+        'SELECT id FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
+        [finalTeacherId, course_id]
+      );
+      if (!courseAssignment.length) return res.status(403).json({ success: false, message: 'No estás asignado a ese curso.' });
+    } else if (!['admin', 'administrador', 'super_administrador'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'No tienes permiso para asignar cursos.' });
     }
     
     if (!finalTeacherId || !course_id) {
@@ -3149,9 +3303,19 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
 });
 
 // Desasignar estudiante de profesor
-app.delete('/api/teacher/unassign-student', async (req, res) => {
+app.delete('/api/teacher/unassign-student', verifyToken, async (req, res) => {
   try {
     const { teacher_id, student_id } = req.body;
+    if (!teacher_id || !student_id) return res.status(400).json({ message: 'teacher_id y student_id son obligatorios.' });
+    if (req.user.role === 'docente' && Number(teacher_id) !== Number(req.user.teacher_id)) {
+      return res.status(403).json({ message: 'Solo puedes modificar tus propias asignaciones.' });
+    }
+    if (req.user.role === 'estudiante') {
+      const [student] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [student_id, req.user.id]);
+      if (!student.length) return res.status(403).json({ message: 'Solo puedes modificar tu propia asignación.' });
+    } else if (!['docente', 'admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para modificar asignaciones.' });
+    }
     
     await pool.query(
       'DELETE FROM teacher_students WHERE teacher_id = ? AND student_id = ?',
@@ -3166,9 +3330,18 @@ app.delete('/api/teacher/unassign-student', async (req, res) => {
 });
 
 // Eliminar todas las relaciones teacher_students para un estudiante
-app.delete('/api/teacher/student/:studentId/teacher', async (req, res) => {
+app.delete('/api/teacher/student/:studentId/teacher', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
+    if (req.user.role === 'estudiante') {
+      const [student] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [studentId, req.user.id]);
+      if (!student.length) return res.status(403).json({ message: 'Solo puedes modificar tu propia asignación.' });
+    } else if (req.user.role === 'docente') {
+      const [assigned] = await pool.query('SELECT id FROM teacher_students WHERE student_id = ? AND teacher_id = ?', [studentId, req.user.teacher_id]);
+      if (!assigned.length) return res.status(403).json({ message: 'No puedes modificar la asignación de otro docente.' });
+    } else if (!['admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para modificar asignaciones.' });
+    }
     
     console.log(`🗑️ Eliminando relaciones teacher_students para student_id: ${studentId}`);
     
@@ -3191,7 +3364,7 @@ app.delete('/api/teacher/student/:studentId/teacher', async (req, res) => {
 
 // NUEVAS RUTAS PARA SOLUCIONAR EL ERROR 404
 // Ruta para obtener los mejores resultados de evaluación para un estudiante (evaluation_results)
-app.get('/api/student/evaluation-results/:studentId', async (req, res) => {
+app.get('/api/student/evaluation-results/:studentId', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
     
@@ -3203,6 +3376,9 @@ app.get('/api/student/evaluation-results/:studentId', async (req, res) => {
 
     if (studentRows.length === 0) {
       return res.json([]);
+    }
+    if (!(await canAccessStudent(req.user, studentRows[0].id))) {
+      return res.status(403).json({ message: 'No tienes acceso a estos resultados.' });
     }
 
     const realStudentId = studentRows[0].id;
@@ -3408,8 +3584,11 @@ app.get('/api/teachers/list', async (req, res) => {
 */
 
 // Obtener el profesor asignado a un estudiante - MODIFICADA
-app.get('/api/teacher/student-teacher/:studentId', async (req, res) => {
+app.get('/api/teacher/student-teacher/:studentId', verifyToken, async (req, res) => {
   try {
+    if (!(await canAccessStudent(req.user, req.params.studentId)) && !isAdministratorRole(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes acceso a esta asignación.' });
+    }
     // Obtener el teacher_id de la relación
     const [rows] = await pool.query(`
       SELECT teacher_id 
@@ -3441,9 +3620,33 @@ app.get('/api/teacher/student-teacher/:studentId', async (req, res) => {
 });
 
 // Actualizar relación estudiante-profesor
-app.post('/api/teacher/update-student-teacher', async (req, res) => {
+app.post('/api/teacher/update-student-teacher', verifyToken, async (req, res) => {
   try {
     const { teacher_id, student_id } = req.body;
+    if (!teacher_id || !student_id) return res.status(400).json({ message: 'teacher_id y student_id son obligatorios.' });
+    if (!isAdministratorRole(req.user.role)) {
+      if (req.user.role === 'docente' && Number(teacher_id) !== Number(req.user.teacher_id)) {
+        return res.status(403).json({ message: 'Solo puedes asignar estudiantes a tu perfil docente.' });
+      }
+      if (req.user.role === 'docente') {
+        const [courseMatch] = await pool.query(
+          'SELECT s.id FROM students s JOIN teacher_courses tc ON tc.course_id = s.course_id WHERE s.id = ? AND tc.teacher_id = ?',
+          [student_id, req.user.teacher_id]
+        );
+        if (!courseMatch.length) return res.status(403).json({ message: 'Solo puedes asignar estudiantes de tus cursos.' });
+      }
+      if (req.user.role === 'estudiante') {
+        const [ownedStudent] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [student_id, req.user.id]);
+        if (!ownedStudent.length) return res.status(403).json({ message: 'Solo puedes solicitar una asignación para ti.' });
+        const [courseMatch] = await pool.query(
+          'SELECT id FROM students s JOIN teacher_courses tc ON tc.course_id = s.course_id WHERE s.id = ? AND tc.teacher_id = ?',
+          [student_id, teacher_id]
+        );
+        if (!courseMatch.length) return res.status(403).json({ message: 'El docente no está asignado al curso seleccionado.' });
+      } else if (req.user.role !== 'docente') {
+        return res.status(403).json({ message: 'No tienes permiso para cambiar asignaciones.' });
+      }
+    }
     
     // Obtener año académico actual
     const currentAcademicYear = new Date().getFullYear();
@@ -3486,9 +3689,15 @@ app.post('/api/teacher/update-student-teacher', async (req, res) => {
 
 // Añadir esta ruta a server.js
 // Ruta para obtener preguntas del docente por user_id
-app.get('/api/teacher/questions/:userId', async (req, res) => {
+app.get('/api/teacher/questions/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
+    if (Number(userId) !== Number(req.user.id) && !isAdministratorRole(req.user.role)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tus propias preguntas.' });
+    }
+    if (!['docente', 'admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Se requiere rol docente o administrador.' });
+    }
 
     // Obtener el teacher_id correspondiente al user_id
     const [teacherRows] = await pool.query(
@@ -3550,9 +3759,12 @@ app.listen(PORT, async () => {
 });
 
 // Ruta para recalcular phase_averages de un estudiante específico
-app.post('/api/recalculate-phase-averages/:studentId', verifyToken, async (req, res) => {
+app.post('/api/recalculate-phase-averages/:studentId', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { studentId } = req.params;
+    if (!(await canAccessStudent(req.user, studentId))) {
+      return res.status(403).json({ message: 'No tienes permiso para recalcular las notas de este estudiante.' });
+    }
     console.log(`🔧 Solicitud manual de recálculo para estudiante ${studentId}`);
     
     const result = await recalculatePhaseAverages(parseInt(studentId));
@@ -3574,6 +3786,12 @@ app.post('/api/recalculate-phase-averages/:studentId', verifyToken, async (req, 
 app.post('/api/recalculate-phase-averages/teacher/:teacherId', verifyToken, async (req, res) => {
   try {
     const { teacherId } = req.params;
+    if (req.user.role === 'docente' && Number(teacherId) !== Number(req.user.teacher_id)) {
+      return res.status(403).json({ message: 'Solo puedes recalcular las notas de tus estudiantes.' });
+    }
+    if (!isAdministratorRole(req.user.role) && req.user.role !== 'docente') {
+      return res.status(403).json({ message: 'Se requiere rol docente o administrador.' });
+    }
     const result = await recalculateAllStudentsPhaseAverages(parseInt(teacherId));
     
     if (result.success) {

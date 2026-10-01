@@ -13,7 +13,7 @@ export const getStudentProgress = async (req, res) => {
         // teachers (user_id) -> teacher_students -> students -> users
         const query = `
             SELECT 
-                s.id as student_id, 
+                s.id as student_id, s.ins 
                 u.name as student_name, 
                 u.email,
                 u.profile_image as student_profile_image,

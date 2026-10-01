@@ -4,6 +4,7 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin, isSuperAdmin } from '../middleware/authMiddleware.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -80,6 +81,12 @@ router.get('/teacher/:teacherId/licenses', async (req, res) => {
 router.get('/teacher/:teacherId/institution/:institution', async (req, res) => {
   try {
     const { teacherId, institution } = req.params;
+    if (!['admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      const [teacher] = await pool.query('SELECT user_id FROM teachers WHERE id = ?', [teacherId]);
+      if (!teacher.length || Number(teacher[0].user_id) !== Number(req.user.id)) {
+        return res.status(403).json({ success: false, message: 'Solo puedes consultar tus propias licencias.' });
+      }
+    }
 
     const [licenses] = await pool.query(
       'SELECT * FROM teacher_institutions WHERE teacher_id = ? AND institution = ?',
@@ -177,6 +184,12 @@ router.post('/teacher/:teacherId/purchase-license', isAdminOrSuperAdmin, async (
         );
 
         await connection.commit();
+        await logRequestAudit(req, {
+          action: 'UPDATE', tableName: 'teacher_institutions', recordId: existingLicense[0].id,
+          description: `Reactivó la licencia del docente ${teacherId} para ${institution}.`,
+          oldValues: { license_status: existingLicense[0].license_status },
+          newValues: { license_status: 'active', purchased_date: purchaseDate.toISOString().split('T')[0], expiration_date: expirationDate.toISOString().split('T')[0] }
+        });
 
         return res.json({
           success: true,
@@ -231,6 +244,11 @@ router.post('/teacher/:teacherId/purchase-license', isAdminOrSuperAdmin, async (
     );
 
     await connection.commit();
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'teacher_institutions', recordId: result.insertId,
+      description: `Creó una licencia para el docente ${teacherId} en ${institution}.`,
+      newValues: { teacher_id: Number(teacherId), institution, license_status: 'active', purchased_date: purchaseDate.toISOString().split('T')[0], expiration_date: expirationDate.toISOString().split('T')[0] }
+    });
 
     res.status(201).json({
       success: true,
@@ -316,6 +334,12 @@ router.put('/license/:licenseId/suspend', isAdminOrSuperAdmin, async (req, res) 
     );
 
     await connection.commit();
+
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teacher_institutions', recordId: Number(licenseId),
+      description: `Suspendió la licencia del docente ${teacherId} para ${license[0].institution}.`,
+      oldValues: { license_status: license[0].license_status }, newValues: { license_status: 'suspended', reason: reason || null }
+    });
 
     console.log(`🔒 Licencia ${licenseId} suspendida. Razón: ${reason || 'No especificada'}`);
     console.log(`⚠️ IMPORTANTE: Los datos del docente y estudiantes NO fueron eliminados.`);
@@ -412,6 +436,12 @@ router.put('/license/:licenseId/reactivate', isAdminOrSuperAdmin, async (req, re
     );
 
     await connection.commit();
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teacher_institutions', recordId: Number(licenseId),
+      description: `Reactivó la licencia ${licenseId}.`,
+      oldValues: { expiration_date: license[0].expiration_date },
+      newValues: { license_status: 'active', expiration_date: finalDateStr, plan_type: plan_type === 'yearly' ? 'yearly' : 'monthly' }
+    });
     res.json({ 
         success: true, 
         message: 'Licencia actualizada con éxito', 
@@ -552,6 +582,13 @@ router.put('/license/:licenseId/reactivate', isAdminOrSuperAdmin, async (req, re
 
     await connection.commit();
 
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teacher_institutions', recordId: Number(licenseId),
+      description: `Reactivó la licencia del docente ${teacherId} para ${license[0].institution}.`,
+      oldValues: { license_status: license[0].license_status, expiration_date: license[0].expiration_date },
+      newValues: { license_status: 'active', expiration_date: newExpirationDate ? newExpirationDate.toISOString().split('T')[0] : license[0].expiration_date }
+    });
+
     console.log(`✅ Licencia ${licenseId} reactivada exitosamente`);
 
     res.json({
@@ -625,6 +662,12 @@ router.put('/license/:licenseId/expire', isAdminOrSuperAdmin, async (req, res) =
     );
 
     await connection.commit();
+
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teacher_institutions', recordId: Number(licenseId),
+      description: `Marcó como expirada la licencia ${licenseId}.`,
+      oldValues: { teacher_id: license[0].teacher_id }, newValues: { license_status: 'expired' }
+    });
 
     res.json({
       success: true,
@@ -749,6 +792,12 @@ router.post('/licenses/check-expired', isAdminOrSuperAdmin, async (req, res) => 
       }
 
       await connection.commit();
+
+      await logRequestAudit(req, {
+        action: 'UPDATE', tableName: 'teacher_institutions', recordId: null,
+        description: `Marcó ${expiredLicenses.length} licencia(s) vencida(s) automáticamente.`,
+        newValues: { expired_license_ids: expiredLicenses.map(license => license.id), count: expiredLicenses.length }
+      });
 
       res.json({
         success: true,

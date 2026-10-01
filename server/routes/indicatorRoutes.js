@@ -3,6 +3,7 @@ import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { getTemplateSubjects, getTemplateIndicators } from '../data/subjectTemplates.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
@@ -452,6 +453,12 @@ router.post('/', verifyToken, async (req, res) => {
     }
     
     await connection.commit();
+
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'indicators', recordId: indicatorId,
+      description: `Creó el indicador ${indicatorId} para ${subject}, fase ${phase}.`,
+      newValues: { teacher_id: Number(teacher_id), subject, phase, grade, questionnaire_id, assigned_students: studentsToAssign }
+    });
     
     // Obtener el indicador creado para la respuesta
     const [newIndicator] = await connection.query(`
@@ -529,7 +536,7 @@ router.put('/:id', verifyToken, async (req, res) => {
     console.log(`🔍 Cuestionario encontrado para la actualización: ${foundQuestionnaireId}`);
 
     // 2. Verificar propiedad o rol de administrador
-    const [indicator] = await connection.query('SELECT teacher_id FROM indicators WHERE id = ?', [id]);
+    const [indicator] = await connection.query('SELECT * FROM indicators WHERE id = ?', [id]);
     if (indicator.length === 0) {
       return res.status(404).json({ success: false, message: 'Indicador no encontrado' });
     }
@@ -682,6 +689,12 @@ router.put('/:id', verifyToken, async (req, res) => {
 
     // Confirmar la transacción
     await connection.commit();
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'indicators', recordId: Number(id),
+      description: `Actualizó el indicador ${id}.`,
+      oldValues: { description: indicator[0].description, subject: indicator[0].subject, category: indicator[0].category, phase: indicator[0].phase, grade: indicator[0].grade, questionnaire_id: indicator[0].questionnaire_id },
+      newValues: { description, subject, category, phase, grade, questionnaire_id: questionnaireId, assigned_students: student_ids }
+    });
     
     // Construir respuesta
     const response = {
@@ -766,7 +779,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
 
     // 2. Verificar que el indicador existe y obtener su propietario
     const [indicator] = await connection.query(
-      'SELECT id, teacher_id FROM indicators WHERE id = ?',
+      'SELECT * FROM indicators WHERE id = ?',
       [id]
     );
     
@@ -797,6 +810,11 @@ router.delete('/:id', verifyToken, async (req, res) => {
     );
     
     await connection.commit();
+    await logRequestAudit(req, {
+      action: 'DELETE', tableName: 'indicators', recordId: Number(id),
+      description: `Eliminó el indicador ${id} y sus asignaciones de estudiantes.`,
+      oldValues: { teacher_id: indicator[0].teacher_id, description: indicator[0].description, subject: indicator[0].subject, phase: indicator[0].phase, grade: indicator[0].grade }
+    });
     
     console.log(`✅ Indicador ${id} eliminado correctamente`);
     

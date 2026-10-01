@@ -171,9 +171,11 @@ export const logLogout = async (userId, userRole, userName, req = null) => {
 export const getAuditHistory = async (tableName, recordId) => {
   try {
     const [logs] = await pool.query(
-      `SELECT * FROM audit_logs_with_user 
-       WHERE table_name = ? AND record_id = ? 
-       ORDER BY created_at DESC`,
+      `SELECT al.*, u.name AS current_user_name, u.email AS user_email
+       FROM audit_logs al
+       LEFT JOIN users u ON al.user_id = u.id
+       WHERE al.table_name = ? AND al.record_id = ?
+       ORDER BY al.created_at DESC`,
       [tableName, recordId]
     );
     return logs;
@@ -188,35 +190,42 @@ export const getAuditHistory = async (tableName, recordId) => {
  */
 export const getAuditLogs = async (filters = {}) => {
   try {
-    let query = 'SELECT * FROM audit_logs_with_user WHERE 1=1';
+    let query = `
+      SELECT al.*, u.name AS current_user_name, u.email AS user_email
+      FROM audit_logs al
+      LEFT JOIN users u ON al.user_id = u.id
+      WHERE 1=1
+    `;
     const params = [];
     
     if (filters.tableName) {
-      query += ' AND table_name = ?';
+      query += ' AND al.table_name = ?';
       params.push(filters.tableName);
     }
     
     if (filters.userId) {
-      query += ' AND user_id = ?';
+      query += ' AND al.user_id = ?';
       params.push(filters.userId);
     }
     
     if (filters.action) {
-      query += ' AND action = ?';
+      query += ' AND al.action = ?';
       params.push(filters.action);
     }
     
     if (filters.startDate) {
-      query += ' AND created_at >= ?';
+      query += ' AND al.created_at >= ?';
       params.push(filters.startDate);
     }
     
     if (filters.endDate) {
-      query += ' AND created_at <= ?';
+      // Los filtros vienen de un input date (YYYY-MM-DD); excluir el día
+      // siguiente incluye todas las horas del día seleccionado.
+      query += ' AND al.created_at < DATE_ADD(?, INTERVAL 1 DAY)';
       params.push(filters.endDate);
     }
     
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY al.created_at DESC';
     
     if (filters.limit) {
       query += ' LIMIT ?';
@@ -227,12 +236,24 @@ export const getAuditLogs = async (filters = {}) => {
     return logs;
   } catch (error) {
     console.error('Error al obtener logs de auditoría:', error);
-    return [];
+    throw error;
   }
 };
 
+// Registra mutaciones desde rutas autenticadas usando la identidad de req.user.
+// Mantiene valores de auditoría explícitos para que cada módulo indique qué cambió.
+export const logRequestAudit = (req, event) => logAudit({
+  ...event,
+  userId: req?.user?.id ?? 0,
+  userRole: req?.user?.role || 'unknown',
+  userName: req?.user?.name || req?.user?.email || 'Usuario',
+  ipAddress: req?.ip || req?.connection?.remoteAddress || null,
+  userAgent: req?.get?.('user-agent') || null
+});
+
 export default {
   logAudit,
+  logRequestAudit,
   logCreate,
   logUpdate,
   logDelete,

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin } from '../middleware/authMiddleware.js';
+import { logRequestAudit } from '../utils/auditLogger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = express.Router();
@@ -46,27 +47,28 @@ router.get('/list', async (req, res) => {
     
     console.log('🔍 [GET] /api/teachers/list - Parámetros recibidos:', { course_id, grade, institution });
     
-    // Verificar si el campo institution existe en users
-    let hasInstitution = false;
+    // La institución debe salir del perfil docente: un mismo usuario puede
+    // tener perfiles separados para distintas instituciones.
+    let hasTeacherInstitution = false;
     try {
       const [columns] = await pool.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
         WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'users' 
+        AND TABLE_NAME = 'teachers'
         AND COLUMN_NAME = 'institution'
       `);
-      hasInstitution = columns.length > 0;
+      hasTeacherInstitution = columns.length > 0;
     } catch (error) {
-      console.log('⚠️ Campo institution no disponible aún en users');
+      console.log('⚠️ Campo institution no disponible aún en teachers');
     }
     
     let query = `
-      SELECT DISTINCT t.id, t.subject, u.name, u.email, u.phone
+      SELECT DISTINCT t.id, t.subject, u.name
     `;
     
-    if (hasInstitution) {
-      query += `, u.institution`;
+    if (hasTeacherInstitution) {
+      query += `, t.institution AS institution`;
     }
     
     query += `
@@ -79,24 +81,29 @@ router.get('/list', async (req, res) => {
     
     // Si se proporciona course_id, filtrar por profesores que enseñan ese curso
     if (course_id) {
-      query += ` INNER JOIN teacher_courses tc ON t.id = tc.teacher_id`;
-      conditions.push('tc.course_id = ?');
+      // Los cursos existentes pueden guardar al docente principal directamente
+      // en courses.teacher_id, además de las relaciones de teacher_courses.
+      query += `
+        INNER JOIN courses c ON c.id = ?
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id = t.id
+      `;
+      conditions.push('(tc.teacher_id IS NOT NULL OR c.teacher_id = t.id)');
       params.push(course_id);
       console.log('📌 Filtro por course_id:', course_id);
     }
     // Si se proporciona grade, filtrar por profesores que enseñan cursos de ese grado
     else if (grade) {
       query += `
-        INNER JOIN teacher_courses tc ON t.id = tc.teacher_id
-        INNER JOIN courses c ON tc.course_id = c.id
+        INNER JOIN courses c ON c.grade = ?
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id = t.id
       `;
-      conditions.push('c.grade = ?');
+      conditions.push('(tc.teacher_id IS NOT NULL OR c.teacher_id = t.id)');
       params.push(grade);
       console.log('📌 Filtro por grade:', grade);
     }
     
     // Si se proporciona institution, filtrar por profesores de esa institución
-    if (institution && hasInstitution) {
+    if (institution && hasTeacherInstitution) {
       // Usar comparación flexible: exacta o que contenga la palabra clave
       // Ejemplo: "La Chucua" coincidirá con "Colegio La Chucua" y viceversa
       // Extraer palabras clave de la institución (ej: "La Chucua" de "Colegio La Chucua")
@@ -105,10 +112,10 @@ router.get('/list', async (req, res) => {
       const mainKeyword = institutionWords.length > 1 ? institutionWords.slice(-2).join(' ') : institutionTrimmed;
       
       conditions.push(`(
-        LOWER(TRIM(COALESCE(u.institution, ''))) = LOWER(TRIM(?)) 
-        OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
-        OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
-        OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(u.institution, ''))), '%')
+        LOWER(TRIM(COALESCE(t.institution, ''))) = LOWER(TRIM(?))
+        OR LOWER(TRIM(COALESCE(t.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+        OR LOWER(TRIM(COALESCE(t.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+        OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(t.institution, ''))), '%')
       )`);
       params.push(institutionTrimmed, institutionTrimmed, mainKeyword, institutionTrimmed);
       console.log('📌 Filtro por institution (flexible):', institutionTrimmed, '| Palabra clave:', mainKeyword);
@@ -139,21 +146,21 @@ router.get('/list', async (req, res) => {
         console.log('⚠️ No se encontraron profesores con los filtros estrictos, intentando búsqueda más relajada...');
         
         // Si hay course_id e institution, intentar primero solo por institution
-        if (course_id && institution && hasInstitution) {
+        if (course_id && institution && hasTeacherInstitution) {
           console.log('🔍 Intentando búsqueda solo por institución (sin filtro de curso)...');
           const institutionTrimmed = institution.trim();
           const institutionWords = institutionTrimmed.split(/\s+/).filter(w => w.length > 2);
           const mainKeyword = institutionWords.length > 1 ? institutionWords.slice(-2).join(' ') : institutionTrimmed;
           
           const relaxedQuery = `
-            SELECT DISTINCT t.id, t.subject, u.name, u.email, u.phone, u.institution
+            SELECT DISTINCT t.id, t.subject, u.name, t.institution AS institution
             FROM teachers t
             JOIN users u ON t.user_id = u.id
             WHERE (
-              LOWER(TRIM(COALESCE(u.institution, ''))) = LOWER(TRIM(?)) 
-              OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
-              OR LOWER(TRIM(COALESCE(u.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
-              OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(u.institution, ''))), '%')
+              LOWER(TRIM(COALESCE(t.institution, ''))) = LOWER(TRIM(?))
+              OR LOWER(TRIM(COALESCE(t.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+              OR LOWER(TRIM(COALESCE(t.institution, ''))) LIKE CONCAT('%', LOWER(TRIM(?)), '%')
+              OR LOWER(TRIM(?)) LIKE CONCAT('%', LOWER(TRIM(COALESCE(t.institution, ''))), '%')
             )
             ORDER BY u.name
           `;
@@ -177,9 +184,9 @@ router.get('/list', async (req, res) => {
           }
         }
         // Si solo hay institution sin course_id, verificar que haya profesores
-        else if (institution && hasInstitution && !course_id && !grade) {
+        else if (institution && hasTeacherInstitution && !course_id && !grade) {
           console.log('⚠️ No se encontraron profesores para la institución:', institution);
-          console.log('💡 Verifica que los profesores tengan la institución asignada en la tabla users');
+          console.log('💡 Verifica que los perfiles tengan la institución asignada en la tabla teachers');
         }
       }
     }
@@ -214,6 +221,12 @@ router.get('/', isTeacherOrAdmin, async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.user.role === 'docente' && Number(id) !== Number(req.user.teacher_id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tu propio perfil docente.' });
+    }
+    if (!['admin', 'administrador', 'super_administrador', 'docente'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para consultar perfiles docentes.' });
+    }
     
     const [rows] = await pool.query(
       `SELECT t.*, u.name, u.email, u.phone, u.role 
@@ -269,6 +282,11 @@ router.post('/', isAdmin, async (req, res) => {
       'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
       [user_id, subject, institution]
     );
+    await logRequestAudit(req, {
+      action: 'CREATE', tableName: 'teachers', recordId: result.insertId,
+      description: `Creó el perfil docente ${result.insertId} para el usuario ${user_id}.`,
+      newValues: { user_id: Number(user_id), subject, institution }
+    });
     
     // 3. Actualizar el rol del usuario a 'docente' si no lo es ya
     await pool.query(
@@ -307,7 +325,7 @@ router.put('/:id/report-settings', async (req, res) => {
   try {
     const { id } = req.params;
     const { report_brand_name, report_logo_url } = req.body;
-    const [rows] = await pool.query('SELECT id, user_id FROM teachers WHERE id = ?', [id]);
+    const [rows] = await pool.query('SELECT id, user_id, report_brand_name, report_logo_url FROM teachers WHERE id = ?', [id]);
     if (!rows.length) return res.status(404).json({ message: 'Profesor no encontrado' });
     const teacher = rows[0];
     const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
@@ -317,6 +335,12 @@ router.put('/:id/report-settings', async (req, res) => {
       'UPDATE teachers SET report_brand_name = ?, report_logo_url = ? WHERE id = ?',
       [report_brand_name != null ? String(report_brand_name).trim() || null : null, report_logo_url != null ? String(report_logo_url).trim() || null : null, id]
     );
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teachers', recordId: Number(id),
+      description: `Actualizó la configuración de marca del docente ${id}.`,
+      oldValues: { report_brand_name: teacher.report_brand_name, report_logo_url: teacher.report_logo_url },
+      newValues: { report_brand_name, report_logo_url }
+    });
     const [updated] = await pool.query('SELECT id, report_brand_name, report_logo_url FROM teachers WHERE id = ?', [id]);
     res.json({ success: true, data: updated[0] });
   } catch (e) {
@@ -330,13 +354,18 @@ router.post('/:id/logo', logoUpload.single('logo'), async (req, res) => {
   try {
     const { id } = req.params;
     if (!req.file) return res.status(400).json({ message: 'No se envió ningún archivo. Selecciona una imagen (PNG, JPG, WEBP) desde tu PC o celular.' });
-    const [rows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [id]);
+    const [rows] = await pool.query('SELECT id, report_logo_url FROM teachers WHERE id = ?', [id]);
     if (!rows.length) return res.status(404).json({ message: 'Profesor no encontrado' });
     const isAdminUser = req.user.role === 'administrador' || req.user.role === 'super_administrador';
     const isOwner = req.user.role === 'docente' && req.user.teacher_id === parseInt(id, 10);
     if (!isAdminUser && !isOwner) return res.status(403).json({ message: 'Sin permiso para subir el logo' });
     const relativePath = `/uploads/logos/teachers/${req.file.filename}`;
     await pool.query('UPDATE teachers SET report_logo_url = ? WHERE id = ?', [relativePath, id]);
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teachers', recordId: Number(id),
+      description: `Actualizó el logo del docente ${id}.`,
+      oldValues: { report_logo_url: rows[0].report_logo_url }, newValues: { report_logo_url: relativePath }
+    });
     res.json({ success: true, data: { report_logo_url: relativePath } });
   } catch (e) {
     console.error('Error uploading teacher logo:', e);
@@ -352,7 +381,7 @@ router.put('/:id', isAdmin, async (req, res) => {
     
     // Obtener la materia actual del docente
     const [currentTeacher] = await pool.query(
-      'SELECT subject FROM teachers WHERE id = ?',
+      'SELECT subject, institution FROM teachers WHERE id = ?',
       [id]
     );
     
@@ -405,10 +434,16 @@ router.put('/:id', isAdmin, async (req, res) => {
       'UPDATE teachers SET subject = ?, institution = ? WHERE id = ?',
       [subject, institution, id]
     );
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Profesor no encontrado' });
     }
+
+    await logRequestAudit(req, {
+      action: 'UPDATE', tableName: 'teachers', recordId: Number(id),
+      description: `Actualizó el perfil docente ${id}.`,
+      oldValues: currentTeacher[0], newValues: { subject, institution }
+    });
     
     res.json({ 
       success: true, 
@@ -431,7 +466,7 @@ router.delete('/:id', isAdmin, async (req, res) => {
     
     // Obtener el user_id del profesor
     const [teacherRows] = await pool.query(
-      'SELECT user_id FROM teachers WHERE id = ?',
+      'SELECT t.*, u.role AS user_role FROM teachers t JOIN users u ON u.id = t.user_id WHERE t.id = ?',
       [id]
     );
     
@@ -459,6 +494,18 @@ router.delete('/:id', isAdmin, async (req, res) => {
       
       // Confirmar transacción
       await pool.query('COMMIT');
+
+      await logRequestAudit(req, {
+        action: 'DELETE', tableName: 'teachers', recordId: Number(id),
+        description: `Eliminó el perfil docente ${id}.`, oldValues: teacherRows[0]
+      });
+      if (teacherRows[0].user_role !== 'super_administrador') {
+        await logRequestAudit(req, {
+          action: 'UPDATE', tableName: 'users', recordId: userId,
+          description: `Cambió el rol del usuario ${userId} de docente a estudiante al eliminar su perfil.`,
+          oldValues: { role: teacherRows[0].user_role }, newValues: { role: 'estudiante' }
+        });
+      }
       
       res.json({ 
         success: true, 
@@ -559,9 +606,15 @@ router.get('/:teacherId/students/by-grade/:grade', isTeacherOrAdmin, async (req,
 router.get('/:id/students', async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.user.role === 'docente' && Number(id) !== Number(req.user.teacher_id)) {
+      return res.status(403).json({ message: 'Solo puedes consultar tus propios estudiantes.' });
+    }
+    if (!['admin', 'administrador', 'super_administrador', 'docente'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para consultar estudiantes.' });
+    }
     
     const [rows] = await pool.query(`
-      SELECT s.*, u.name, u.email, u.phone, u.role,
+      SELECT s.*, u.name, u.email, u.phone, u.role,  u.institution,
              c.name as course_name
       FROM students s
       JOIN users u ON s.user_id = u.id
