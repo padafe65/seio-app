@@ -26,7 +26,7 @@ router.get('/student-guides', verifyToken, async (req, res) => {
     let studentInfo = null;
     if (req.user.role === 'estudiante') {
       const [students] = await connection.query(
-        `SELECT s.*, c.name as course_name 
+      `SELECT s.*, c.name as course_name, c.institution as course_institution
          FROM students s 
          LEFT JOIN courses c ON s.course_id = c.id
          WHERE s.user_id = ?`,
@@ -50,6 +50,8 @@ router.get('/student-guides', verifyToken, async (req, res) => {
         er.file_path,
         er.resource_type,
         er.grade_level,
+        er.course_id,
+        er.institution,
         er.phase,
         er.difficulty,
         er.views_count,
@@ -68,6 +70,13 @@ router.get('/student-guides', verifyToken, async (req, res) => {
     `;
     
     const params = [];
+
+    if (req.user.role === 'estudiante' && studentInfo) {
+      query += ' AND (er.course_id IS NULL OR er.course_id = ?)';
+      params.push(studentInfo.course_id || 0);
+      query += ' AND (er.institution IS NULL OR er.institution = ?)';
+      params.push(studentInfo.course_institution || studentInfo.institution || '');
+    }
     
     // Filtrar por fase
     if (phase) {
@@ -157,7 +166,9 @@ router.get('/', verifyToken, async (req, res) => {
       phase, 
       difficulty, 
       resource_type,
-      institution_id 
+      institution_id,
+      course_id,
+      institution
     } = req.query;
     
     let query = `
@@ -172,6 +183,8 @@ router.get('/', verifyToken, async (req, res) => {
         er.file_path,
         er.resource_type,
         er.grade_level,
+        er.course_id,
+        er.institution,
         er.phase,
         er.difficulty,
         er.views_count,
@@ -187,6 +200,34 @@ router.get('/', verifyToken, async (req, res) => {
     `;
     
     const params = [];
+
+    if (req.user.role === 'estudiante') {
+      const [studentRows] = await connection.query(
+        `SELECT s.course_id, COALESCE(c.institution, s.institution) AS institution
+         FROM students s LEFT JOIN courses c ON c.id = s.course_id WHERE s.user_id = ? LIMIT 1`,
+        [req.user.id]
+      );
+      const studentContext = studentRows[0];
+      if (studentContext?.course_id) {
+        query += ' AND (er.course_id IS NULL OR er.course_id = ?)';
+        params.push(studentContext.course_id);
+      } else {
+        query += ' AND er.course_id IS NULL';
+      }
+      if (studentContext?.institution) {
+        query += ' AND (er.institution IS NULL OR er.institution = ?)';
+        params.push(studentContext.institution);
+      }
+    } else {
+      if (course_id) {
+        query += ' AND (er.course_id = ? OR er.course_id IS NULL)';
+        params.push(course_id);
+      }
+      if (institution) {
+        query += ' AND (er.institution = ? OR er.institution IS NULL)';
+        params.push(institution);
+      }
+    }
     
     // Filtros opcionales
     // Manejar múltiples materias: puede venir como 'subject' (una sola) o 'subjects' (múltiples separadas por comas)
@@ -690,7 +731,9 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
       grade_level,
       phase,
       difficulty,
-      institution_id
+      institution_id,
+      course_id,
+      institution
     } = req.body;
     
     // Validaciones
@@ -725,19 +768,36 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
     let teacherId = null;
     if (req.user.role === 'docente') {
       const [teachers] = await connection.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
+        'SELECT id, subject FROM teachers WHERE user_id = ? ORDER BY id',
         [req.user.id]
       );
-      if (teachers.length > 0) {
-        teacherId = teachers[0].id;
+      const profile = teachers.find((teacher) => teacher.subject === subject);
+      if (!profile) return res.status(403).json({ success: false, message: 'La materia no pertenece a tus perfiles docentes' });
+      teacherId = profile.id;
+    }
+    let resourceInstitution = institution || null;
+    if (course_id) {
+      const teacherIds = req.user.role === 'docente' ? (req.user.teacher_ids || []) : [0];
+      const [courseRows] = await connection.query(`
+        SELECT c.id, c.institution, COALESCE(tc.teacher_id, c.teacher_id) AS teacher_id, t.subject
+        FROM courses c
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id IN (?)
+        JOIN teachers t ON t.id = COALESCE(tc.teacher_id, c.teacher_id)
+        WHERE c.id = ? AND (? <> 'docente' OR c.teacher_id IN (?) OR tc.teacher_id IN (?))
+        LIMIT 1
+      `, [teacherIds, course_id, req.user.role, teacherIds, teacherIds]);
+      if (!courseRows.length || (req.user.role === 'docente' && courseRows[0].subject !== subject)) {
+        return res.status(403).json({ success: false, message: 'El curso no corresponde a tu materia o perfil docente' });
       }
+      resourceInstitution = courseRows[0].institution;
+      if (req.user.role === 'docente') teacherId = courseRows[0].teacher_id;
     }
     
     const [result] = await connection.query(
       `INSERT INTO educational_resources 
        (subject, area, topic, title, description, url, file_path, resource_type, 
-        grade_level, phase, difficulty, institution_id, teacher_id, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        grade_level, phase, difficulty, institution_id, course_id, institution, teacher_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         subject,
         area,
@@ -751,6 +811,8 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
         phase || null,
         difficulty || 'intermedio',
         institution_id || null,
+        course_id || null,
+        resourceInstitution,
         teacherId,
         req.user.id
       ]
@@ -809,7 +871,9 @@ router.post('/upload-guide', verifyToken, isTeacherOrAdmin, uploadGuide.single('
       grade_level,
       phase,
       difficulty,
-      institution_id
+      institution_id,
+      course_id,
+      institution
     } = req.body;
     
     // Validaciones
@@ -832,12 +896,29 @@ router.post('/upload-guide', verifyToken, isTeacherOrAdmin, uploadGuide.single('
     let teacherId = null;
     if (req.user.role === 'docente') {
       const [teachers] = await connection.query(
-        'SELECT id FROM teachers WHERE user_id = ?',
+        'SELECT id, subject FROM teachers WHERE user_id = ? ORDER BY id',
         [req.user.id]
       );
-      if (teachers.length > 0) {
-        teacherId = teachers[0].id;
+      const profile = teachers.find((teacher) => teacher.subject === subject);
+      if (!profile) return res.status(403).json({ success: false, message: 'La materia no pertenece a tus perfiles docentes' });
+      teacherId = profile.id;
+    }
+    let resourceInstitution = institution || null;
+    if (course_id) {
+      const teacherIds = req.user.role === 'docente' ? (req.user.teacher_ids || []) : [0];
+      const [courseRows] = await connection.query(`
+        SELECT c.id, c.institution, COALESCE(tc.teacher_id, c.teacher_id) AS teacher_id, t.subject
+        FROM courses c
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id IN (?)
+        JOIN teachers t ON t.id = COALESCE(tc.teacher_id, c.teacher_id)
+        WHERE c.id = ? AND (? <> 'docente' OR c.teacher_id IN (?) OR tc.teacher_id IN (?))
+        LIMIT 1
+      `, [teacherIds, course_id, req.user.role, teacherIds, teacherIds]);
+      if (!courseRows.length || (req.user.role === 'docente' && courseRows[0].subject !== subject)) {
+        return res.status(403).json({ success: false, message: 'El curso no corresponde a tu materia o perfil docente' });
       }
+      resourceInstitution = courseRows[0].institution;
+      if (req.user.role === 'docente') teacherId = courseRows[0].teacher_id;
     }
     
     // Obtener la ruta del archivo subido
@@ -858,8 +939,8 @@ router.post('/upload-guide', verifyToken, isTeacherOrAdmin, uploadGuide.single('
     const [result] = await connection.query(
       `INSERT INTO educational_resources 
        (subject, area, topic, title, description, url, file_path, resource_type, 
-        grade_level, phase, difficulty, institution_id, teacher_id, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        grade_level, phase, difficulty, institution_id, course_id, institution, teacher_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         subject,
         area,
@@ -873,6 +954,8 @@ router.post('/upload-guide', verifyToken, isTeacherOrAdmin, uploadGuide.single('
         phase || null,
         difficulty || 'intermedio',
         institution_id || null,
+        course_id || null,
+        resourceInstitution,
         teacherId,
         req.user.id
       ]
@@ -1164,6 +1247,8 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
       phase,
       difficulty,
       institution_id,
+      course_id,
+      institution,
       is_active
     } = req.body;
     
@@ -1186,6 +1271,18 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
         success: false,
         message: 'No tienes permiso para editar este recurso'
       });
+    }
+    if (req.user.role === 'docente' && course_id) {
+      const teacherIds = req.user.teacher_ids || [];
+      const [courseRows] = await connection.query(`
+        SELECT c.id FROM courses c
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id IN (?)
+        WHERE c.id = ? AND (c.teacher_id IN (?) OR tc.teacher_id IN (?))
+        LIMIT 1
+      `, [teacherIds, course_id, teacherIds, teacherIds]);
+      if (!courseRows.length) {
+        return res.status(403).json({ success: false, message: 'Ese curso no pertenece a tus perfiles docentes' });
+      }
     }
     
     // Validar URL si se proporciona
@@ -1247,6 +1344,14 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
     if (institution_id !== undefined) {
       updates.push('institution_id = ?');
       params.push(institution_id === '' ? null : institution_id);
+    }
+    if (course_id !== undefined) {
+      updates.push('course_id = ?');
+      params.push(course_id === '' ? null : course_id);
+    }
+    if (institution !== undefined) {
+      updates.push('institution = ?');
+      params.push(institution === '' ? null : institution);
     }
     if (is_active !== undefined && (req.user.role === 'admin' || req.user.role === 'super_administrador')) {
       updates.push('is_active = ?');

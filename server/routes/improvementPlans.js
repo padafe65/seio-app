@@ -77,7 +77,7 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
     
     // Agregar institution si existe el campo
     if (hasInstitution) {
-      query += `, COALESCE(us.institution, ut.institution) as institution`;
+      query += `, COALESCE(c.institution, us.institution, ut.institution) as institution`;
     }
     
     query += `
@@ -101,9 +101,9 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
     
     // Agregar filtros si se proporcionan
     if (institution && hasInstitution) {
-      conditions.push(`(us.institution LIKE ? OR ut.institution LIKE ?)`);
+      conditions.push(`(c.institution LIKE ? OR us.institution LIKE ? OR ut.institution LIKE ?)`);
       const institutionPattern = `%${institution}%`;
-      params.push(institutionPattern, institutionPattern);
+      params.push(institutionPattern, institutionPattern, institutionPattern);
     }
     
     if (course) {
@@ -193,17 +193,20 @@ router.get('/improvement-plans/student/:userId', async (req, res) => {
 // Obtener planes de mejoramiento por profesor (usando user_id)
 router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) => {
   try {
+    const requestedUserId = Number(req.params.userId);
+    const isAdmin = ['admin', 'administrador', 'super_administrador'].includes(req.user.role);
+    if (!isAdmin && (req.user.role !== 'docente' || requestedUserId !== Number(req.user.id))) {
+      return res.status(403).json({ message: 'Solo puedes consultar tus propios planes de mejoramiento' });
+    }
     // Primero obtenemos el teacher_id asociado con este user_id
     const [teachers] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
-      [req.params.userId]
+      [requestedUserId]
     );
     
     if (teachers.length === 0) {
       return res.status(404).json({ message: 'Profesor no encontrado' });
     }
-    
-    const teacherId = teachers[0].id;
     
     // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();
@@ -214,15 +217,16 @@ router.get('/improvement-plans/teacher/:userId', verifyToken, async (req, res) =
              s.user_id as student_user_id,
              us.name as student_name,
              s.grade,
-             c.name as course_name
+             c.name as course_name,
+             c.institution as institution
       FROM improvement_plans ip
       JOIN students s ON ip.student_id = s.id
       JOIN users us ON s.user_id = us.id
       LEFT JOIN courses c ON s.course_id = c.id
-      WHERE ip.teacher_id = ?
+      WHERE ip.teacher_id IN (?)
       AND (ip.academic_year = ? OR ip.academic_year IS NULL)
       ORDER BY ip.created_at DESC
-    `, [teacherId, currentAcademicYear]);
+    `, [teachers.map((teacher) => teacher.id), currentAcademicYear]);
     
     res.json(plans);
   } catch (error) {

@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 import { useAuth } from '../../context/AuthContext';
+import useTeacherCourseContext from '../../hooks/useTeacherCourseContext';
 
 // Configuración de la API base
 const API_BASE_URL = 'http://localhost:5000';
@@ -25,6 +26,7 @@ const IndicatorForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const teacherContext = useTeacherCourseContext(user);
   const isEditing = !!id;
   
   // Estado inicial del formulario
@@ -34,6 +36,8 @@ const IndicatorForm = () => {
     category: '',
     phase: '', // Cambiado a cadena vacía para mostrar 'Seleccione una fase' por defecto
     grade: '',
+    course_id: '',
+    institution: '',
     questionnaire_id: '', // Cambiado de questionnaireid a questionnaire_id para mantener consistencia
     students: [],       // lista de estudiantes (objetos con datos)
     studentids: [],     // lista de IDs de estudiantes seleccionados (asegurar que sea array)
@@ -73,6 +77,7 @@ const IndicatorForm = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('name'); // 'name', 'grade', 'email', 'status'
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc', 'desc'
+  const courseOptions = teacherContext.courses.filter((course) => !formData.subject || course.subject === formData.subject);
  
   // Función auxiliar para cargar cuestionarios
   const loadQuestionnaires = useCallback(async (userId, editing = false, indicatorTeacherId = null) => {
@@ -211,7 +216,7 @@ const IndicatorForm = () => {
   }, [user?.id]);
 
   // Función para cargar estudiantes por grado
-  const fetchStudents = useCallback(async (teacherId, grade) => {
+  const fetchStudents = useCallback(async (teacherId, grade, courseId = null) => {
     if (!grade) {
       const errorMsg = '⚠️ [fetchStudents] No se ha especificado un grado para cargar estudiantes';
       console.warn(errorMsg);
@@ -392,6 +397,7 @@ const IndicatorForm = () => {
       
       // 4. Combinar estudiantes con información de asignación
       const processedStudents = studentsList
+        .filter(student => !courseId || String(student.course_id) === String(courseId))
         .filter(student => student && (student.id || student.user_id))
         .map(student => {
           const studentId = String(student.id || student.user_id);
@@ -514,8 +520,10 @@ const IndicatorForm = () => {
   }, []);
 
   // Manejador para cuando cambia el grado
-  const handleGradeChange = (e) => {
+  const handleGradeChange = (e, selectedCourse = null) => {
     const selectedGrade = e.target.value;
+    const activeTeacherId = selectedCourse?.teacher_id || teacherId;
+    const activeCourseId = selectedCourse?.id || null;
     
     // Actualizar el estado del formulario
     setFormData(prev => ({
@@ -525,11 +533,11 @@ const IndicatorForm = () => {
     }));
     
     // Cargar estudiantes para el grado seleccionado
-    if (teacherId && selectedGrade) {
-      console.log(`🔄 [handleGradeChange] Cargando estudiantes para docente ${teacherId}, grado ${selectedGrade}`);
+    if (activeTeacherId && selectedGrade) {
+      console.log(`🔄 [handleGradeChange] Cargando estudiantes para docente ${activeTeacherId}, grado ${selectedGrade}`);
       setLoading(true);
       
-      fetchStudents(teacherId, selectedGrade)
+      fetchStudents(activeTeacherId, selectedGrade, activeCourseId)
         .then(students => {
           console.log('✅ [handleGradeChange] Estudiantes cargados correctamente:', students);
           
@@ -789,9 +797,10 @@ const IndicatorForm = () => {
   useEffect(() => {
     if (formData.grade && teacherId) {
       console.log(`🔄 [useEffect] Grado cambiado a ${formData.grade}, cargando estudiantes...`);
-      handleGradeChange({ target: { value: formData.grade } });
+      const selectedCourse = teacherContext.courses.find(course => String(course.id) === String(formData.course_id));
+      handleGradeChange({ target: { value: formData.grade } }, selectedCourse || null);
     }
-  }, [formData.grade, teacherId]);
+  }, [formData.grade, formData.course_id, teacherId, teacherContext.courses]);
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -846,6 +855,8 @@ const IndicatorForm = () => {
               category: indicatorData.category || '',
               phase: indicatorData.phase?.toString() || '1',
               grade: indicatorData.grade?.toString() || '',
+              course_id: indicatorData.course_id?.toString() || '',
+              institution: indicatorData.institution || '',
               questionnaire_id: questionnaireIdStr,
               students: indicatorData.students || []
             };
@@ -998,7 +1009,8 @@ const IndicatorForm = () => {
     const { name, value, type, checked } = e.target;
     setFormData(prev => ({ 
       ...prev, 
-      [name]: type === 'checkbox' ? checked : value 
+      [name]: type === 'checkbox' ? checked : value,
+      ...(name === 'subject' ? { course_id: '', institution: '', grade: '' } : {})
     }));
   };
 
@@ -2423,16 +2435,31 @@ const IndicatorForm = () => {
         
         <div className="mb-3">
           <label htmlFor="subject" className="form-label">Materia</label>
-          <input
-            type="text"
-            className="form-control"
-            id="subject"
-            name="subject"
-            value={formData.subject}
-            onChange={handleChange}
-            readOnly={false}
-            required
-          />
+          {user?.role === 'docente' ? (
+            <select
+              className="form-select"
+              id="subject"
+              name="subject"
+              value={formData.subject}
+              onChange={handleChange}
+              required
+            >
+              <option value="">Seleccione una asignatura</option>
+              {[...new Set([...teacherContext.subjects, ...(formData.subject ? [formData.subject] : [])])].map(subject => (
+                <option key={subject} value={subject}>{subject}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              className="form-control"
+              id="subject"
+              name="subject"
+              value={formData.subject}
+              onChange={handleChange}
+              required
+            />
+          )}
           {teacherSubject && (
             <div className="form-text">Materia asignada: {teacherSubject}</div>
           )}
@@ -2477,22 +2504,33 @@ const IndicatorForm = () => {
         </div>
 
         <div className="mb-3">
-          <label htmlFor="grade" className="form-label">Grado del Estudiante:</label>
-          <select
-            id="grade"
-            className="form-select"
-            value={formData.grade}
-            onChange={handleGradeChange}
-            required
-            disabled={loading}
-          >
-            <option value="">Seleccione un grado</option>
-            {['6', '7', '8', '9', '10', '11'].map(grade => (
-              <option key={grade} value={grade}>
-                {grade}°
-              </option>
-            ))}
-          </select>
+          <label htmlFor="grade" className="form-label">Curso o grado:</label>
+          {user?.role === 'docente' ? (
+            <select
+              id="grade"
+              className="form-select"
+              value={formData.course_id}
+              onChange={(event) => {
+                const course = courseOptions.find(item => String(item.id) === event.target.value);
+                if (!course) return;
+                setTeacherId(course.teacher_id);
+                setFormData(previous => ({ ...previous, teacher_id: course.teacher_id, course_id: String(course.id), institution: course.institution || '', grade: String(course.grade || '') }));
+                handleGradeChange({ target: { value: String(course.grade || '') } }, course);
+              }}
+              required
+              disabled={loading}
+            >
+              <option value="">Seleccione un curso</option>
+              {courseOptions.map(course => (
+                <option key={course.id} value={course.id}>{[course.institution, course.name, course.grade].filter(Boolean).join(' — ')}</option>
+              ))}
+            </select>
+          ) : (
+            <select id="grade" className="form-select" value={formData.grade} onChange={handleGradeChange} required disabled={loading}>
+              <option value="">Seleccione un grado</option>
+              {['6', '7', '8', '9', '10', '11'].map(grade => <option key={grade} value={grade}>{grade}°</option>)}
+            </select>
+          )}
         </div>
 
         {/* Selección de estudiantes */}

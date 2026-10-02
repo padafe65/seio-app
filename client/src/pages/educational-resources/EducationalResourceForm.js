@@ -4,6 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axiosClient from '../../api/axiosClient';
 import Swal from 'sweetalert2';
 import { Save, X } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import useTeacherCourseContext from '../../hooks/useTeacherCourseContext';
 
 const EducationalResourceForm = () => {
   const { id } = useParams();
@@ -22,11 +24,15 @@ const EducationalResourceForm = () => {
     phase: '',
     difficulty: 'intermedio',
     institution_id: '',
+    course_id: '',
+    institution: '',
     is_active: true
   });
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const { user } = useAuth();
+  const teacherContext = useTeacherCourseContext(user);
   
   useEffect(() => {
     if (isEditing) {
@@ -52,6 +58,8 @@ const EducationalResourceForm = () => {
         phase: resource.phase || '',
         difficulty: resource.difficulty || 'intermedio',
         institution_id: resource.institution_id || '',
+        course_id: resource.course_id || '',
+        institution: resource.institution || '',
         is_active: resource.is_active !== undefined ? resource.is_active : true
       });
     } catch (error) {
@@ -71,7 +79,8 @@ const EducationalResourceForm = () => {
     const { name, value, type, checked } = e.target;
     setFormData({
       ...formData,
-      [name]: type === 'checkbox' ? checked : value
+      [name]: type === 'checkbox' ? checked : value,
+      ...(name === 'subject' ? { course_id: '', institution: '' } : {})
     });
   };
   
@@ -98,6 +107,8 @@ const EducationalResourceForm = () => {
       
       const payload = {
         ...formData,
+        course_id: formData.course_id || null,
+        institution: formData.institution || null,
         phase: formData.phase || null,
         grade_level: formData.grade_level || null,
         institution_id: formData.institution_id || null,
@@ -127,7 +138,8 @@ const EducationalResourceForm = () => {
     }
   };
   
-  const subjects = ['Matemáticas', 'Español', 'Ciencias', 'Sociales', 'Inglés', 'Arte', 'Educación Física'];
+  const subjects = teacherContext.subjects.length ? teacherContext.subjects : ['Matemáticas', 'Español', 'Ciencias', 'Sociales', 'Inglés', 'Arte', 'Educación Física'];
+  const courseOptions = teacherContext.courses.filter(course => !formData.subject || course.subject === formData.subject);
   const mathAreas = ['Aritmética', 'Geometría', 'Álgebra', 'Estadística', 'Trigonometría', 'Cálculo'];
   const spanishAreas = ['Gramática', 'Interpretación de Textos', 'Literatura', 'Ortografía'];
   const areas = formData.subject === 'Matemáticas' ? mathAreas : 
@@ -299,6 +311,32 @@ const EducationalResourceForm = () => {
                       <option value="9">9°</option>
                       <option value="10">10°</option>
                       <option value="11">11°</option>
+                    </select>
+                  </div>
+
+                  <div className="col-md-8">
+                    <label className="form-label">Institución / curso (opcional)</label>
+                    <select
+                      className="form-select"
+                      name="course_id"
+                      value={formData.course_id}
+                      onChange={(event) => {
+                        const course = teacherContext.courses.find(item => String(item.id) === event.target.value);
+                        setFormData(prev => ({
+                          ...prev,
+                          course_id: event.target.value,
+                          institution: course?.institution || '',
+                          grade_level: course?.grade || prev.grade_level
+                        }));
+                      }}
+                      disabled={!formData.subject || courseOptions.length === 0}
+                    >
+                      <option value="">Recurso general</option>
+                      {courseOptions.map(course => (
+                        <option key={course.id} value={course.id}>
+                          {course.institution} — {course.name} (grado/nivel {course.grade})
+                        </option>
+                      ))}
                     </select>
                   </div>
                   

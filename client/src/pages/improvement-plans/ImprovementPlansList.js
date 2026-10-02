@@ -199,6 +199,7 @@ const ImprovementPlansList = () => {
   };
   
   const showAdvancedFilters = user.role === 'super_administrador' || user.role === 'administrador';
+  const showCourseContext = showAdvancedFilters || user.role === 'docente';
   
   return (
     <div>
@@ -382,7 +383,7 @@ const ImprovementPlansList = () => {
                     <th>Materia</th>
                     {user.role !== 'estudiante' && <th>Estudiante</th>}
                     {user.role !== 'docente' && <th>Docente</th>}
-                    {showAdvancedFilters && (
+                    {showCourseContext && (
                       <>
                         <th>Institución</th>
                         <th>Curso</th>
@@ -402,7 +403,7 @@ const ImprovementPlansList = () => {
                         <td>{plan.subject}</td>
                         {user.role !== 'estudiante' && <td>{plan.student_name}</td>}
                         {user.role !== 'docente' && <td>{plan.teacher_name}</td>}
-                        {showAdvancedFilters && (
+                        {showCourseContext && (
                           <>
                             <td>{plan.institution || <span className="text-muted">-</span>}</td>
                             <td>{plan.course_name || <span className="text-muted">-</span>}</td>
@@ -441,7 +442,7 @@ const ImprovementPlansList = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={user.role === 'estudiante' ? 5 : (showAdvancedFilters ? 9 : 6)} className="text-center py-3">
+                      <td colSpan={user.role === 'estudiante' ? 5 : (showCourseContext ? 9 : 6)} className="text-center py-3">
                         No se encontraron planes de mejoramiento
                       </td>
                     </tr>

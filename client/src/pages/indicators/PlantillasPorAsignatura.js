@@ -12,17 +12,22 @@ import Swal from 'sweetalert2';
 export default function PlantillasPorAsignatura() {
   const { user } = useAuth();
   const [subjects, setSubjects] = useState([]);
+  const [courses, setCourses] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
-  const [grade, setGrade] = useState('');
+  const [courseId, setCourseId] = useState('');
   const [templateIndicators, setTemplateIndicators] = useState([]);
   const [teacherId, setTeacherId] = useState(null);
+  const [teacherContextIds, setTeacherContextIds] = useState([]);
   const [teachers, setTeachers] = useState([]);
+  const [contextError, setContextError] = useState('');
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);
   const [appliedIndicators, setAppliedIndicators] = useState([]);
   const [loadingApplied, setLoadingApplied] = useState(false);
-  const isAdmin = user?.role === 'administrador' || user?.role === 'super_administrador';
+  const isAdmin = user?.role === 'super_administrador';
   const tid = user?.role === 'docente' ? teacherId : (isAdmin ? teacherId : null);
+  const subjectCourses = courses.filter((course) => course.subject === selectedSubject);
+  const selectedCourse = subjectCourses.find((course) => String(course.id) === String(courseId));
 
   const fetchApplied = React.useCallback(async () => {
     if (!tid) {
@@ -31,7 +36,9 @@ export default function PlantillasPorAsignatura() {
     }
     setLoadingApplied(true);
     try {
-      const r = await axiosClient.get(`/indicators?from_template=1&teacher_id=${tid}`);
+      const contextIds = user?.role === 'super_administrador' ? teacherContextIds : [];
+      const scope = contextIds.length ? `&teacher_ids=${contextIds.join(',')}` : '';
+      const r = await axiosClient.get(`/indicators?from_template=1&teacher_id=${tid}${scope}`);
       const data = r.data?.data || r.data || [];
       setAppliedIndicators(Array.isArray(data) ? data : []);
     } catch (e) {
@@ -39,22 +46,22 @@ export default function PlantillasPorAsignatura() {
     } finally {
       setLoadingApplied(false);
     }
-  }, [tid]);
+  }, [tid, teacherContextIds, user?.role]);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [subRes, teacherRes, teachersRes] = await Promise.all([
-          axiosClient.get('/indicators/templates/subjects'),
+        const [teacherRes, teachersRes] = await Promise.all([
           user?.role === 'docente' ? axiosClient.get(`/teachers/by-user/${user.id}`) : Promise.resolve({ data: {} }),
           isAdmin ? axiosClient.get('/teachers').catch(() => ({ data: [] })) : Promise.resolve({ data: [] })
         ]);
-        const subData = subRes.data?.data || subRes.data || [];
-        setSubjects(Array.isArray(subData) ? subData : []);
         if (user?.role === 'docente') {
           const t = teacherRes.data?.data || teacherRes.data;
-          if (t?.id) setTeacherId(t.id);
+          if (t?.id) {
+            setTeacherId(t.id);
+            setTeachers([t]);
+          }
         }
         if (isAdmin && Array.isArray(teachersRes?.data)) setTeachers(teachersRes.data);
       } catch (e) {
@@ -68,6 +75,82 @@ export default function PlantillasPorAsignatura() {
   }, [user, isAdmin]);
 
   useEffect(() => {
+    if (!teacherId) {
+      setSubjects([]);
+      setCourses([]);
+      setTeacherContextIds([]);
+      return;
+    }
+    let cancelled = false;
+    const loadContext = async () => {
+      setContextError('');
+      try {
+        const selectedProfile = teachers.find((teacher) => Number(teacher.id) === Number(teacherId));
+        if (!selectedProfile) throw new Error('No se encontró el perfil docente seleccionado.');
+        const profiles = teachers.filter((teacher) => Number(teacher.user_id) === Number(selectedProfile.user_id));
+        const relatedProfiles = profiles.length ? profiles : [selectedProfile];
+        const profileIds = relatedProfiles.map((teacher) => Number(teacher.id));
+        const [courseResponses, allCoursesResponse] = await Promise.all([
+          Promise.all(profileIds.map((id) => axiosClient.get(`/teacher-courses/teacher/${id}`).catch(() => ({ data: [] })))),
+          axiosClient.get('/courses').catch(() => ({ data: [] }))
+        ]);
+        const subjectsByTeacher = new Map(relatedProfiles.map((teacher) => [Number(teacher.id), teacher.subject]));
+        const normalizedCourses = new Map();
+        courseResponses.forEach((courseResponse, index) => {
+          const list = Array.isArray(courseResponse.data) ? courseResponse.data : courseResponse.data?.data || [];
+          list.forEach((course) => {
+            const id = course.course_id ?? course.id;
+            if (id == null) return;
+            const profileId = Number(course.teacher_id ?? profileIds[index]);
+            normalizedCourses.set(String(id), {
+              id,
+              name: course.course_name || course.name || `Curso ${id}`,
+              grade: course.grade || '',
+              institution: course.institution || relatedProfiles.find((profile) => Number(profile.id) === profileId)?.institution || '',
+              teacher_id: profileId,
+              subject: subjectsByTeacher.get(profileId) || selectedProfile.subject || ''
+            });
+          });
+        });
+        const allCourses = Array.isArray(allCoursesResponse.data) ? allCoursesResponse.data : allCoursesResponse.data?.data || [];
+        allCourses.filter((course) => profileIds.includes(Number(course.teacher_id))).forEach((course) => {
+          const profileId = Number(course.teacher_id);
+          normalizedCourses.set(String(course.id), {
+            id: course.id,
+            name: course.name || `Curso ${course.id}`,
+            grade: course.grade || '',
+            institution: course.institution || relatedProfiles.find((profile) => Number(profile.id) === profileId)?.institution || '',
+            teacher_id: profileId,
+            subject: subjectsByTeacher.get(profileId) || selectedProfile.subject || ''
+          });
+        });
+        if (cancelled) return;
+        setTeacherContextIds(profileIds);
+        setSubjects([...new Set(relatedProfiles.map((teacher) => teacher.subject).filter(Boolean))]);
+        setCourses([...normalizedCourses.values()]);
+        console.info('[Plantillas] Contexto docente cargado', {
+          teacherId,
+          teacherIds: profileIds,
+          subjects: [...new Set(relatedProfiles.map((teacher) => teacher.subject).filter(Boolean))],
+          courses: normalizedCourses.size
+        });
+        if (!relatedProfiles.some((teacher) => teacher.subject)) {
+          setContextError('El perfil docente no tiene asignaturas configuradas.');
+        }
+      } catch (fallbackError) {
+        if (!cancelled) {
+          setSubjects([]);
+          setCourses([]);
+          setTeacherContextIds([]);
+          setContextError(fallbackError.message || 'No se pudieron cargar las asignaturas y cursos del docente.');
+        }
+      }
+    };
+    loadContext();
+    return () => { cancelled = true; };
+  }, [teacherId, teachers]);
+
+  useEffect(() => {
     fetchApplied();
   }, [fetchApplied]);
 
@@ -77,13 +160,13 @@ export default function PlantillasPorAsignatura() {
       return;
     }
     let cancelled = false;
-    axiosClient.get(`/indicators/templates/${encodeURIComponent(selectedSubject)}`)
+    axiosClient.get(`/indicators/templates/${encodeURIComponent(selectedSubject)}?grade=${encodeURIComponent(selectedCourse?.grade || '')}`)
       .then((r) => {
         if (!cancelled) setTemplateIndicators(r.data?.data || r.data || []);
       })
       .catch(() => { if (!cancelled) setTemplateIndicators([]); });
     return () => { cancelled = true; };
-  }, [selectedSubject]);
+  }, [selectedSubject, courseId]);
 
   const handleApply = async () => {
     if (!selectedSubject) return;
@@ -96,20 +179,43 @@ export default function PlantillasPorAsignatura() {
       });
       return;
     }
+    const confirmation = await Swal.fire({
+      title: '¿Aplicar plantilla?',
+      text: `Se agregarán a tu banco los indicadores de ${selectedSubject}${selectedCourse ? ` para ${selectedCourse.institution}: ${selectedCourse.name} (grado/nivel ${selectedCourse.grade})` : ''}. Los que ya existan se omitirán.`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, aplicar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!confirmation.isConfirmed) return;
     setApplying(true);
     try {
-      const payload = { subject: selectedSubject, grade: grade || null, teacher_id: tid };
-      await axiosClient.post('/indicators/apply-template', payload);
+      const payload = { subject: selectedSubject, course_id: courseId || null, teacher_id: tid };
+      console.info('[Plantillas] Enviando aplicación de plantilla', payload);
+      const response = await axiosClient.post('/indicators/apply-template', payload);
+      const created = response.data?.count || 0;
+      const skipped = response.data?.skipped || 0;
+      console.info('[Plantillas] Respuesta de aplicación de plantilla', {
+        success: response.data?.success,
+        count: created,
+        skipped,
+        insertedIds: (response.data?.data || []).map((indicator) => indicator.id)
+      });
       await Swal.fire({
-        title: 'Plantilla aplicada',
-        text: `Se crearon ${templateIndicators.length} indicadores para ${selectedSubject}.`,
+        title: created > 0 ? 'Plantilla aplicada' : 'La plantilla ya estaba aplicada',
+        text: `Se agregaron ${created} indicadores para ${selectedSubject}.${skipped ? ` Se omitieron ${skipped} que ya existían.` : ''}`,
         icon: 'success'
       });
       setSelectedSubject('');
-      setGrade('');
+      setCourseId('');
       setTemplateIndicators([]);
       fetchApplied();
     } catch (e) {
+      console.error('[Plantillas] Error aplicando plantilla', {
+        status: e.response?.status,
+        message: e.response?.data?.message || e.message,
+        payload: { subject: selectedSubject, course_id: courseId || null, teacher_id: tid }
+      });
       Swal.fire({
         title: 'Error',
         text: e.response?.data?.message || 'No se pudo aplicar la plantilla',
@@ -120,10 +226,10 @@ export default function PlantillasPorAsignatura() {
     }
   };
 
-  if (!user || (user.role !== 'docente' && user.role !== 'administrador' && user.role !== 'super_administrador')) {
+  if (!user || (user.role !== 'docente' && user.role !== 'super_administrador')) {
     return (
       <div className="alert alert-warning">
-        Solo docentes y administradores pueden usar plantillas por asignatura.
+        Solo docentes y superadministradores pueden usar plantillas por asignatura.
       </div>
     );
   }
@@ -141,7 +247,7 @@ export default function PlantillasPorAsignatura() {
         </div>
         <div className="card-body small text-muted">
           <p className="mb-1">
-            Las plantillas son <strong>paquetes de indicadores sugeridos</strong> por asignatura (Matemáticas, Inglés, Español, etc.).
+            Las plantillas son <strong>paquetes de indicadores sugeridos</strong> por asignatura. Puedes agregarlos al banco general o asociarlos desde el inicio a uno de tus cursos.
           </p>
           <p className="mb-1">
             Al elegir una asignatura y hacer clic en <strong>«Aplicar plantilla»</strong>, se crean en el banco del docente los indicadores de esa plantilla.
@@ -176,7 +282,8 @@ export default function PlantillasPorAsignatura() {
                   <thead className="table-light">
                     <tr>
                       <th>Asignatura</th>
-                      <th>Grado</th>
+                      <th>Institución / curso</th>
+                      <th>Grado / nivel</th>
                       <th>Descripción</th>
                       <th>Categoría</th>
                       <th>Fase</th>
@@ -187,6 +294,7 @@ export default function PlantillasPorAsignatura() {
                     {appliedIndicators.map((i) => (
                       <tr key={i.id}>
                         <td>{i.subject || '—'}</td>
+                        <td>{[i.institution, i.course_name].filter(Boolean).join(' / ') || 'Banco general'}</td>
                         <td>{i.grade ?? '—'}</td>
                         <td>{i.description || '—'}</td>
                         <td>{i.category || '—'}</td>
@@ -218,7 +326,12 @@ export default function PlantillasPorAsignatura() {
                   <select
                     className="form-select"
                     value={teacherId || ''}
-                    onChange={(e) => setTeacherId(e.target.value ? parseInt(e.target.value, 10) : null)}
+                    onChange={(e) => {
+                      setTeacherId(e.target.value ? parseInt(e.target.value, 10) : null);
+                      setTeacherContextIds([]);
+                      setSelectedSubject('');
+                      setCourseId('');
+                    }}
                   >
                     <option value="">Seleccionar docente...</option>
                     {teachers.map((t) => (
@@ -236,7 +349,11 @@ export default function PlantillasPorAsignatura() {
                 <select
                   className="form-select"
                   value={selectedSubject}
-                  onChange={(e) => setSelectedSubject(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedSubject(e.target.value);
+                    setCourseId('');
+                    setTemplateIndicators([]);
+                  }}
                 >
                   <option value="">Seleccionar...</option>
                   {subjects.map((s) => (
@@ -244,27 +361,40 @@ export default function PlantillasPorAsignatura() {
                   ))}
                 </select>
               </div>
-              <div className="col-md-3">
-                <label className="form-label">Grado (opcional)</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="Ej. 11"
-                  value={grade}
-                  onChange={(e) => setGrade(e.target.value)}
-                />
+              <div className="col-md-4">
+                <label className="form-label">Curso / grado (opcional)</label>
+                  <select
+                    className="form-select"
+                    value={courseId}
+                    onChange={(e) => setCourseId(e.target.value)}
+                    disabled={!selectedSubject || subjectCourses.length === 0}
+                  >
+                    <option value="">Banco general, sin curso</option>
+                    {subjectCourses.map((course) => (
+                      <option key={course.id} value={course.id}>
+                        {course.institution} — {course.name} (grado/nivel {course.grade})
+                      </option>
+                    ))}
+                  </select>
               </div>
-              <div className="col-md-4 d-flex align-items-end">
+              <div className="col-md-3 d-flex align-items-end">
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={!selectedSubject || applying || !tid}
+                  disabled={!selectedSubject || !templateIndicators.length || applying || !tid}
                   onClick={handleApply}
                 >
                   {applying ? 'Aplicando…' : 'Aplicar plantilla'}
                 </button>
               </div>
             </div>
+            {contextError && <div className="alert alert-warning py-2 mb-0" role="alert">{contextError}</div>}
+
+            {selectedSubject && templateIndicators.length === 0 && (
+              <div className="alert alert-info py-2">
+                Esta asignatura pertenece al docente, pero todavía no tiene un paquete de plantilla configurado.
+              </div>
+            )}
 
             {selectedSubject && templateIndicators.length > 0 && (
               <>

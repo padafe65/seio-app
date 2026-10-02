@@ -65,11 +65,12 @@ export const verifyToken = async (req, res, next) => {
       // Si es docente o estudiante, obtener el ID correspondiente
       if (user[0].role === 'docente') {
         const [teacher] = await pool.query(
-          'SELECT id FROM teachers WHERE user_id = ?',
+          'SELECT id FROM teachers WHERE user_id = ? ORDER BY id',
           [user[0].id]
         );
         if (teacher && teacher.length > 0) {
           req.user.teacher_id = teacher[0].id;
+          req.user.teacher_ids = teacher.map((row) => Number(row.id));
         }
       } else if (user[0].role === 'estudiante') {
         const [student] = await pool.query(

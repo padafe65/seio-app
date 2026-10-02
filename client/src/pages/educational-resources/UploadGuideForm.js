@@ -4,9 +4,13 @@ import { useNavigate } from 'react-router-dom';
 import axiosClient from '../../api/axiosClient';
 import Swal from 'sweetalert2';
 import { Upload, X, FileText, Link as LinkIcon } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import useTeacherCourseContext from '../../hooks/useTeacherCourseContext';
 
 const UploadGuideForm = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const teacherContext = useTeacherCourseContext(user);
   
   const [formData, setFormData] = useState({
     subject: '',
@@ -16,6 +20,8 @@ const UploadGuideForm = () => {
     description: '',
     url: '', // URL complementaria opcional
     grade_level: '',
+    course_id: '',
+    institution: '',
     phase: '',
     difficulty: 'intermedio'
   });
@@ -24,7 +30,8 @@ const UploadGuideForm = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   
-  const subjects = ['Matemáticas', 'Español', 'Ciencias', 'Sociales', 'Inglés', 'Arte', 'Educación Física'];
+  const subjects = [...new Set([...['Matemáticas', 'Español', 'Ciencias', 'Sociales', 'Inglés', 'Arte', 'Educación Física'], ...teacherContext.subjects])];
+  const courseOptions = teacherContext.courses.filter(course => !formData.subject || course.subject === formData.subject);
   const mathAreas = ['Aritmética', 'Geometría', 'Álgebra', 'Estadística', 'Trigonometría', 'Cálculo'];
   const spanishAreas = ['Gramática', 'Interpretación de Textos', 'Literatura', 'Ortografía'];
   const areas = formData.subject === 'Matemáticas' ? mathAreas : 
@@ -35,7 +42,8 @@ const UploadGuideForm = () => {
     const { name, value } = e.target;
     setFormData({
       ...formData,
-      [name]: value
+      [name]: value,
+      ...(name === 'subject' ? { course_id: '', institution: '' } : {})
     });
   };
   
@@ -94,6 +102,8 @@ const UploadGuideForm = () => {
       if (formData.description) formDataToSend.append('description', formData.description);
       if (formData.url) formDataToSend.append('url', formData.url);
       if (formData.grade_level) formDataToSend.append('grade_level', formData.grade_level);
+      if (formData.course_id) formDataToSend.append('course_id', formData.course_id);
+      if (formData.institution) formDataToSend.append('institution', formData.institution);
       if (formData.phase) formDataToSend.append('phase', formData.phase);
       if (formData.difficulty) formDataToSend.append('difficulty', formData.difficulty);
       
@@ -291,6 +301,31 @@ const UploadGuideForm = () => {
                       <option value="9">9°</option>
                       <option value="10">10°</option>
                       <option value="11">11°</option>
+                    </select>
+                  </div>
+
+                  <div className="col-md-8">
+                    <label className="form-label">Institución / curso (opcional)</label>
+                    <select
+                      className="form-select"
+                      value={formData.course_id}
+                      onChange={(event) => {
+                        const course = teacherContext.courses.find(item => String(item.id) === event.target.value);
+                        setFormData(prev => ({
+                          ...prev,
+                          course_id: event.target.value,
+                          institution: course?.institution || '',
+                          grade_level: course?.grade || prev.grade_level
+                        }));
+                      }}
+                      disabled={!formData.subject || courseOptions.length === 0}
+                    >
+                      <option value="">Guía general</option>
+                      {courseOptions.map(course => (
+                        <option key={course.id} value={course.id}>
+                          {course.institution} — {course.name} (grado/nivel {course.grade})
+                        </option>
+                      ))}
                     </select>
                   </div>
                   

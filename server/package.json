@@ -12,6 +12,8 @@
     "migrate:attendance": "node scripts/run-migration-attendance.js",
     "migrate:report-brand": "node scripts/run-migration-report-brand.js",
     "migrate:from-template": "node scripts/run-migration-from-template.js",
+    "migrate:template-grade": "node scripts/run-migration-template-grade.js",
+    "migrate:dedupe-indicators": "node scripts/run-migration-dedupe-indicators.js",
     "test": "jest --detectOpenHandles --forceExit",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"

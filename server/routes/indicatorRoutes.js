@@ -9,12 +9,13 @@ const router = express.Router();
 
 // Obtener todos los indicadores (con filtros opcionales)
 router.get('/', verifyToken, async (req, res) => {
-  const { teacher_id, student_id, subject, phase, questionnaire_id, from_template, grade } = req.query;
+  const { teacher_id, teacher_ids, student_id, subject, phase, questionnaire_id, from_template, grade } = req.query;
   console.log('🔍 Iniciando consulta de indicadores con filtros:', req.query);
 
   try {
+    let requestedTeacherIds = [];
     // Validar teacher_id si se proporciona
-    if (teacher_id) {
+    if (teacher_id && req.user.role !== 'docente') {
       console.log(`🔍 Validando docente con ID: ${teacher_id}`);
       
       if (isNaN(teacher_id)) {
@@ -41,6 +42,16 @@ router.get('/', verifyToken, async (req, res) => {
           message: 'Docente no encontrado',
           teacher_id
         });
+      }
+      if (teacher_ids && req.user.role === 'super_administrador') {
+        requestedTeacherIds = [...new Set(teacher_ids.split(',').map(Number).filter(Number.isInteger))];
+        const [sameAccount] = await pool.query(
+          'SELECT id FROM teachers WHERE user_id = (SELECT user_id FROM teachers WHERE id = ?) AND id IN (?)',
+          [teacher_id, requestedTeacherIds]
+        );
+        if (requestedTeacherIds.length === 0 || sameAccount.length !== requestedTeacherIds.length) {
+          return res.status(403).json({ success: false, message: 'Los perfiles seleccionados no pertenecen a la misma cuenta docente' });
+        }
       }
       console.log(`✅ Docente encontrado:`, teacher[0]);
     }
@@ -71,6 +82,9 @@ router.get('/', verifyToken, async (req, res) => {
         i.category,
         i.phase,
         i.grade,
+        i.course_id,
+        i.institution,
+        c.name as course_name,
         i.from_template,
         i.created_at,
         i.teacher_id,
@@ -88,13 +102,24 @@ router.get('/', verifyToken, async (req, res) => {
       LEFT JOIN student_indicators si ON i.id = si.indicator_id
       LEFT JOIN students s ON si.student_id = s.id
       LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
+      LEFT JOIN courses c ON i.course_id = c.id
       WHERE 1=1
     `;
     
     const params = [];
     
     // Aplicar filtros
-    if (teacher_id) {
+    if (req.user.role === 'docente') {
+      const ownedTeacherIds = req.user.teacher_ids || [];
+      if (ownedTeacherIds.length === 0) {
+        return res.json({ success: true, data: [] });
+      }
+      query += ' AND i.teacher_id IN (?)';
+      params.push(ownedTeacherIds);
+    } else if (requestedTeacherIds.length > 0) {
+      query += ' AND i.teacher_id IN (?)';
+      params.push(requestedTeacherIds);
+    } else if (teacher_id) {
       query += ' AND i.teacher_id = ?';
       params.push(teacher_id);
     }
@@ -213,11 +238,69 @@ router.get('/templates/subjects', verifyToken, (req, res) => {
   }
 });
 
+// Materias y cursos de todos los perfiles/licencias de una misma cuenta docente.
+router.get('/templates/teacher-context/:teacherId', verifyToken, async (req, res) => {
+  console.info('[Indicators][template-context] request', {
+    teacherId: req.params.teacherId,
+    role: req.user?.role,
+    userId: req.user?.id
+  });
+  try {
+    if (!['docente', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Acceso denegado' });
+    }
+    const teacherId = Number(req.params.teacherId);
+    const [selected] = await pool.query('SELECT id, user_id FROM teachers WHERE id = ?', [teacherId]);
+    if (!selected.length) return res.status(404).json({ success: false, message: 'Docente no encontrado' });
+    if (req.user.role === 'docente' && Number(selected[0].user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Solo puedes consultar tus propios cursos' });
+    }
+
+    const [teacherRows] = await pool.query(
+      'SELECT id, subject, institution FROM teachers WHERE user_id = ? ORDER BY id',
+      [selected[0].user_id]
+    );
+    const teacherIds = teacherRows.map((row) => Number(row.id));
+    const [courses] = await pool.query(`
+      SELECT DISTINCT c.id, c.name, c.grade, c.institution,
+             COALESCE(tc.teacher_id, c.teacher_id) AS teacher_id,
+             t.subject
+      FROM courses c
+      LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id IN (?)
+      JOIN teachers t ON t.id = COALESCE(tc.teacher_id, c.teacher_id)
+      WHERE c.teacher_id IN (?) OR tc.teacher_id IN (?)
+      ORDER BY c.institution, c.grade, c.name
+    `, [teacherIds, teacherIds, teacherIds]);
+
+    console.info('[Indicators][template-context] resolved', {
+      teacherId,
+      teacherIds,
+      subjects: [...new Set(teacherRows.map((row) => row.subject).filter(Boolean))],
+      courses: courses.length
+    });
+    res.json({
+      success: true,
+      data: {
+        teacher_ids: teacherIds,
+        subjects: [...new Set(teacherRows.map((row) => row.subject).filter(Boolean))],
+        courses
+      }
+    });
+  } catch (error) {
+    console.error('[Indicators][template-context] failed', {
+      teacherId: req.params.teacherId,
+      code: error.code,
+      message: error.message
+    });
+    res.status(500).json({ success: false, message: 'No se pudieron cargar sus materias y cursos' });
+  }
+});
+
 // Obtener indicadores de una plantilla por asignatura
 router.get('/templates/:subject', verifyToken, (req, res) => {
   try {
     const { subject } = req.params;
-    const indicators = getTemplateIndicators(decodeURIComponent(subject));
+    const indicators = getTemplateIndicators(decodeURIComponent(subject), req.query.grade);
     res.json({ success: true, data: indicators });
   } catch (e) {
     console.error('Error fetching template:', e);
@@ -227,27 +310,133 @@ router.get('/templates/:subject', verifyToken, (req, res) => {
 
 // Aplicar plantilla: crear indicadores para el docente desde la plantilla
 router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  let connection;
+  const startedAt = Date.now();
+  console.info('[Indicators][apply-template] request', {
+    role: req.user?.role,
+    userId: req.user?.id,
+    teacherId: req.body?.teacher_id,
+    subject: req.body?.subject,
+    courseId: req.body?.course_id || null,
+    grade: req.body?.grade || null
+  });
   try {
-    const { teacher_id, subject, grade } = req.body;
-    const tid = teacher_id ?? req.user?.teacher_id;
-    if (!tid) return res.status(400).json({ success: false, message: 'teacher_id requerido' });
+    if (!['docente', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Solo un docente o superadministrador puede aplicar plantillas' });
+    }
+    const { teacher_id, subject, grade, course_id } = req.body;
+    let tid = teacher_id;
+    let accountTeacherIds = [];
+    let teacherRows = [];
+    if (req.user.role === 'docente') {
+      accountTeacherIds = req.user.teacher_ids || [];
+      if (accountTeacherIds.length === 0) {
+        return res.status(400).json({ success: false, message: 'No se encontró un perfil docente para esta cuenta' });
+      }
+      // El docente siempre aplica la plantilla a su propia cuenta, aunque manipule el teacher_id enviado.
+      tid = accountTeacherIds[0];
+      [teacherRows] = await pool.query('SELECT id, subject FROM teachers WHERE user_id = ?', [req.user.id]);
+    } else {
+      const [selectedTeacher] = await pool.query('SELECT id, user_id FROM teachers WHERE id = ?', [tid]);
+      if (!selectedTeacher.length) return res.status(404).json({ success: false, message: 'Docente no encontrado' });
+      [teacherRows] = await pool.query('SELECT id, subject FROM teachers WHERE user_id = ?', [selectedTeacher[0].user_id]);
+      accountTeacherIds = teacherRows.map((row) => Number(row.id));
+    }
+    if (!tid) return res.status(400).json({ success: false, message: 'Selecciona un docente' });
     const sub = (subject || '').trim();
-    const indicators = getTemplateIndicators(sub);
-    if (!indicators.length) return res.status(400).json({ success: false, message: 'Plantilla no encontrada para esta asignatura' });
-    const g = (grade || '').toString().trim() || null;
+    const parsedGrade = (grade || '').toString().trim();
+    let g = parsedGrade ? Number.parseInt(parsedGrade, 10) : null;
+    if (parsedGrade && (!Number.isInteger(g) || g < 0)) {
+      return res.status(400).json({ success: false, message: 'El grado debe ser un número válido' });
+    }
+    let selectedCourse = null;
+    if (course_id) {
+      const [courseRows] = await pool.query(`
+        SELECT c.id, c.grade, c.institution,
+               COALESCE(tc.teacher_id, c.teacher_id) AS teacher_id,
+               t.subject
+        FROM courses c
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id IN (?)
+        JOIN teachers t ON t.id = COALESCE(tc.teacher_id, c.teacher_id)
+        WHERE c.id = ? AND (c.teacher_id IN (?) OR tc.teacher_id IN (?))
+        LIMIT 1
+      `, [accountTeacherIds, course_id, accountTeacherIds, accountTeacherIds]);
+      if (!courseRows.length) return res.status(403).json({ success: false, message: 'Ese curso no está asignado al docente seleccionado' });
+      selectedCourse = courseRows[0];
+      if (selectedCourse.subject !== sub) {
+        return res.status(400).json({ success: false, message: 'El curso seleccionado no corresponde a la asignatura' });
+      }
+      tid = selectedCourse.teacher_id;
+      const courseGrade = String(selectedCourse.grade || '').trim();
+      g = courseGrade && Number.isInteger(Number(courseGrade)) ? Number.parseInt(courseGrade, 10) : null;
+    } else {
+      const matchingTeacher = teacherRows.find((row) => row.subject === sub);
+      if (matchingTeacher) tid = Number(matchingTeacher.id);
+    }
+    const indicators = getTemplateIndicators(sub, g);
+    if (!indicators.length) return res.status(400).json({ success: false, message: 'Aún no hay una plantilla definida para esta asignatura' });
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    if (req.user.role === 'docente') {
+      // Serializa las aplicaciones de plantilla de esta cuenta para no insertar duplicados concurrentes.
+      await connection.query('SELECT id FROM teachers WHERE user_id = ? FOR UPDATE', [req.user.id]);
+    } else {
+      const [target] = await connection.query('SELECT id FROM teachers WHERE id IN (?) FOR UPDATE', [accountTeacherIds]);
+      if (target.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ success: false, message: 'Docente no encontrado' });
+      }
+    }
+
     const inserted = [];
+    const skipped = [];
     for (const t of indicators) {
-      const [r] = await pool.query(
-        `INSERT INTO indicators (teacher_id, description, subject, category, phase, grade, questionnaire_id, from_template)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, 1)`,
-        [tid, t.description, sub, t.category || null, t.phase, g]
+      const ownerIds = accountTeacherIds;
+      const [existing] = await connection.query(
+        `SELECT id FROM indicators
+         WHERE teacher_id IN (?) AND subject = ? AND description = ?
+           AND category <=> ? AND phase = ? AND grade <=> ?
+           AND course_id <=> ? AND institution <=> ?
+         LIMIT 1`,
+        [ownerIds, sub, t.description, t.category || null, t.phase, g, course_id || null, selectedCourse?.institution || null]
+      );
+      if (existing.length > 0) {
+        skipped.push({ id: existing[0].id, ...t });
+        continue;
+      }
+      const [r] = await connection.query(
+        `INSERT INTO indicators (teacher_id, description, subject, category, phase, grade, course_id, institution, questionnaire_id, from_template)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)`,
+        [tid, t.description, sub, t.category || null, t.phase, g, course_id || null, selectedCourse?.institution || null]
       );
       inserted.push({ id: r.insertId, ...t });
     }
-    res.json({ success: true, data: inserted, count: inserted.length });
+    await connection.commit();
+    console.info('[Indicators][apply-template] committed', {
+      subject: sub,
+      teacherId: tid,
+      courseId: course_id || null,
+      templateCount: indicators.length,
+      inserted: inserted.length,
+      skipped: skipped.length,
+      insertedIds: inserted.map((indicator) => indicator.id),
+      durationMs: Date.now() - startedAt
+    });
+    res.json({ success: true, data: inserted, count: inserted.length, skipped: skipped.length });
   } catch (e) {
-    console.error('Error applying template:', e);
+    if (connection) await connection.rollback();
+    console.error('[Indicators][apply-template] rolled back', {
+      subject: req.body?.subject,
+      teacherId: req.body?.teacher_id,
+      courseId: req.body?.course_id || null,
+      code: e.code,
+      message: e.message,
+      durationMs: Date.now() - startedAt
+    });
     res.status(500).json({ success: false, message: 'Error al aplicar plantilla' });
+  } finally {
+    if (connection) connection.release();
   }
 });
 
@@ -348,7 +537,9 @@ router.post('/', verifyToken, async (req, res) => {
       phase, 
       achieved = false,
       questionnaire_id = null,
-      grade
+      grade,
+      course_id = null,
+      institution = null
     } = req.body;
     
     // Normalizar student_ids: si viene student_id singular, convertir a array
@@ -372,18 +563,42 @@ router.post('/', verifyToken, async (req, res) => {
     });
     
     // Validar campos requeridos
-    if (!teacher_id || !description || !subject || !phase || !grade) {
+    if (!teacher_id || !description || !subject || !phase) {
       throw new Error('Faltan campos requeridos');
     }
-    
-    // Validar que el docente existe
+
+    const isAdmin = ['administrador', 'super_administrador'].includes(req.user.role);
+    const allowedTeacherIds = (req.user.teacher_ids || (req.user.teacher_id ? [req.user.teacher_id] : [])).map(Number);
+    if (!isAdmin && !allowedTeacherIds.includes(Number(teacher_id))) {
+      throw new Error('No tienes permiso para crear indicadores para este docente');
+    }
+
     const [teacher] = await connection.query(
-      'SELECT id FROM teachers WHERE id = ?', 
+      'SELECT id, user_id, subject, institution FROM teachers WHERE id = ?',
       [teacher_id]
     );
     
     if (teacher.length === 0) {
       throw new Error('El docente especificado no existe');
+    }
+
+    let targetGrade = grade || null;
+    let targetInstitution = institution || teacher[0].institution || null;
+    if (course_id) {
+      const [courses] = await connection.query(`
+        SELECT c.id, c.grade, c.institution
+        FROM courses c
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id = ?
+        WHERE c.id = ? AND (c.teacher_id = ? OR tc.teacher_id = ?)
+        LIMIT 1
+      `, [teacher_id, course_id, teacher_id, teacher_id]);
+      if (!courses.length) throw new Error('El curso no pertenece al docente seleccionado');
+      targetGrade = courses[0].grade || targetGrade;
+      targetInstitution = courses[0].institution || targetInstitution;
+    }
+    if (teacher[0].subject && teacher[0].subject !== subject) {
+      const [sameSubjectTeacher] = await connection.query('SELECT id FROM teachers WHERE user_id = ? AND subject = ?', [teacher[0].user_id, subject]);
+      if (!sameSubjectTeacher.length) throw new Error('La asignatura no corresponde al docente seleccionado');
     }
 
     // Validar questionnaire_id si se proporciona
@@ -414,8 +629,8 @@ router.post('/', verifyToken, async (req, res) => {
     // Crear el indicador
     const [result] = await connection.query(`
       INSERT INTO indicators 
-      (teacher_id, description, subject, category, phase, questionnaire_id, grade) 
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (teacher_id, description, subject, category, phase, questionnaire_id, grade, course_id, institution)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       teacher_id, 
       description, 
@@ -423,7 +638,9 @@ router.post('/', verifyToken, async (req, res) => {
       category,
       phase, 
       questionnaire_id,
-      grade
+      targetGrade,
+      course_id || null,
+      targetInstitution
     ]);
     
     const indicatorId = result.insertId;
@@ -457,7 +674,7 @@ router.post('/', verifyToken, async (req, res) => {
     await logRequestAudit(req, {
       action: 'CREATE', tableName: 'indicators', recordId: indicatorId,
       description: `Creó el indicador ${indicatorId} para ${subject}, fase ${phase}.`,
-      newValues: { teacher_id: Number(teacher_id), subject, phase, grade, questionnaire_id, assigned_students: studentsToAssign }
+      newValues: { teacher_id: Number(teacher_id), subject, phase, grade: targetGrade, course_id, institution: targetInstitution, questionnaire_id, assigned_students: studentsToAssign }
     });
     
     // Obtener el indicador creado para la respuesta
@@ -510,7 +727,9 @@ router.put('/:id', verifyToken, async (req, res) => {
       questionnaire_id = null,
       student_ids = [],
       grade = null,
-      teacher_id
+      teacher_id,
+      course_id = null,
+      institution = null
     } = req.body;
     
     console.log('🔄 Actualizando indicador ID:', id, {
@@ -541,11 +760,27 @@ router.put('/:id', verifyToken, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Indicador no encontrado' });
     }
 
-    const isOwner = indicator[0].teacher_id === teacher_id;
+    const teacherIds = (req.user.teacher_ids || (req.user.teacher_id ? [req.user.teacher_id] : [])).map(Number);
+    const isOwner = teacherIds.includes(Number(indicator[0].teacher_id));
     const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
 
     if (!isOwner && !isAdmin) {
       return res.status(403).json({ success: false, message: 'No tienes permiso para editar este indicador' });
+    }
+
+    let targetGrade = grade;
+    let targetInstitution = institution;
+    if (course_id) {
+      const [courses] = await connection.query(`
+        SELECT c.grade, c.institution
+        FROM courses c
+        LEFT JOIN teacher_courses tc ON tc.course_id = c.id AND tc.teacher_id = ?
+        WHERE c.id = ? AND (c.teacher_id = ? OR tc.teacher_id = ?)
+        LIMIT 1
+      `, [indicator[0].teacher_id, course_id, indicator[0].teacher_id, indicator[0].teacher_id]);
+      if (!courses.length) throw new Error('El curso no pertenece al docente propietario del indicador');
+      targetGrade = courses[0].grade || targetGrade;
+      targetInstitution = courses[0].institution || targetInstitution;
     }
 
     // 3. Actualizar información básica del indicador, incluyendo el questionnaire_id
@@ -557,6 +792,8 @@ router.put('/:id', verifyToken, async (req, res) => {
         category = COALESCE(?, category),
         phase = ?,
         grade = ?,
+        course_id = ?,
+        institution = ?,
         questionnaire_id = ?
       WHERE id = ?
     `, [
@@ -564,7 +801,9 @@ router.put('/:id', verifyToken, async (req, res) => {
       subject,
       category,
       phase, 
-      grade, 
+      targetGrade,
+      course_id || null,
+      targetInstitution || null,
       foundQuestionnaireId, // Usar el ID del cuestionario encontrado
       id
     ]);
@@ -788,7 +1027,8 @@ router.delete('/:id', verifyToken, async (req, res) => {
     }
 
     // 3. Validar permisos: debe ser el propietario o un administrador
-    const isOwner = indicator[0].teacher_id === teacherId;
+    const teacherIds = (req.user.teacher_ids || (teacherId ? [teacherId] : [])).map(Number);
+    const isOwner = teacherIds.includes(Number(indicator[0].teacher_id));
     const isAdmin = req.user.role === 'administrador' || req.user.role === 'super_administrador';
 
     if (!isOwner && !isAdmin) {
@@ -844,6 +1084,10 @@ router.get('/questionnaires/teacher/:userId', verifyToken, async (req, res) => {
   
   try {
     const { userId } = req.params;
+    const isAdmin = ['admin', 'administrador', 'super_administrador'].includes(req.user.role);
+    if (!isAdmin && (req.user.role !== 'docente' || Number(userId) !== Number(req.user.id))) {
+      return res.status(403).json({ success: false, message: 'Solo puedes consultar tus propios cuestionarios' });
+    }
     console.log("🔍 Buscando cuestionarios para el usuario ID:", userId);
     
     // 1. Obtener el ID del profesor a partir del ID de usuario
@@ -860,8 +1104,7 @@ router.get('/questionnaires/teacher/:userId', verifyToken, async (req, res) => {
       });
     }
     
-    const teacherId = teacherRows[0].id;
-    console.log("✅ ID del profesor encontrado:", teacherId);
+    const teacherIds = teacherRows.map((teacher) => teacher.id);
     
     // 2. Obtener los cuestionarios creados por este profesor
     const [rows] = await connection.query(`
@@ -876,11 +1119,10 @@ router.get('/questionnaires/teacher/:userId', verifyToken, async (req, res) => {
         c.name as course_name
       FROM questionnaires q
       LEFT JOIN courses c ON q.course_id = c.id
-      WHERE q.created_by = ?
+      WHERE q.created_by IN (?)
       ORDER BY q.created_at DESC
-    `, [teacherId]);
+    `, [teacherIds]);
     
-    console.log(`✅ Se encontraron ${rows.length} cuestionarios para el profesor ${teacherId}`);
     
     res.json({
       success: true,
