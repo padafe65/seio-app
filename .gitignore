@@ -125,3 +125,6 @@ coverage/
 # No subir archivos subidos por usuarios
 server/uploads/
 client/public/uploads/
+
+seio/
+

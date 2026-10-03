@@ -83,7 +83,7 @@ export const verifyToken = async (req, res, next) => {
 
       next();
     } catch (error) {
-      console.error('Error al verificar token:', error);
+      console.error('Error al verificar token:', error.name || error.message);
       
       if (error.name === 'TokenExpiredError') {
         return res.status(401).json({

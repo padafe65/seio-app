@@ -825,6 +825,44 @@ router.get('/evaluations-by-phase/:studentId', async (req, res) => {
       };
     });
 
+    // Incluir fases calificadas manualmente aunque no tengan intentos virtuales.
+    if (teacherId) {
+      const [manualOnlyPhases] = await pool.query(`
+        SELECT pa.phase, pa.average_score, pa.average_score_manual, pa.evaluations_completed,
+               g.phase1, g.phase2, g.phase3, g.phase4, g.average AS overall_average
+        FROM phase_averages pa
+        LEFT JOIN grades g ON g.student_id = pa.student_id
+          AND (g.academic_year = ? OR g.academic_year IS NULL)
+        WHERE pa.student_id = ? AND pa.teacher_id = ?
+          AND (pa.average_score_manual IS NOT NULL OR pa.average_score IS NOT NULL OR pa.evaluations_completed > 0)
+      `, [currentAcademicYear, realStudentId, teacherId]);
+
+      const evaluatedPhases = new Set(evaluationsWithInfo.map(ev => Number(ev.phase)));
+      for (const row of manualOnlyPhases) {
+        if (evaluatedPhases.has(Number(row.phase))) continue;
+        const phaseColumn = `phase${row.phase}`;
+        const manualScore = row.average_score_manual != null ? parseFloat(row.average_score_manual) : null;
+        const systemScore = row.average_score != null ? parseFloat(row.average_score) : null;
+        const storedDefinitive = row[phaseColumn] != null ? parseFloat(row[phaseColumn]) : null;
+        evaluationsWithInfo.push({
+          phase: row.phase,
+          total_evaluations: row.evaluations_completed || 0,
+          phase_average: storedDefinitive ?? (manualScore ?? systemScore),
+          average_score: systemScore,
+          average_score_manual: manualScore,
+          phase1: row.phase1,
+          phase2: row.phase2,
+          phase3: row.phase3,
+          phase4: row.phase4,
+          overall_average: row.overall_average,
+          teacher_name: teacherName,
+          institution,
+          academic_year: currentAcademicYear
+        });
+      }
+      evaluationsWithInfo.sort((a, b) => Number(a.phase) - Number(b.phase));
+    }
+
     res.json(evaluationsWithInfo);
   } catch (error) {
     console.error('Error al obtener evaluaciones por fase:', error);

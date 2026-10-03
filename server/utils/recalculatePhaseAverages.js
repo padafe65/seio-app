@@ -85,31 +85,45 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
     
     console.log(`📊 Evaluaciones encontradas para estudiante ${studentId}:`, evalsByPhase);
     
-    if (evalsByPhase.length === 0) {
-      console.warn(`⚠️ No se encontraron evaluaciones completadas para el estudiante ${studentId}`);
-      return {
-        success: true,
-        message: `No se encontraron evaluaciones completadas para el estudiante ${studentId}`,
-        phases: []
-      };
-    }
-    
-    // 4. Obtener average_score_manual existente por fase (no sobrescribir)
+    // 4. Obtener todas las notas manuales individuales y promediarlas por fase.
     const [existingPhaseRows] = await pool.query(
-      'SELECT phase, average_score_manual FROM phase_averages WHERE student_id = ? AND teacher_id = ?',
+      'SELECT phase, average_score, average_score_manual FROM phase_averages WHERE student_id = ? AND teacher_id = ?',
+      [studentId, teacherId]
+    );
+    const [manualRows] = await pool.query(
+      `SELECT phase, AVG(score) AS manual_average
+       FROM manual_phase_grades
+       WHERE student_id = ? AND teacher_id = ?
+       GROUP BY phase`,
       [studentId, teacherId]
     );
     const manualByPhase = {};
-    existingPhaseRows.forEach(r => { manualByPhase[r.phase] = r.average_score_manual; });
+    manualRows.forEach(r => { manualByPhase[r.phase] = parseFloat(parseFloat(r.manual_average).toFixed(2)); });
 
-    // 5. Calcular definitiva por fase: sistema solo, o (sistema + manual) / 2
+    // 5. Calcular definitiva por fase: sistema solo, manual solo, o promedio
+    // de ambos cuando existen. Incluir registros manuales sin evaluación virtual.
+    const systemByPhase = {};
+    evalsByPhase.forEach(p => { systemByPhase[p.phase] = parseFloat(p.avg_score); });
     const phaseGrades = {};
-    for (const phase of evalsByPhase) {
-      const manual = manualByPhase[phase.phase];
-      const definitive = (manual != null && !isNaN(parseFloat(manual)))
-        ? parseFloat(((phase.avg_score + parseFloat(manual)) / 2).toFixed(2))
-        : phase.avg_score;
-      phaseGrades[`phase${phase.phase}`] = definitive;
+    const knownPhases = new Set([
+      ...Object.keys(systemByPhase).map(Number),
+      ...Object.keys(manualByPhase).map(Number),
+      ...existingPhaseRows.map(r => Number(r.phase))
+    ]);
+    for (const phase of knownPhases) {
+      const system = systemByPhase[phase];
+      const manual = manualByPhase[phase];
+      const hasSystem = system != null && !isNaN(system);
+      const hasManual = manual != null && !isNaN(parseFloat(manual));
+      let definitive = null;
+      if (hasSystem && hasManual) {
+        definitive = parseFloat(((system + parseFloat(manual)) / 2).toFixed(2));
+      } else if (hasSystem) {
+        definitive = system;
+      } else if (hasManual) {
+        definitive = parseFloat(parseFloat(manual).toFixed(2));
+      }
+      phaseGrades[`phase${phase}`] = definitive;
     }
 
     // 6. Verificar si existe registro en grades (filtrado por academic_year)
@@ -143,8 +157,8 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       
       if (phaseColumns.length > 0) {
         await pool.query(
-          `INSERT INTO grades (student_id, ${phaseColumns.join(', ')}, created_at, academic_year) 
-           VALUES (?, ${placeholders}, NOW(), ?)`,
+          `INSERT INTO grades (student_id, questionnaire_id, ${phaseColumns.join(', ')}, created_at, academic_year)
+           VALUES (?, NULL, ${placeholders}, NOW(), ?)`,
           [studentId, ...phaseValues, currentAcademicYear]
         );
         console.log(`✅ Creado grades con fases:`, phaseGrades);
@@ -159,7 +173,7 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
     if (currentGrades.length > 0) {
       const grades = currentGrades[0];
       const validPhases = [grades.phase1, grades.phase2, grades.phase3, grades.phase4]
-        .filter(phase => phase !== null && phase !== undefined && phase > 0);
+        .filter(phase => phase !== null && phase !== undefined && !isNaN(parseFloat(phase)));
       
       let overallAverage = 0;
       if (validPhases.length > 0) {
@@ -175,29 +189,29 @@ export const recalculatePhaseAverages = async (studentId, teacherId = null) => {
       console.log(`✅ Promedio general calculado: ${overallAverage.toFixed(2)} (${validPhases.length} fases válidas)`);
     }
     
-    // 8. Actualizar phase_averages: solo average_score y evaluations_completed (preservar average_score_manual)
-    for (const evalData of evalsByPhase) {
-      const phase = evalData.phase;
-      const avgScore = parseFloat(evalData.avg_score);
-      const evaluationsCompleted = evalData.total_evaluations;
-      
+    // 8. Persistir promedios manuales y virtuales por fase.
+    for (const phase of knownPhases) {
+      const evalData = evalsByPhase.find(row => Number(row.phase) === Number(phase));
+      const avgScore = evalData ? parseFloat(evalData.avg_score) : null;
+      const evaluationsCompleted = evalData ? evalData.total_evaluations : 0;
+      const manualAverage = manualByPhase[phase] ?? null;
       const [existingPhaseAvg] = await pool.query(
-        'SELECT id, average_score_manual FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+        'SELECT id FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
         [studentId, teacherId, phase]
       );
       
       if (existingPhaseAvg.length > 0) {
         await pool.query(
-          'UPDATE phase_averages SET average_score = ?, evaluations_completed = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
-          [avgScore, evaluationsCompleted, studentId, teacherId, phase]
+          'UPDATE phase_averages SET average_score = ?, average_score_manual = ?, evaluations_completed = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+          [avgScore, manualAverage, evaluationsCompleted, studentId, teacherId, phase]
         );
-        console.log(`✅ Actualizado phase_averages fase ${phase}: ${avgScore} (${evaluationsCompleted} evaluaciones), manual preservado`);
+        console.log(`✅ Actualizado phase_averages fase ${phase}: sistema=${avgScore}, manual=${manualAverage}`);
       } else {
         await pool.query(
-          'INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, evaluations_completed) VALUES (?, ?, ?, ?, ?)',
-          [studentId, teacherId, phase, avgScore, evaluationsCompleted]
+          'INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, average_score_manual, evaluations_completed) VALUES (?, ?, ?, ?, ?, ?)',
+          [studentId, teacherId, phase, avgScore, manualAverage, evaluationsCompleted]
         );
-        console.log(`✅ Creado phase_averages fase ${phase}: ${avgScore} (${evaluationsCompleted} evaluaciones)`);
+        console.log(`✅ Creado phase_averages fase ${phase}: sistema=${avgScore}, manual=${manualAverage}`);
       }
     }
     

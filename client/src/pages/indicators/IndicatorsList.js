@@ -51,10 +51,7 @@ const IndicatorsList = () => {
           withCredentials: true
         };
         
-        console.log('📤 Configuración de la petición:', {
-          headers: config.headers,
-          withCredentials: config.withCredentials
-        });
+        console.log('📤 Enviando petición autenticada a indicadores.');
         
         // Si es docente, obtener solo sus indicadores
         if (user && user.role === 'docente') {

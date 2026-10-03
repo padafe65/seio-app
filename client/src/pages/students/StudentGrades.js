@@ -1,5 +1,5 @@
 // src/pages/students/StudentGrades.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import axiosClient from '../../api/axiosClient';
@@ -11,12 +11,41 @@ const StudentGrades = () => {
   const [student, setStudent] = useState(null);
   const [grades, setGrades] = useState(null);
   const [phaseAverages, setPhaseAverages] = useState([]);
-  const [manualInputs, setManualInputs] = useState({ 1: '', 2: '', 3: '', 4: '' });
-  const [saving, setSaving] = useState(false);
+  const [manualGrades, setManualGrades] = useState([]);
+  const [assignedTeacherId, setAssignedTeacherId] = useState(null);
+  const [newGradeInputs, setNewGradeInputs] = useState({
+    1: { score: '', description: '' },
+    2: { score: '', description: '' },
+    3: { score: '', description: '' },
+    4: { score: '', description: '' }
+  });
+  const [savingPhase, setSavingPhase] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const canEditGrades = user && ['docente', 'administrador', 'super_administrador'].includes(user.role);
+
+  const refreshGradeData = useCallback(async (userId, studentId = id, shouldRecalculate = false) => {
+    if (shouldRecalculate) {
+      await axiosClient.post(`/phase-averages/students/${studentId}/recalculate`);
+    }
+    const [evaluationsRes, manualRes] = await Promise.all([
+      axiosClient.get(`/quiz/evaluations-by-phase/${userId}`),
+      axiosClient.get(`/phase-averages/students/${studentId}/manual-grades`)
+    ]);
+    const phaseData = evaluationsRes.data || [];
+    setPhaseAverages(phaseData);
+    setManualGrades(manualRes.data?.grades || []);
+    setAssignedTeacherId(manualRes.data?.teacher_id || null);
+
+    const withOverall = phaseData.find((phase) => phase.overall_average != null);
+    if (withOverall) {
+      setGrades({ overall_average: withOverall.overall_average });
+    } else {
+      const valid = phaseData.map((phase) => phase.phase_average).filter((value) => value != null);
+      setGrades(valid.length ? { overall_average: (valid.reduce((sum, value) => sum + parseFloat(value), 0) / valid.length).toFixed(2) } : null);
+    }
+  }, [id]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -32,35 +61,7 @@ const StudentGrades = () => {
           return;
         }
 
-        const evaluationsRes = await axiosClient.get(`/quiz/evaluations-by-phase/${userId}`);
-        const phaseData = evaluationsRes.data || [];
-        setPhaseAverages(phaseData);
-
-        const initial = { 1: '', 2: '', 3: '', 4: '' };
-        phaseData.forEach((p) => {
-          const v = p.average_score_manual;
-          if (v != null && !isNaN(parseFloat(v))) {
-            initial[p.phase] = parseFloat(v).toFixed(2);
-          }
-        });
-        setManualInputs(initial);
-
-        let overallGrade = null;
-        if (phaseData.length > 0) {
-          const withOverall = phaseData.find((g) => g.overall_average != null);
-          if (withOverall) {
-            overallGrade = { overall_average: withOverall.overall_average };
-          } else {
-            const valid = phaseData
-              .map((p) => p.phase_average)
-              .filter((avg) => avg != null);
-            if (valid.length > 0) {
-              const avg = valid.reduce((s, a) => s + parseFloat(a), 0) / valid.length;
-              overallGrade = { overall_average: avg.toFixed(2) };
-            }
-          }
-        }
-        setGrades(overallGrade);
+        await refreshGradeData(userId, id, true);
       } catch (err) {
         console.error('Error al cargar calificaciones:', err);
         setError('No se pudo cargar la información de calificaciones');
@@ -70,78 +71,111 @@ const StudentGrades = () => {
     };
 
     fetchData();
-  }, [id]);
+  }, [id, refreshGradeData]);
 
   const formatGrade = (value) => {
     if (value === null || value === undefined) return 'N/A';
     return parseFloat(value).toFixed(1);
   };
 
-  const handleManualChange = (phase, value) => {
-    let v = value.trim();
-    if (v !== '') {
-      const n = parseFloat(v);
-      if (isNaN(n) || n < 0 || n > 5) return;
-      v = Math.min(5, Math.max(0, n)).toFixed(2);
-    }
-    setManualInputs((prev) => ({ ...prev, [phase]: v }));
+  const formatDateInput = (value) => {
+    if (!value) return null;
+    if (typeof value === 'string') return value.slice(0, 10);
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
   };
 
-  const handleSaveManuals = async () => {
+  const handleManualChange = (phase, value) => {
+    setNewGradeInputs((previous) => ({
+      ...previous,
+      [phase]: { ...previous[phase], ...value }
+    }));
+  };
+
+  const handleAddManualGrade = async (phase) => {
     if (!canEditGrades) return;
-    setSaving(true);
+    const draft = newGradeInputs[phase];
+    const score = Number(draft.score);
+    if (draft.score === '' || !Number.isFinite(score) || score < 0 || score > 5) {
+      await Swal.fire({ icon: 'warning', title: 'Nota inválida', text: 'Ingresa una nota entre 0 y 5.' });
+      return;
+    }
+    setSavingPhase(phase);
     try {
-      const phases = [1, 2, 3, 4];
-      let ok = 0;
-      let errMsg = null;
-      for (const phase of phases) {
-        const raw = manualInputs[phase];
-        const value = raw === '' || raw == null ? null : Math.min(5, Math.max(0, parseFloat(raw)));
-        try {
-          await axiosClient.put(
-            `/phase-averages/students/${id}/phases/${phase}/manual`,
-            { average_score_manual: value }
-          );
-          ok++;
-        } catch (e) {
-          if (e.response?.status === 404) continue;
-          errMsg = e.response?.data?.error || e.message;
-          break;
-        }
-      }
-      if (errMsg) {
-        await Swal.fire({ icon: 'error', title: 'Error', text: errMsg });
-      } else if (ok > 0) {
-        await Swal.fire({ icon: 'success', title: 'Guardado', text: 'Notas manuales actualizadas.' });
-        const userId = student?.user_id;
-        if (userId) {
-          const res = await axiosClient.get(`/quiz/evaluations-by-phase/${userId}`);
-          const data = res.data || [];
-          setPhaseAverages(data);
-          const next = { 1: '', 2: '', 3: '', 4: '' };
-          data.forEach((p) => {
-            const v = p.average_score_manual;
-            if (v != null && !isNaN(parseFloat(v))) next[p.phase] = parseFloat(v).toFixed(2);
-          });
-          setManualInputs(next);
-          const withOverall = data.find((g) => g.overall_average != null);
-          if (withOverall) {
-            setGrades({ overall_average: withOverall.overall_average });
-          } else {
-            const valid = data.map((p) => p.phase_average).filter((a) => a != null);
-            if (valid.length > 0) {
-              const avg = valid.reduce((s, a) => s + parseFloat(a), 0) / valid.length;
-              setGrades({ overall_average: avg.toFixed(2) });
-            }
-          }
-        }
-      }
+      await axiosClient.post(`/phase-averages/students/${id}/manual-grades`, {
+        phase,
+        score,
+        description: draft.description,
+        assessment_date: draft.assessment_date || null,
+        teacher_id: assignedTeacherId
+      });
+      setNewGradeInputs((previous) => ({ ...previous, [phase]: { score: '', description: '', assessment_date: '' } }));
+      await refreshGradeData(student.user_id);
+      await Swal.fire({ icon: 'success', title: 'Guardada', text: 'La nota manual se agregó y se recalcularon los promedios.' });
+    } catch (err) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: err.response?.data?.error || 'No se pudo guardar la nota manual.' });
     } finally {
-      setSaving(false);
+      setSavingPhase(null);
+    }
+  };
+
+  const handleEditManualGrade = async (grade) => {
+    const result = await Swal.fire({
+      title: 'Editar nota manual',
+      input: 'number',
+      inputValue: grade.score,
+      inputAttributes: { min: 0, max: 5, step: 0.01 },
+      showCancelButton: true,
+      confirmButtonText: 'Guardar',
+      cancelButtonText: 'Cancelar',
+      inputValidator: (value) => {
+        const score = Number(value);
+        if (value === '' || !Number.isFinite(score) || score < 0 || score > 5) return 'Ingresa una nota entre 0 y 5.';
+        return undefined;
+      }
+    });
+    if (!result.isConfirmed) return;
+    try {
+      await axiosClient.put(`/phase-averages/manual-grades/${grade.id}`, {
+        phase: grade.phase,
+        score: Number(result.value),
+        description: grade.description,
+        assessment_date: formatDateInput(grade.assessment_date)
+      });
+      await refreshGradeData(student.user_id);
+    } catch (err) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: err.response?.data?.error || 'No se pudo actualizar la nota.' });
+    }
+  };
+
+  const handleDeleteManualGrade = async (grade) => {
+    const confirmation = await Swal.fire({
+      title: '¿Eliminar esta nota?',
+      text: 'Se volverá a calcular el promedio manual y la definitiva de la fase.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Eliminar',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!confirmation.isConfirmed) return;
+    try {
+      await axiosClient.delete(`/phase-averages/manual-grades/${grade.id}`);
+      await refreshGradeData(student.user_id);
+    } catch (err) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: err.response?.data?.error || 'No se pudo eliminar la nota.' });
     }
   };
 
   const backHref = user?.role === 'docente' ? '/mis-estudiantes' : '/estudiantes';
+  const displayPhases = [1, 2, 3, 4].map((phase) =>
+    phaseAverages.find((item) => Number(item.phase) === phase) || {
+      phase,
+      total_evaluations: 0,
+      average_score: null,
+      average_score_manual: null,
+      phase_average: null
+    }
+  );
 
   if (loading) {
     return (
@@ -203,23 +237,6 @@ const StudentGrades = () => {
       <div className="card mb-4">
         <div className="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
           <h5 className="mb-0">Calificaciones por Fase</h5>
-          {canEditGrades && (
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={handleSaveManuals}
-              disabled={saving}
-            >
-              {saving ? (
-                <>
-                  <span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />
-                  Guardando...
-                </>
-              ) : (
-                'Guardar notas manuales'
-              )}
-            </button>
-          )}
         </div>
         <div className="card-body">
           <div className="table-responsive">
@@ -227,60 +244,95 @@ const StudentGrades = () => {
               <thead className="table-light">
                 <tr>
                   <th>Fase</th>
-                  <th>Evaluaciones</th>
-                  <th>Nota sistema</th>
-                  <th>Nota manual</th>
+                  <th>Evaluaciones virtuales</th>
+                  <th>Promedio virtual</th>
+                  <th>Notas manuales individuales</th>
+                  <th>Promedio manual</th>
                   <th>Definitiva</th>
                 </tr>
               </thead>
               <tbody>
-                {phaseAverages.length > 0 ? (
-                  phaseAverages.map((phase, idx) => {
-                    const hasManual = phase.average_score_manual != null && !isNaN(parseFloat(phase.average_score_manual));
+                {displayPhases.map((phase, idx) => {
+                    const phaseManualGrades = manualGrades.filter((grade) => Number(grade.phase) === Number(phase.phase));
+                    const draft = newGradeInputs[phase.phase];
                     return (
                       <tr key={idx}>
                         <td>Fase {phase.phase}</td>
                         <td>{phase.total_evaluations}</td>
                         <td>{formatGrade(phase.average_score)}</td>
                         <td>
-                          {canEditGrades ? (
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              max="5"
-                              className="form-control form-control-sm"
-                              style={{ width: '90px' }}
-                              value={manualInputs[phase.phase] ?? ''}
-                              onChange={(e) => handleManualChange(phase.phase, e.target.value)}
-                              placeholder="—"
-                            />
-                          ) : hasManual ? (
-                            formatGrade(phase.average_score_manual)
-                          ) : (
-                            <span className="text-muted">—</span>
-                          )}
+                          <div className="d-flex flex-column gap-2" style={{ minWidth: '280px' }}>
+                            {phaseManualGrades.map((grade) => (
+                              <div key={grade.id} className="d-flex align-items-center justify-content-between gap-2 border rounded p-2">
+                                <span>
+                                  <strong>{formatGrade(grade.score)}</strong>
+                                  {grade.description && <span className="ms-2">{grade.description}</span>}
+                                  {grade.assessment_date && <small className="text-muted ms-2">{formatDateInput(grade.assessment_date)}</small>}
+                                </span>
+                                {canEditGrades && (
+                                  <span className="d-flex gap-1">
+                                    <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => handleEditManualGrade(grade)}>Editar</button>
+                                    <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => handleDeleteManualGrade(grade)}>Eliminar</button>
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                            {phaseManualGrades.length === 0 && <span className="text-muted">Sin notas manuales</span>}
+                            {canEditGrades && (
+                              <div className="border rounded p-2">
+                                <div className="row g-2">
+                                  <div className="col-4">
+                                    <input
+                                      type="number" step="0.01" min="0" max="5"
+                                      className="form-control form-control-sm"
+                                      placeholder="Nota 0–5"
+                                      value={draft.score}
+                                      onChange={(e) => handleManualChange(phase.phase, { score: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-8">
+                                    <input
+                                      type="text" maxLength="255"
+                                      className="form-control form-control-sm"
+                                      placeholder="Actividad o descripción (opcional)"
+                                      value={draft.description}
+                                      onChange={(e) => handleManualChange(phase.phase, { description: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-7">
+                                    <input
+                                      type="date"
+                                      className="form-control form-control-sm"
+                                      value={draft.assessment_date || ''}
+                                      onChange={(e) => handleManualChange(phase.phase, { assessment_date: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-5">
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn-sm w-100"
+                                      disabled={savingPhase === phase.phase}
+                                      onClick={() => handleAddManualGrade(phase.phase)}
+                                    >
+                                      {savingPhase === phase.phase ? 'Guardando…' : 'Agregar nota'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </td>
-                        <td>
-                          {formatGrade(phase.phase_average)}
-                          {!hasManual && (phase.average_score != null || phase.phase_average != null) && (
-                            <span className="text-muted small d-block">(solo sistema)</span>
-                          )}
-                        </td>
+                        <td>{formatGrade(phase.average_score_manual)}</td>
+                        <td>{formatGrade(phase.phase_average)}</td>
                       </tr>
                     );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan="5" className="text-center">No hay evaluaciones registradas</td>
-                  </tr>
-                )}
+                  })}
               </tbody>
               <tfoot className="table-light">
                 <tr>
-                  <th colSpan="4">Promedio general</th>
+                  <th colSpan="5">Promedio general</th>
                   <th>
-                    {grades?.overall_average ? (
+                    {grades?.overall_average != null ? (
                       <span className={parseFloat(grades.overall_average) >= 3.0 ? 'badge bg-success' : 'badge bg-danger'}>
                         {parseFloat(grades.overall_average).toFixed(1)}
                       </span>
@@ -292,9 +344,9 @@ const StudentGrades = () => {
               </tfoot>
             </table>
           </div>
-          {canEditGrades && phaseAverages.length > 0 && (
+          {canEditGrades && (
             <p className="text-muted small mb-0 mt-2">
-              Puedes ingresar o editar la nota manual por fase (0–5). Vacío = solo nota del sistema. Guarda los cambios con el botón superior.
+              Puedes agregar varias notas manuales por fase. El promedio manual se combina con el promedio virtual disponible; si solo existe uno, ese será la definitiva.
             </p>
           )}
         </div>

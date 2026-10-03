@@ -363,7 +363,6 @@ app.post('/api/auth/login', async (req, res) => {
 
   console.log('🔐 ========== INICIO DE LOGIN ==========');
   console.log('🔐 Email recibido:', email ? email.substring(0, 10) + '...' : 'undefined');
-  console.log('🔐 Password recibido:', password ? '***' + password.substring(password.length - 2) : 'undefined');
 
   try {
     if (!email || !password) {
@@ -410,8 +409,6 @@ app.post('/api/auth/login', async (req, res) => {
     console.log('✅ Usuario activo (o sin restricción de estado), continuando con verificación de contraseña...');
     
     console.log('🔒 Verificando contraseña...');
-    console.log('🔒 Password recibido (primeros 10 chars):', password ? password.substring(0, 10) : 'undefined');
-    console.log('🔒 Hash almacenado (primeros 20 chars):', user.password ? user.password.substring(0, 20) : 'undefined');
     
     if (!user.password) {
       console.log('❌ El usuario no tiene contraseña almacenada');
@@ -667,14 +664,12 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         // En desarrollo, mostrar el link en consola
         if (process.env.NODE_ENV === 'development') {
           console.log(`📧 [DEV] Link de recuperación para ${email}:`);
-          console.log(`🔗 ${resetUrl}`);
+          console.log('🔗 Enlace de recuperación generado; no se imprime por seguridad.');
         }
       }
     } else {
       // Si no hay configuración de correo, mostrar en consola (solo desarrollo)
-      console.log(`📧 [DEV] No hay configuración de correo. Link de recuperación para ${email}:`);
-      console.log(`🔐 Token: ${token}`);
-      console.log(`🔗 URL: ${resetUrl}`);
+      console.log(`📧 [DEV] No hay correo configurado. Enlace de recuperación generado para ${email}, pero oculto por seguridad.`);
     }
 
     res.json({ 
@@ -736,7 +731,7 @@ app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Error al verificar token:", error);
+    console.error("❌ Error al verificar token de recuperación:", error.name || error.message);
     res.status(500).json({ 
       success: false,
       error: "Error en el servidor" 
@@ -3599,6 +3594,170 @@ const allowTeacherOrAdmin = (req, res, next) => {
   return res.status(403).json({ success: false, error: 'Se requiere rol docente, administrador o super administrador.' });
 };
 
+const getAssignedTeacherForManualGrades = async (studentId, requestedTeacherId = null) => {
+  const year = new Date().getFullYear();
+  const [rows] = await pool.query(
+    `SELECT teacher_id FROM teacher_students
+     WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)
+     ORDER BY (academic_year = ?) DESC, teacher_id`,
+    [studentId, year, year]
+  );
+  if (requestedTeacherId) {
+    return rows.find(row => Number(row.teacher_id) === Number(requestedTeacherId))?.teacher_id || null;
+  }
+  return rows[0]?.teacher_id || null;
+};
+
+const validateManualGradeInput = (phase, score) => {
+  const parsedPhase = Number(phase);
+  const parsedScore = Number(score);
+  if (![1, 2, 3, 4].includes(parsedPhase)) return { error: 'Fase debe ser 1, 2, 3 o 4.' };
+  if (!Number.isFinite(parsedScore) || parsedScore < 0 || parsedScore > 5) {
+    return { error: 'La nota debe ser un número entre 0 y 5.' };
+  }
+  return { phase: parsedPhase, score: Math.round(parsedScore * 100) / 100 };
+};
+
+const ensureManualGradeAccess = (req, res, teacherId) => {
+  if (req.user.role === 'docente' && Number(req.user.teacher_id) !== Number(teacherId)) {
+    res.status(403).json({ success: false, error: 'No tienes permiso para modificar las notas de este estudiante.' });
+    return false;
+  }
+  return true;
+};
+
+app.get('/api/phase-averages/students/:studentId/manual-grades', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const requestedTeacherId = req.user.role === 'docente' ? req.user.teacher_id : req.query.teacher_id;
+    const teacherId = await getAssignedTeacherForManualGrades(studentId, requestedTeacherId);
+    if (!teacherId) {
+      return res.status(404).json({ success: false, error: 'No se encontró un docente asignado a este estudiante.' });
+    }
+    if (!ensureManualGradeAccess(req, res, teacherId)) return;
+
+    const [rows] = await pool.query(
+      `SELECT id, phase, score, description, assessment_date, created_at
+       FROM manual_phase_grades
+       WHERE student_id = ? AND teacher_id = ?
+       ORDER BY phase, assessment_date, id`,
+      [studentId, teacherId]
+    );
+    res.json({ success: true, teacher_id: teacherId, grades: rows });
+  } catch (error) {
+    console.error('Error al listar notas manuales:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/phase-averages/students/:studentId/recalculate', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const requestedTeacherId = req.user.role === 'docente' ? req.user.teacher_id : req.body.teacher_id;
+    const teacherId = await getAssignedTeacherForManualGrades(studentId, requestedTeacherId);
+    if (!teacherId) {
+      return res.status(404).json({ success: false, error: 'No se encontró un docente asignado a este estudiante.' });
+    }
+    if (!ensureManualGradeAccess(req, res, teacherId)) return;
+
+    const result = await recalculatePhaseAverages(studentId, teacherId);
+    if (!result.success) return res.status(500).json({ success: false, error: result.error });
+    res.json({ success: true, message: 'Promedios recalculados.' });
+  } catch (error) {
+    console.error('Error al recalcular notas manuales:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/phase-averages/students/:studentId/manual-grades', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const validation = validateManualGradeInput(req.body.phase, req.body.score);
+    if (validation.error) return res.status(400).json({ success: false, error: validation.error });
+
+    const requestedTeacherId = req.user.role === 'docente' ? req.user.teacher_id : req.body.teacher_id;
+    const teacherId = await getAssignedTeacherForManualGrades(studentId, requestedTeacherId);
+    if (!teacherId) {
+      return res.status(404).json({ success: false, error: 'No se encontró un docente asignado a este estudiante.' });
+    }
+    if (!ensureManualGradeAccess(req, res, teacherId)) return;
+
+    const description = String(req.body.description || '').trim().slice(0, 255) || null;
+    const assessmentDate = req.body.assessment_date || null;
+    if (assessmentDate && !/^\d{4}-\d{2}-\d{2}$/.test(assessmentDate)) {
+      return res.status(400).json({ success: false, error: 'La fecha debe tener formato AAAA-MM-DD.' });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO manual_phase_grades
+        (student_id, teacher_id, phase, score, description, assessment_date, entered_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [studentId, teacherId, validation.phase, validation.score, description, assessmentDate, req.user.id]
+    );
+    const recalculation = await recalculatePhaseAverages(studentId, teacherId);
+    if (!recalculation.success) {
+      return res.status(500).json({ success: false, error: recalculation.error || 'No se pudo recalcular la definitiva.' });
+    }
+    res.status(201).json({ success: true, id: result.insertId, message: 'Nota manual guardada y promedios recalculados.' });
+  } catch (error) {
+    console.error('Error al guardar nota manual:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/phase-averages/manual-grades/:gradeId', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradeId = parseInt(req.params.gradeId, 10);
+    const [rows] = await pool.query('SELECT * FROM manual_phase_grades WHERE id = ?', [gradeId]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No se encontró la nota manual.' });
+    const grade = rows[0];
+    if (!ensureManualGradeAccess(req, res, grade.teacher_id)) return;
+
+    const validation = validateManualGradeInput(req.body.phase ?? grade.phase, req.body.score);
+    if (validation.error) return res.status(400).json({ success: false, error: validation.error });
+    const description = String(req.body.description || '').trim().slice(0, 255) || null;
+    const assessmentDate = req.body.assessment_date || null;
+    if (assessmentDate && !/^\d{4}-\d{2}-\d{2}$/.test(assessmentDate)) {
+      return res.status(400).json({ success: false, error: 'La fecha debe tener formato AAAA-MM-DD.' });
+    }
+
+    await pool.query(
+      `UPDATE manual_phase_grades
+       SET phase = ?, score = ?, description = ?, assessment_date = ?
+       WHERE id = ?`,
+      [validation.phase, validation.score, description, assessmentDate, gradeId]
+    );
+    const recalculation = await recalculatePhaseAverages(grade.student_id, grade.teacher_id);
+    if (!recalculation.success) {
+      return res.status(500).json({ success: false, error: recalculation.error || 'No se pudo recalcular la definitiva.' });
+    }
+    res.json({ success: true, message: 'Nota manual actualizada.' });
+  } catch (error) {
+    console.error('Error al actualizar nota manual:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/phase-averages/manual-grades/:gradeId', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradeId = parseInt(req.params.gradeId, 10);
+    const [rows] = await pool.query('SELECT student_id, teacher_id FROM manual_phase_grades WHERE id = ?', [gradeId]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No se encontró la nota manual.' });
+    const grade = rows[0];
+    if (!ensureManualGradeAccess(req, res, grade.teacher_id)) return;
+
+    await pool.query('DELETE FROM manual_phase_grades WHERE id = ?', [gradeId]);
+    const recalculation = await recalculatePhaseAverages(grade.student_id, grade.teacher_id);
+    if (!recalculation.success) {
+      return res.status(500).json({ success: false, error: recalculation.error || 'No se pudo recalcular la definitiva.' });
+    }
+    res.json({ success: true, message: 'Nota manual eliminada.' });
+  } catch (error) {
+    console.error('Error al eliminar nota manual:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.put('/api/phase-averages/students/:studentId/phases/:phase/manual', verifyToken, allowTeacherOrAdmin, async (req, res) => {
   try {
     const studentId = parseInt(req.params.studentId, 10);
@@ -3626,23 +3785,43 @@ app.put('/api/phase-averages/students/:studentId/phases/:phase/manual', verifyTo
 
     const manualVal = average_score_manual === null || average_score_manual === undefined || average_score_manual === ''
       ? null
-      : Math.min(5, Math.max(0, parseFloat(average_score_manual)));
+      : Number(average_score_manual);
 
-    const [existing] = await pool.query(
-      'SELECT id FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
-      [studentId, teacherId, phase]
-    );
-    if (existing.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No existe registro de fase para este estudiante. Debe haber evaluaciones del sistema en esa fase antes de agregar nota manual.'
-      });
+    if (manualVal !== null && (!Number.isFinite(manualVal) || manualVal < 0 || manualVal > 5)) {
+      return res.status(400).json({ success: false, error: 'La nota debe ser un número entre 0 y 5.' });
     }
 
     await pool.query(
-      'UPDATE phase_averages SET average_score_manual = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
-      [manualVal, studentId, teacherId, phase]
+      'DELETE FROM manual_phase_grades WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+      [studentId, teacherId, phase]
     );
+    if (manualVal !== null) {
+      await pool.query(
+        `INSERT INTO manual_phase_grades
+          (student_id, teacher_id, phase, score, description, entered_by)
+         VALUES (?, ?, ?, ?, 'Nota manual', ?)`,
+        [studentId, teacherId, phase, Math.round(manualVal * 100) / 100, req.user.id]
+      );
+    }
+
+    const [existing] = await pool.query(
+      'SELECT id, average_score, evaluations_completed FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+      [studentId, teacherId, phase]
+    );
+
+    if (existing.length > 0) {
+      const phaseRow = existing[0];
+      await pool.query(
+        'UPDATE phase_averages SET average_score_manual = ? WHERE id = ?',
+        [manualVal, phaseRow.id]
+      );
+    } else if (manualVal !== null) {
+      // Permite calificar manualmente una fase aunque no haya evaluación virtual.
+      await pool.query(
+        'INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, average_score_manual, evaluations_completed) VALUES (?, ?, ?, NULL, ?, 0)',
+        [studentId, teacherId, phase, manualVal]
+      );
+    }
 
     const result = await recalculatePhaseAverages(studentId, teacherId);
     if (!result.success) {

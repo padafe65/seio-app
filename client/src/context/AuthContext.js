@@ -52,7 +52,7 @@ export const AuthProvider = ({ children }) => {
       console.log("✅ Token verificado correctamente");
       return true;
     } catch (error) {
-      console.error("❌ Error al verificar token:", error);
+      console.error("❌ Error al verificar la sesión:", error.response?.status || error.message);
       logout();
       return false;
     }
@@ -87,7 +87,7 @@ export const AuthProvider = ({ children }) => {
           console.log("✅ Usuario restaurado desde localStorage");
         }
       } catch (error) {
-        console.error("❌ Error al verificar token:", error);
+        console.error("❌ Error al verificar la sesión:", error.response?.status || error.message);
         logout();
       } finally {
         setIsAuthReady(true);

@@ -231,7 +231,7 @@ router.get('/validate/:token', async (req, res) => {
     }
     res.json({ success: true, data: s });
   } catch (e) {
-    console.error('Error validating token:', e);
+    console.error('Error validating token:', e.name || e.message);
     res.status(500).json({ success: false, message: 'Error al validar.' });
   }
 });

@@ -41,7 +41,7 @@ const ResetPassword = () => {
         setTokenValid(false);
       }
     } catch (error) {
-      console.error('Error al verificar token:', error);
+      console.error('Error al verificar enlace de recuperación:', error.response?.status || error.message);
       setTokenValid(false);
       notiMySwal.fire({
         icon: 'error',

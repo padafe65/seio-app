@@ -208,6 +208,12 @@ export const generatePhaseResultsPDF = async (data) => {
       const passed = phaseScore >= 3.5;
       const statusText = passed ? 'APROBÓ' : 'NO APROBÓ';
       const statusColor = passed ? '#28a745' : '#dc3545';
+      const phaseIndicators = passed
+        ? (data.achievedIndicators || [])
+        : (data.failedIndicators || []);
+      const phaseIndicatorsHeading = passed
+        ? 'INDICADORES ALCANZADOS:'
+        : 'INDICADORES NO ALCANZADOS:';
 
       // Nota de la fase (destacada)
       doc.fontSize(16)
@@ -238,7 +244,7 @@ export const generatePhaseResultsPDF = async (data) => {
       // ============================================
       // INDICADORES NO ALCANZADOS
       // ============================================
-      if (data.failedIndicators && data.failedIndicators.length > 0) {
+      if (phaseIndicators.length > 0) {
         // Verificar si hay espacio suficiente en la página
         if (yPosition > 650) {
           doc.addPage();
@@ -248,11 +254,11 @@ export const generatePhaseResultsPDF = async (data) => {
         doc.fontSize(12)
            .font('Helvetica-Bold')
            .fillColor('#1a1a1a')
-           .text('INDICADORES NO ALCANZADOS:', 50, yPosition);
+           .text(phaseIndicatorsHeading, 50, yPosition);
 
         yPosition += 20;
 
-        data.failedIndicators.forEach((indicator, index) => {
+        phaseIndicators.forEach((indicator, index) => {
           if (yPosition > 700) {
             doc.addPage();
             yPosition = 50;
