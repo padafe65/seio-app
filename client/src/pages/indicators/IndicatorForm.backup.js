@@ -224,7 +224,7 @@ const IndicatorForm = () => {
       return [];
     }
     
-    console.log('🔍 [fetchStudents] Token encontrado (primeros 20 caracteres):', token.substring(0, 20) + '...');
+    console.log('🔍 [fetchStudents] Sesión autenticada disponible.');
     
     const requestHeaders = {
       'Authorization': `Bearer ${token}`,
@@ -233,7 +233,7 @@ const IndicatorForm = () => {
       'Pragma': 'no-cache'
     };
     
-    console.log('🔍 [fetchStudents] Headers de la petición:', JSON.stringify(requestHeaders, null, 2));
+    console.log('🔍 [fetchStudents] Encabezado de autorización configurado:', Boolean(requestHeaders.Authorization));
     
     setLoading(true);
     setError(null);

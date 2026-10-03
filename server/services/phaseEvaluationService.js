@@ -3,9 +3,26 @@ import pool from '../config/db.js';
 import { sendPhaseResultsEmail, sendFinalGradeEmail } from '../utils/emailService.js';
 import { generatePhaseResultsPDF, generateFinalGradePDF } from '../utils/pdfGenerator.js';
 
+const getResultEmailRecipients = (student) => {
+  const institution = String(student.institution || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const isUniversity = institution.includes('universidad') || institution.includes('university');
+  const addresses = isUniversity
+    ? [student.student_email]
+    : [student.student_email, student.contact_email];
+
+  return [...new Set(addresses.map(email => String(email || '').trim()).filter(Boolean))];
+};
+
 // Función principal para evaluar estudiantes al final de una fase
-export const evaluatePhaseResults = async (phase) => {
+export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => {
   try {
+    if (!teacherId) {
+      throw new Error('Se requiere el docente autenticado para evaluar una fase.');
+    }
+
     console.log(`Iniciando evaluación de resultados para la fase ${phase}`);
     
     // Obtener año académico actual para el período
@@ -22,6 +39,8 @@ export const evaluatePhaseResults = async (phase) => {
 
     // 1. Obtener todos los estudiantes con sus calificaciones para esta fase
     // Incluir datos del docente e institución
+    const selectedCourseIds = [...new Set((Array.isArray(courseIds) ? courseIds : []).map(Number).filter(Number.isInteger))];
+    if (!selectedCourseIds.length) throw new Error('Selecciona al menos un curso para evaluar.');
     const [students] = await pool.query(`
       SELECT 
         s.id as student_id, 
@@ -49,16 +68,24 @@ export const evaluatePhaseResults = async (phase) => {
         t.subject as teacher_subject,
         t.report_brand_name,
         t.report_logo_url,
-        COALESCE(ut.institution, u.institution) as institution
+        COALESCE(c.institution, ut.institution, u.institution) as institution
       FROM students s
       JOIN users u ON s.user_id = u.id
-      LEFT JOIN grades g ON s.id = g.student_id
-      LEFT JOIN courses c ON s.course_id = c.id
-      LEFT JOIN teacher_students ts ON s.id = ts.student_id
-      LEFT JOIN teachers t ON ts.teacher_id = t.id
-      LEFT JOIN users ut ON t.user_id = ut.id
+      JOIN grades g ON s.id = g.student_id
+      JOIN courses c ON s.course_id = c.id
+      JOIN teachers t ON t.id = ?
+      JOIN users ut ON t.user_id = ut.id
       WHERE g.phase${phase} IS NOT NULL
-    `);
+        AND c.id IN (?)
+        AND (
+          c.teacher_id = ?
+          OR EXISTS (
+            SELECT 1
+            FROM teacher_courses tc
+            WHERE tc.teacher_id = ? AND tc.course_id = c.id
+          )
+        )
+    `, [teacherId, selectedCourseIds, teacherId, teacherId]);
     
     console.log(`Encontrados ${students.length} estudiantes con calificaciones para la fase ${phase}`);
     
@@ -88,6 +115,21 @@ export const evaluatePhaseResults = async (phase) => {
         AND (i.grade = ? OR i.grade IS NULL)
         ORDER BY i.subject, i.category
       `, [student.student_id, phase, student.grade]);
+
+      const [achievedIndicators] = await pool.query(`
+        SELECT DISTINCT
+          i.id,
+          i.description,
+          i.subject,
+          i.category
+        FROM student_indicators si
+        JOIN indicators i ON si.indicator_id = i.id
+        WHERE si.student_id = ?
+        AND si.achieved = 1
+        AND i.phase = ?
+        AND (i.grade = ? OR i.grade IS NULL)
+        ORDER BY i.subject, i.category
+      `, [student.student_id, phase, student.grade]);
       
       let improvementPlan = null;
       
@@ -104,7 +146,7 @@ export const evaluatePhaseResults = async (phase) => {
           FROM improvement_plans ip
           WHERE ip.student_id = ? 
           AND (ip.title LIKE ? OR ip.title LIKE ? OR ip.title LIKE ?)
-          ORDER BY ip.created_at DESC, ip.updated_at DESC
+          ORDER BY ip.created_at DESC
           LIMIT 1
         `, [
           student.student_id, 
@@ -154,6 +196,7 @@ export const evaluatePhaseResults = async (phase) => {
         grade: student.grade,
         course_name: student.course_name
       };
+      const resultRecipients = getResultEmailRecipients(student);
 
       // Preparar datos para el PDF
       const pdfData = {
@@ -169,6 +212,7 @@ export const evaluatePhaseResults = async (phase) => {
         institution: student.institution || student.student_institution || 'N/A',
         academicPeriod: academicPeriod,
         failedIndicators: failedIndicators,
+        achievedIndicators: achievedIndicators,
         improvementPlan: improvementPlan
       };
       
@@ -184,14 +228,15 @@ export const evaluatePhaseResults = async (phase) => {
       
       // Enviar email con resultados de fase (incluyendo PDF si se generó)
       try {
-        if (student.student_email || student.contact_email) {
+        if (resultRecipients.length > 0) {
           const emailResult = await sendPhaseResultsEmail(
             studentData,
             phase,
             student.phase_score,
             improvementPlan,
             failedIndicators,
-            pdfBuffer // Pasar PDF como adjunto
+            pdfBuffer,
+            { recipients: resultRecipients, achievedIndicators }
           );
           
           if (emailResult.success) {
@@ -218,7 +263,7 @@ export const evaluatePhaseResults = async (phase) => {
       }
       
       // Si es fase 4, enviar también email con nota final
-      if (phase === 4 && (student.student_email || student.contact_email)) {
+      if (phase === 4 && resultRecipients.length > 0) {
         try {
           const phaseGrades = {
             phase1: student.phase1,
@@ -253,7 +298,8 @@ export const evaluatePhaseResults = async (phase) => {
             studentData,
             student.overall_average || 0,
             phaseGrades,
-            finalPdfBuffer // Pasar PDF como adjunto
+            finalPdfBuffer,
+            resultRecipients
           );
           
           if (finalEmailResult.success) {
@@ -296,19 +342,37 @@ export const generateImprovementPlan = async (student, phase) => {
     
     if (teacherRelation.length === 0) {
       console.log(`Estudiante ${student.student_name} no tiene profesor asignado`);
-      return;
+      return { created: false, updated: false };
     }
     
     const teacher = teacherRelation[0];
     
     // 2. Obtener indicadores no alcanzados para esta fase
     const [failedIndicators] = await pool.query(`
-      SELECT i.* 
+      SELECT DISTINCT i.*, si.id AS student_indicator_id,
+        COALESCE(si.achieved, 0) AS achieved
       FROM indicators i
-      WHERE i.phase = ? 
-      AND i.achieved = 0
-      AND (i.student_id = ? OR (i.grade = ? AND i.student_id IS NULL))
-    `, [phase, student.student_id, student.grade]);
+      JOIN teacher_students ts
+        ON ts.teacher_id = i.teacher_id AND ts.student_id = ?
+      LEFT JOIN student_indicators si
+        ON si.indicator_id = i.id AND si.student_id = ?
+      WHERE i.phase = ?
+        AND i.teacher_id = ?
+        AND i.grade = ?
+        AND COALESCE(si.achieved, 0) = 0
+    `, [student.student_id, student.student_id, phase, teacher.teacher_id, student.grade]);
+
+    // El estado de logro vive en student_indicators. Asignar los indicadores
+    // generales que todavía no tienen una relación para este estudiante.
+    for (const indicator of failedIndicators) {
+      if (!indicator.student_indicator_id) {
+        await pool.query(`
+          INSERT INTO student_indicators
+            (student_id, indicator_id, achieved, questionnaire_id, assigned_at)
+          VALUES (?, ?, 0, ?, NOW())
+        `, [student.student_id, indicator.id, indicator.questionnaire_id || null]);
+      }
+    }
     
     // 3. Obtener cuestionarios no aprobados para esta fase
     const [failedQuizzes] = await pool.query(`
@@ -327,12 +391,17 @@ export const generateImprovementPlan = async (student, phase) => {
     
     // 5. Obtener indicadores alcanzados para esta fase (si existen)
     const [passedIndicators] = await pool.query(`
-      SELECT i.* 
+      SELECT DISTINCT i.*, COALESCE(si.achieved, 0) AS achieved
       FROM indicators i
-      WHERE i.phase = ? 
-      AND i.achieved = 1
-      AND (i.student_id = ? OR (i.grade = ? AND i.student_id IS NULL))
-    `, [phase, student.student_id, student.grade]);
+      JOIN teacher_students ts
+        ON ts.teacher_id = i.teacher_id AND ts.student_id = ?
+      JOIN student_indicators si
+        ON si.indicator_id = i.id AND si.student_id = ?
+      WHERE i.phase = ?
+        AND i.teacher_id = ?
+        AND i.grade = ?
+        AND si.achieved = 1
+    `, [student.student_id, student.student_id, phase, teacher.teacher_id, student.grade]);
     
     const passedAchievements = passedIndicators.map(i => 
       `• ${i.description} (${i.subject})`
@@ -382,8 +451,7 @@ ${failedQuizzes.map(q => `• ${q.title} (Nota: ${q.best_score})`).join('\n')}
         SET description = ?, 
             activities = ?, 
             failed_achievements = ?,
-            passed_achievements = ?,
-            updated_at = NOW()
+            passed_achievements = ?
         WHERE id = ?
       `, [
         description.trim(),
@@ -462,7 +530,7 @@ const markFailedSubject = async (student) => {
     
     if (teacherRelation.length === 0) {
       console.log(`Estudiante ${student.student_name} no tiene profesor asignado`);
-      return;
+      return { created: false, updated: false };
     }
     
     const teacher = teacherRelation[0];
@@ -490,11 +558,16 @@ La habilitación debe presentarse en la fecha establecida por la institución.
 
     // 3. Obtener todos los indicadores no alcanzados durante el año
     const [allFailedIndicators] = await pool.query(`
-      SELECT i.* 
+      SELECT DISTINCT i.*
       FROM indicators i
-      WHERE i.achieved = 0
-      AND (i.student_id = ? OR (i.grade = ? AND i.student_id IS NULL))
-    `, [student.student_id, student.grade]);
+      JOIN teacher_students ts
+        ON ts.teacher_id = i.teacher_id AND ts.student_id = ?
+      LEFT JOIN student_indicators si
+        ON si.indicator_id = i.id AND si.student_id = ?
+      WHERE COALESCE(si.achieved, 0) = 0
+        AND i.teacher_id = ?
+        AND i.grade = ?
+    `, [student.student_id, student.student_id, teacher.teacher_id, student.grade]);
     
     const failedAchievements = allFailedIndicators.map(i => 
       `• ${i.description} (${i.subject} - Fase ${i.phase})`
@@ -521,8 +594,7 @@ La habilitación debe presentarse en la fecha establecida por la institución.
         UPDATE improvement_plans 
         SET description = ?, 
             activities = ?, 
-            failed_achievements = ?,
-            updated_at = NOW()
+            failed_achievements = ?
         WHERE id = ?
       `, [
         description.trim(),

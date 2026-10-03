@@ -15,6 +15,8 @@ import { syncTeacherStudentData } from './syncTeacherStudentData.js';
 
 export async function validateTeacherStudentInstitution(teacherId, studentId) {
   const connection = await pool.getConnection();
+  let connectionReleased = false;
+  let transactionFinished = false;
   
   try {
     await connection.beginTransaction();
@@ -135,6 +137,12 @@ export async function validateTeacherStudentInstitution(teacherId, studentId) {
 
     // 7. Si necesita sincronización, ejecutarla
     if (needsSync) {
+      // syncTeacherStudentData opens another pool connection. Release this one
+      // before calling it so concurrent validations cannot exhaust the pool.
+      await connection.commit();
+      transactionFinished = true;
+      connection.release();
+      connectionReleased = true;
       console.log(`🔄 Sincronizando institution automáticamente...`);
       try {
         const syncResult = await syncTeacherStudentData(teacherId, studentId);
@@ -152,15 +160,22 @@ export async function validateTeacherStudentInstitution(teacherId, studentId) {
       validationResult.message = 'Concordancia de institution válida';
     }
 
-    await connection.commit();
+    if (!transactionFinished) {
+      await connection.commit();
+      transactionFinished = true;
+    }
 
     return validationResult;
 
   } catch (error) {
-    await connection.rollback();
+    if (!transactionFinished && !connectionReleased) {
+      await connection.rollback();
+    }
     console.error('❌ Error en validación de institution:', error);
     throw error;
   } finally {
-    connection.release();
+    if (!connectionReleased) {
+      connection.release();
+    }
   }
 }

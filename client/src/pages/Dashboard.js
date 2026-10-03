@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { PlusCircle, Users, FileText, GraduationCap, Activity, Lock, MessageCircle, RefreshCw } from 'lucide-react';
@@ -12,11 +12,16 @@ const Dashboard = () => {
   const { user, authToken, isAuthReady } = useAuth();
   const [teacherStudents, setTeacherStudents] = useState([]);
   const [studentGrades, setStudentGrades] = useState([]);
-  const [teacherQuestions, setTeacherQuestions] = useState([]); 
-  const [teacherQuestionnaires, setTeacherQuestionnaires] = useState([]); 
-  const [teacherSubject, setTeacherSubject] = useState(''); 
-  const [teacherLicenses, setTeacherLicenses] = useState([]); 
+  const [teacherQuestions, setTeacherQuestions] = useState([]);
+  const [teacherQuestionnaires, setTeacherQuestionnaires] = useState([]);
+  const [teacherSubject, setTeacherSubject] = useState('');
+  const [teacherLicenses, setTeacherLicenses] = useState([]);
   const [reportLogoUrl, setReportLogoUrl] = useState('');
+  const [teacherId, setTeacherId] = useState(null);
+  const [reportBrandName, setReportBrandName] = useState('');
+  const [logoFile, setLogoFile] = useState(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoInputRef = useRef(null);
   const [loading, setLoading] = useState(true); // Para controlar el estado de carga inicial
   const [studentFilters, setStudentFilters] = useState({
     name: '',
@@ -27,35 +32,37 @@ const Dashboard = () => {
 
   // Lógica de validación de suscripción activa
   const isSubscriptionActive = teacherLicenses.some(lic => lic.license_status === 'active');
-  
+
   useEffect(() => {
     const fetchData = async () => {
       if (!isAuthReady) return;
-      
+
       const tokenInStorage = localStorage.getItem('authToken');
       if (!authToken || !tokenInStorage) {
         setLoading(false);
         return;
       }
-      
+
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       if (user && user.role === 'docente') {
         try {
           // 1. Cargamos primero los datos del profesor y sus LICENCIAS
           const teacherDataResponse = await axiosClient.get(`/teachers/by-user/${user.id}`);
           const teacherData = teacherDataResponse.data?.data || teacherDataResponse.data;
-          
+
           if (teacherData && teacherData.id) {
             setReportLogoUrl(teacherData.report_logo_url || '');
-            
+            setTeacherId(teacherData.id);
+            setReportBrandName(teacherData.report_brand_name || '');
+
             const licensesResponse = await axiosClient.get(`/teacher-licenses/teacher/${teacherData.id}/licenses`);
             const licenses = licensesResponse.data?.data || [];
             setTeacherLicenses(licenses);
 
             // 2. Solo si hay una licencia activa, ejecutamos el resto de las peticiones originales
             const hasActive = licenses.some(lic => lic.license_status === 'active');
-            
+
             if (hasActive) {
               // Manteniendo todas tus peticiones originales
               const [studentsRes, gradesRes, subjectRes, questionnairesRes, questionsRes] = await Promise.all([
@@ -82,10 +89,10 @@ const Dashboard = () => {
         setLoading(false);
       }
     };
-    
+
     fetchData();
   }, [user, authToken, isAuthReady]);
-  
+
   const formatGrade = (value) => {
     if (value === null || value === undefined) return 'N/A';
     return parseFloat(value).toFixed(1);
@@ -109,21 +116,21 @@ const Dashboard = () => {
 
   // ... (dentro del componente Dashboard, antes del return)
 
-const handlePrint = async (id, tipo) => {
-  try {
-    const response = await axiosClient.get('/reports/generate-grade-report', {
-      params: tipo === 'individual' ? { studentId: id } : { courseId: id }
-    });
-    
-    if (response.data && response.data.length > 0) {
-      // IMPORTANTE: Agregamos 'await' y pasamos el objeto 'user'
-      // que contiene la imagen y la marca blanca del docente
-      await generateGradePDF(response.data, tipo, user);
+  const handlePrint = async (id, tipo) => {
+    try {
+      const response = await axiosClient.get('/reports/generate-grade-report', {
+        params: tipo === 'individual' ? { studentId: id } : { courseId: id }
+      });
+
+      if (response.data && response.data.length > 0) {
+        // IMPORTANTE: Agregamos 'await' y pasamos el objeto 'user'
+        // que contiene la imagen y la marca blanca del docente
+        await generateGradePDF(response.data, tipo, user);
+      }
+    } catch (error) {
+      console.error("Error al generar reporte", error);
     }
-  } catch (error) {
-    console.error("Error al generar reporte", error);
-  }
-};
+  };
 
   // --- BLOQUE 1: PANTALLA DE CARGA ---
   if (loading) {
@@ -138,11 +145,11 @@ const handlePrint = async (id, tipo) => {
   }
 
   // --- BLOQUE 2: MURO DE PAGO (Si no hay licencia activa) ---
-// ... (mantenemos todos los imports iguales)
+  // ... (mantenemos todos los imports iguales)
 
-// --- DENTRO DEL COMPONENTE DASHBOARD, EN EL BLOQUE DEL MURO DE PAGO ---
+  // --- DENTRO DEL COMPONENTE DASHBOARD, EN EL BLOQUE DEL MURO DE PAGO ---
 
-if (user && user.role === 'docente' && !isSubscriptionActive) {
+  if (user && user.role === 'docente' && !isSubscriptionActive) {
     return (
       <div className="container-fluid bg-light min-vh-100 d-flex align-items-center justify-content-center p-4">
         <div className="card shadow-lg border-0" style={{ maxWidth: '800px', width: '100%' }}>
@@ -150,31 +157,31 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
             <Lock size={60} className="text-danger mb-3" />
             <h2 className="fw-bold mb-3">Acceso Restringido</h2>
             <p className="text-muted mb-4">
-              Hola <strong>{user.name}</strong>, tu periodo de prueba o suscripción ha vencido. 
+              Hola <strong>{user.name}</strong>, tu periodo de prueba o suscripción ha vencido.
               Elige el plan que mejor se adapte a ti para seguir disfrutando de SEIO:
             </p>
-            
+
             {/* Opciones de Plan */}
             <div className="row mb-4">
-                <div className="col-md-6 mb-2">
-                    <div className="border rounded p-3 bg-white shadow-sm">
-                        <h6 className="fw-bold mb-1">Plan Mensual</h6>
-                        <p className="small text-muted mb-0">Renovación cada 30 días</p>
-                    </div>
+              <div className="col-md-6 mb-2">
+                <div className="border rounded p-3 bg-white shadow-sm">
+                  <h6 className="fw-bold mb-1">Plan Mensual</h6>
+                  <p className="small text-muted mb-0">Renovación cada 30 días</p>
                 </div>
-                <div className="col-md-6 mb-2">
-                    <div className="border border-warning rounded p-3 bg-warning bg-opacity-10 shadow-sm">
-                        <h6 className="fw-bold mb-1 text-dark">Plan Anual 🏆</h6>
-                        <p className="small text-dark mb-0"><strong>¡Ahorra más!</strong> Pago único por 12 meses</p>
-                    </div>
+              </div>
+              <div className="col-md-6 mb-2">
+                <div className="border border-warning rounded p-3 bg-warning bg-opacity-10 shadow-sm">
+                  <h6 className="fw-bold mb-1 text-dark">Plan Anual 🏆</h6>
+                  <p className="small text-dark mb-0"><strong>¡Ahorra más!</strong> Pago único por 12 meses</p>
                 </div>
+              </div>
             </div>
 
             <div className="bg-primary bg-opacity-10 p-3 rounded mb-4 border border-primary border-opacity-25">
-                <p className="mb-0 text-primary fw-bold">
-                    💰 Pago Nequi: 314 2999 274
-                </p>
-                <small className="text-primary">A nombre de Vilma Mejia</small>
+              <p className="mb-0 text-primary fw-bold">
+                💰 Pago Nequi: 314 2999 274
+              </p>
+              <small className="text-primary">A nombre de Vilma Mejia</small>
             </div>
 
             <div className="text-start bg-white border rounded p-4 mb-4 shadow-sm">
@@ -182,10 +189,10 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
             </div>
 
             <div className="d-grid gap-2">
-              <a 
+              <a
                 href={`https://wa.me/573142999274?text=Hola,%20soy%20el%20docente%20${encodeURIComponent(user.name)}%20y%20quiero%20enviar%20mi%20comprobante%20de%20pago%20para%20la%20licencia%20SEIO.`}
-                target="_blank" 
-                rel="noreferrer" 
+                target="_blank"
+                rel="noreferrer"
                 className="btn btn-success d-flex align-items-center justify-content-center gap-2 py-2 fw-bold"
               >
                 <MessageCircle size={20} /> Enviar Comprobante por WhatsApp
@@ -199,13 +206,13 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
       </div>
     );
   }
-// ... (el resto del código del dashboard sigue igual)
+  // ... (el resto del código del dashboard sigue igual)
 
   // --- BLOQUE 3: DASHBOARD COMPLETO (Si hay licencia activa) ---
   return (
     <div className="dashboard-container position-relative">
       {reportLogoUrl && (
-        <div 
+        <div
           className="dashboard-watermark position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
           style={{
             backgroundImage: `url(${reportLogoUrl})`,
@@ -219,7 +226,7 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
         />
       )}
       <div className="p-6 space-y-6" style={{ position: 'relative', zIndex: 1 }}>
-        
+
         {/* Sección de Licencias (Tu código original) */}
         {user.role === 'docente' && teacherLicenses.length > 0 && (
           <div className="card mb-4 border-primary shadow-sm">
@@ -239,6 +246,100 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
                   </div>
                 </div>
               </div>
+
+              {user.role === 'docente' && (
+                <div className="card border-primary mb-2">
+                  <div className="card-body py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <span className="fw-medium">Calificaciones por fase</span>
+                    <div className="d-flex flex-wrap gap-2">
+                      <Link to="/mis-estudiantes" className="btn btn-outline-primary btn-sm">Registrar notas manuales</Link>
+                      <Link to="/calificaciones-fase" className="btn btn-primary btn-sm">Ver tabla y filtros</Link>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {user.role === 'docente' && teacherId && (
+                <div className="card mb-3 border-secondary">
+                  <div className="card-header bg-light">
+                    <h6 className="mb-0">Marca blanca en reportes PDF</h6>
+                    <small className="text-muted">Nombre o logo que aparecerá en los reportes que generes</small>
+                  </div>
+                  <div className="card-body">
+                    <div className="row g-2 mb-2">
+                      <div className="col-md-6">
+                        <label className="form-label small">Nombre comercial (ej. Estudio del Profe Juan)</label>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          placeholder="Dejar vacío para usar SEIO"
+                          value={reportBrandName}
+                          onChange={(e) => setReportBrandName(e.target.value)}
+                        />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label small">URL del logo (opcional)</label>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          placeholder="https://... o /uploads/..."
+                          value={reportLogoUrl}
+                          onChange={(e) => setReportLogoUrl(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="row g-2 mb-2">
+                      <div className="col-12">
+                        <label className="form-label small">O subir logo desde PC o celular</label>
+                        <div className="d-flex flex-wrap align-items-center gap-2">
+                          <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept="image/png,image/jpeg,image/jpg,image/webp"
+                            className="form-control form-control-sm w-auto"
+                            onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn-outline-secondary btn-sm"
+                            disabled={!logoFile || uploadingLogo}
+                            onClick={async () => {
+                              if (!logoFile || !teacherId) return;
+                              setUploadingLogo(true);
+                              try {
+                                const form = new FormData();
+                                form.append('logo', logoFile);
+                                const api = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+                                const token = localStorage.getItem('authToken');
+                                const r = await fetch(`${api}/api/teachers/${teacherId}/logo`, {
+                                  method: 'POST',
+                                  headers: token ? { Authorization: `Bearer ${token}` } : {},
+                                  body: form,
+                                  credentials: 'include'
+                                });
+                                const data = await r.json().catch(() => ({}));
+                                if (!r.ok) throw new Error(data?.message || 'Error al subir');
+                                setReportLogoUrl(data?.data?.report_logo_url || '');
+                                setLogoFile(null);
+                                if (logoInputRef.current) logoInputRef.current.value = '';
+                                const Swal = (await import('sweetalert2')).default;
+                                Swal.fire({ title: 'Logo subido', text: 'El logo se usará en tus reportes PDF.', icon: 'success' });
+                              } catch (e) {
+                                const Swal = (await import('sweetalert2')).default;
+                                Swal.fire({ title: 'Error', text: e?.message || 'No se pudo subir el logo.', icon: 'error' });
+                              } finally {
+                                setUploadingLogo(false);
+                              }
+                            }}
+                          >
+                            {uploadingLogo ? 'Subiendo…' : 'Subir logo'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {teacherLicenses.map((license, index) => {
                 const getStatusBadge = (status) => {
                   const badges = {
@@ -444,7 +545,7 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
                         const val = formatGrade(grade[`phase${phaseNum}`]);
                         if (val === 'N/A') return <span className="text-muted">N/A</span>;
                         const tag = (manual != null && !isNaN(parseFloat(manual))) ? 'M' : ((system != null || grade[`phase${phaseNum}`] != null) ? 'S' : null);
-                        return <>{val} {tag && <span className="badge bg-secondary" style={{fontSize: '10px'}}>{tag}</span>}</>;
+                        return <>{val} {tag && <span className="badge bg-secondary" style={{ fontSize: '10px' }}>{tag}</span>}</>;
                       };
                       return (
                         <tr key={grade.student_id || index}>
@@ -465,7 +566,7 @@ if (user && user.role === 'docente' && !isSubscriptionActive) {
           </div>
         )}
       </div>
-    </div>
+    </div >
   );
 };
 

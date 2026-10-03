@@ -72,13 +72,13 @@ const db = pool;
 
 // Verificar conexión al iniciar
 db.getConnection()
-.then(conn => {
-  console.log('✅ Conexión exitosa a MariaDB/MySQL');
-  conn.release();
-})
-.catch(err => {
-  console.error('❌ Error al conectar a TiDB:', err);
-});
+  .then(conn => {
+    console.log('✅ Conexión exitosa a MariaDB/MySQL');
+    conn.release();
+  })
+  .catch(err => {
+    console.error('❌ Error al conectar a TiDB:', err);
+  });
 
 const app = express();
 
@@ -154,36 +154,36 @@ app.post('/api/students', verifyToken, async (req, res) => {
     if (!targetUserId) {
       return res.status(400).json({ message: 'Debes indicar el usuario que va a completar el registro.' });
     }
-    
+
     // Si no hay user_id pero hay name, crear primero el usuario
     let userId = targetUserId;
-    
+
     if (!userId && name) {
       // Crear un nuevo usuario con estado 'activo'
       const hashedPassword = await bcrypt.hash('password123', 10);
-      
+
       const [userResult] = await db.query(
         'INSERT INTO users (name, email, phone, password, role, estado) VALUES (?, ?, ?, ?, ?, ?)',
         [name, contact_email, contact_phone, hashedPassword, 'estudiante', 'activo']
       );
-      
+
       userId = userResult.insertId;
       console.log("Usuario creado con ID:", userId);
     }
-    
+
     // Verificar que user_id no sea nulo
     if (!userId) {
       return res.status(400).json({ message: 'El campo user_id es obligatorio' });
     }
-    
+
     // Verificar si ya existe un registro de estudiante para este user_id
     const [existingStudent] = await db.query(
       'SELECT id FROM students WHERE user_id = ?',
       [userId]
     );
-    
+
     let studentId;
-    
+
     // Verificar si el campo institution existe en users y students
     let hasInstitution = false;
     try {
@@ -198,7 +198,7 @@ app.post('/api/students', verifyToken, async (req, res) => {
     } catch (error) {
       // Ignorar error, asumir que no existe
     }
-    
+
     // Obtener institution del usuario si existe
     let userInstitution = null;
     if (hasInstitution) {
@@ -209,7 +209,7 @@ app.post('/api/students', verifyToken, async (req, res) => {
         // Ignorar error
       }
     }
-    
+
     if (existingStudent.length > 0) {
       // Si ya existe, actualizar el registro existente
       studentId = existingStudent[0].id;
@@ -240,35 +240,35 @@ app.post('/api/students', verifyToken, async (req, res) => {
         studentId = result.insertId;
       }
     }
-    
+
     // Verificar que studentId esté definido
     if (!studentId) {
       console.error('❌ studentId no está definido después de crear/actualizar estudiante');
       return res.status(500).json({ message: 'Error: No se pudo obtener el ID del estudiante' });
     }
-    
+
     // Si se proporcionó un teacher_id, crear/actualizar la relación en teacher_students
     if (teacher_id) {
       try {
         console.log(`🔗 Creando relación teacher_students: teacher_id=${teacher_id}, student_id=${studentId}`);
-        
+
         // Eliminar relaciones existentes primero
         await db.query(
           'DELETE FROM teacher_students WHERE student_id = ?',
           [studentId]
         );
-        
+
         // Obtener año académico actual
         const currentAcademicYear = new Date().getFullYear();
-        
+
         // Crear nueva relación (incluyendo academic_year)
         await db.query(
           'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
           [teacher_id, studentId, currentAcademicYear]
         );
-        
+
         console.log(`✅ Relación teacher_students creada exitosamente`);
-        
+
         // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
         try {
           await syncTeacherStudentData(teacher_id, studentId, currentAcademicYear);
@@ -286,12 +286,12 @@ app.post('/api/students', verifyToken, async (req, res) => {
         console.log('⚠️ Relación ya existía, continuando...');
       }
     }
-    
+
     console.log(`✅ Estudiante ${existingStudent.length > 0 ? 'actualizado' : 'creado'} exitosamente con ID: ${studentId}`);
-    
-    res.status(201).json({ 
-      message: existingStudent.length > 0 ? 'Datos de estudiante actualizados correctamente' : 'Estudiante registrado correctamente', 
-      studentId: studentId 
+
+    res.status(201).json({
+      message: existingStudent.length > 0 ? 'Datos de estudiante actualizados correctamente' : 'Estudiante registrado correctamente',
+      studentId: studentId
     });
   } catch (error) {
     console.error('❌ Error registrando estudiante:', error);
@@ -299,8 +299,8 @@ app.post('/api/students', verifyToken, async (req, res) => {
     console.error('📌 Error code:', error.code);
     console.error('📌 Error message:', error.message);
     console.error('📌 SQL State:', error.sqlState);
-      console.error('📌 Request body omitted to avoid logging personal data.');
-    
+    console.error('📌 Request body omitted to avoid logging personal data.');
+
     // Si es error de duplicado en teacher_students, ignorarlo y continuar
     if (error.code === 'ER_DUP_ENTRY') {
       console.log('⚠️ Error de duplicado detectado, pero continuando...');
@@ -316,14 +316,14 @@ app.post('/api/students', verifyToken, async (req, res) => {
           // Ignorar
         }
       }
-      return res.status(201).json({ 
-        message: 'Estudiante registrado correctamente (relación con profesor ya existía)', 
-        studentId: existingStudentId 
+      return res.status(201).json({
+        message: 'Estudiante registrado correctamente (relación con profesor ya existía)',
+        studentId: existingStudentId
       });
     }
-    
-    res.status(500).json({ 
-      message: 'Error al registrar estudiante', 
+
+    res.status(500).json({
+      message: 'Error al registrar estudiante',
       error: error.message,
       sqlError: error.sqlMessage || undefined,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
@@ -380,18 +380,18 @@ app.post('/api/teachers', verifyToken, async (req, res) => {
       console.log('⚠️ El campo institution fue enviado pero no existe en la tabla users');
     }
 
-    res.status(201).json({ 
+    res.status(201).json({
       success: true,
-      message: 'Docente registrado correctamente', 
-      teacherId: result.insertId 
+      message: 'Docente registrado correctamente',
+      teacherId: result.insertId
     });
 
   } catch (error) {
     console.error('❌ Error registrando docente:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al registrar docente',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -455,7 +455,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         error: "Usuario inactivo. Contacta al administrador."
       });
     }
-
     if (!user.password) {
       return res.status(401).json({
         success: false,
@@ -513,7 +512,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     if (process.env.NODE_ENV === 'development') {
       console.error('❌ Error en login:', error.message);
     }
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: "Error en el servidor",
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -536,7 +535,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const normalizedName = name.trim();
     const normalizedEmail = email.trim().toLowerCase();
     const [existingUser] = await db.query('SELECT id, name, email FROM users WHERE name = ? OR email = ?', [normalizedName, normalizedEmail]);
-    
+
     if (existingUser.length > 0) {
       const usuarioExistente = existingUser[0];
 
@@ -607,9 +606,9 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "Se requiere el correo electrónico" 
+        error: "Se requiere el correo electrónico"
       });
     }
 
@@ -644,9 +643,9 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     const [rows] = await pool.query("SELECT id, name, email FROM users WHERE email = ?", [email]);
     if (rows.length === 0) {
       // Por seguridad, no revelar si el usuario existe o no
-      return res.json({ 
+      return res.json({
         success: true,
-        message: "Si el correo existe, se enviará un enlace de recuperación" 
+        message: "Si el correo existe, se enviará un enlace de recuperación"
       });
     }
 
@@ -675,31 +674,32 @@ app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
 
     // Enviar correo electrónico con el enlace
     const { sendPasswordResetEmail, isEmailConfigured } = await import('./utils/emailService.js');
-    
+
     if (isEmailConfigured()) {
       const emailResult = await sendPasswordResetEmail(user.email, user.name, resetUrl);
       if (!emailResult.success) {
         console.warn('⚠️ No se pudo enviar el correo, pero el token fue generado');
         // En desarrollo, mostrar el link en consola
         if (process.env.NODE_ENV === 'development') {
-          console.warn('Correo de recuperación no enviado; configura SMTP para habilitar restablecimientos.');
+          console.log(`📧 [DEV] Link de recuperación para ${email}:`);
+          console.log('🔗 Enlace de recuperación generado; no se imprime por seguridad.');
         }
       }
     } else {
       // Si no hay configuración de correo, mostrar en consola (solo desarrollo)
-      console.warn('Correo de recuperación no configurado; no se mostró el enlace ni el token en consola.');
+      console.log(`📧 [DEV] No hay correo configurado. Enlace de recuperación generado para ${email}, pero oculto por seguridad.`);
     }
 
-    res.json({ 
+    res.json({
       success: true,
-      message: "Si el correo existe, se enviará un enlace de recuperación" 
+      message: "Si el correo existe, se enviará un enlace de recuperación"
     });
 
   } catch (error) {
     console.error("❌ Error al solicitar recuperación de contraseña:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: "Error en el servidor" 
+      error: "Error en el servidor"
     });
   }
 });
@@ -719,9 +719,9 @@ app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
     );
 
     if (rows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: "Token inválido o no encontrado" 
+        error: "Token inválido o no encontrado"
       });
     }
 
@@ -729,31 +729,31 @@ app.get('/api/auth/verify-reset-token/:token', async (req, res) => {
 
     // Verificar si el token ha expirado
     if (new Date() > new Date(tokenData.expires_at)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "El token ha expirado. Solicita uno nuevo." 
+        error: "El token ha expirado. Solicita uno nuevo."
       });
     }
 
     // Verificar si el token ya fue usado
     if (tokenData.used) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "Este token ya fue utilizado. Solicita uno nuevo." 
+        error: "Este token ya fue utilizado. Solicita uno nuevo."
       });
     }
 
-    res.json({ 
+    res.json({
       success: true,
       email: tokenData.email,
       name: tokenData.name
     });
 
   } catch (error) {
-    console.error("❌ Error al verificar token:", error);
-    res.status(500).json({ 
+    console.error("❌ Error al verificar token de recuperación:", error.name || error.message);
+    res.status(500).json({
       success: false,
-      error: "Error en el servidor" 
+      error: "Error en el servidor"
     });
   }
 });
@@ -764,14 +764,14 @@ app.post('/api/auth/reset-password', async (req, res) => {
     const { token, newPassword } = req.body;
 
     if (!token || !newPassword) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "Se requiere el token y la nueva contraseña" 
+        error: "Se requiere el token y la nueva contraseña"
       });
     }
 
     if (typeof newPassword !== 'string' || newPassword.length < 8) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
         error: "La contraseña debe tener al menos 8 caracteres"
       });
@@ -782,9 +782,9 @@ app.post('/api/auth/reset-password', async (req, res) => {
       await pool.query("SELECT 1 FROM password_reset_tokens LIMIT 1");
     } catch (tableError) {
       if (tableError.code === 'ER_NO_SUCH_TABLE') {
-        return res.status(500).json({ 
+        return res.status(500).json({
           success: false,
-          error: "Sistema de recuperación no configurado. Contacta al administrador." 
+          error: "Sistema de recuperación no configurado. Contacta al administrador."
         });
       }
       throw tableError;
@@ -800,9 +800,9 @@ app.post('/api/auth/reset-password', async (req, res) => {
     );
 
     if (tokenRows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        error: "Token inválido o no encontrado" 
+        error: "Token inválido o no encontrado"
       });
     }
 
@@ -810,17 +810,17 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
     // Verificar si el token ha expirado
     if (new Date() > new Date(tokenData.expires_at)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "El token ha expirado. Solicita uno nuevo." 
+        error: "El token ha expirado. Solicita uno nuevo."
       });
     }
 
     // Verificar si el token ya fue usado
     if (tokenData.used) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        error: "Este token ya fue utilizado. Solicita uno nuevo." 
+        error: "Este token ya fue utilizado. Solicita uno nuevo."
       });
     }
 
@@ -843,9 +843,9 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
       await connection.commit();
 
-      res.json({ 
+      res.json({
         success: true,
-        message: "Contraseña actualizada correctamente" 
+        message: "Contraseña actualizada correctamente"
       });
     } catch (error) {
       await connection.rollback();
@@ -856,18 +856,18 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
   } catch (error) {
     console.error("❌ Error al restablecer la contraseña:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      error: "Error en el servidor" 
+      error: "Error en el servidor"
     });
   }
 });
 
 // Mantener el endpoint antiguo por compatibilidad (pero deshabilitado)
 app.post('/api/auth/reestablecer-password', async (req, res) => {
-  res.status(410).json({ 
+  res.status(410).json({
     success: false,
-    error: "Este endpoint está deshabilitado por seguridad. Usa /api/auth/forgot-password y /api/auth/reset-password" 
+    error: "Este endpoint está deshabilitado por seguridad. Usa /api/auth/forgot-password y /api/auth/reset-password"
   });
 });
 
@@ -877,7 +877,7 @@ app.get('/api/courses', async (req, res) => {
     // Verificar si los campos institution y teacher_id existen en la tabla
     let hasInstitution = false;
     let hasTeacherId = false;
-    
+
     try {
       const [institutionCols] = await pool.query(`
         SELECT COLUMN_NAME 
@@ -887,7 +887,7 @@ app.get('/api/courses', async (req, res) => {
         AND COLUMN_NAME = 'institution'
       `);
       hasInstitution = institutionCols.length > 0;
-      
+
       const [teacherIdCols] = await pool.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -899,7 +899,7 @@ app.get('/api/courses', async (req, res) => {
     } catch (error) {
       // Ignorar error
     }
-    
+
     // Construir query dinámica de forma robusta
     let selectFields = 'c.id, c.name, c.grade';
     if (hasInstitution) {
@@ -908,13 +908,13 @@ app.get('/api/courses', async (req, res) => {
     if (hasTeacherId) {
       selectFields += ', c.teacher_id, u.name as teacher_name';
     }
-    
+
     let query = `SELECT ${selectFields} FROM courses c`;
     if (hasTeacherId) {
       query += ' LEFT JOIN teachers t ON c.teacher_id = t.id LEFT JOIN users u ON t.user_id = u.id';
     }
     query += ' ORDER BY c.name';
-    
+
     console.log('🔍 Query para obtener cursos:', query);
     const [rows] = await pool.query(query);
     console.log(`✅ Se encontraron ${rows.length} cursos`);
@@ -930,18 +930,18 @@ app.get('/api/courses', async (req, res) => {
 app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
   try {
     const { name, grade, institution, teacher_id } = req.body;
-    
+
     if (!name || !grade) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'El nombre y el grado son obligatorios' 
+        message: 'El nombre y el grado son obligatorios'
       });
     }
-    
+
     // Verificar si el campo institution existe
     let hasInstitution = false;
     let hasTeacherId = false;
-    
+
     try {
       const [institutionCols] = await pool.query(`
         SELECT COLUMN_NAME 
@@ -951,7 +951,7 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
         AND COLUMN_NAME = 'institution'
       `);
       hasInstitution = institutionCols.length > 0;
-      
+
       const [teacherIdCols] = await pool.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -963,40 +963,40 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
     } catch (error) {
       // Ignorar error
     }
-    
+
     // Construir query dinámica
     let fields = 'name, grade';
     let values = '?, ?';
     let params = [name, grade];
-    
+
     if (hasInstitution && institution) {
       fields += ', institution';
       values += ', ?';
       params.push(institution);
     }
-    
+
     if (hasTeacherId && teacher_id) {
       // Verificar que el teacher_id existe
       const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacher_id]);
       if (teacherRows.length === 0) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
-          message: 'El docente especificado no existe' 
+          message: 'El docente especificado no existe'
         });
       }
-      
+
       fields += ', teacher_id';
       values += ', ?';
       params.push(teacher_id);
     }
-    
+
     const [result] = await pool.query(
       `INSERT INTO courses (${fields}) VALUES (${values})`,
       params
     );
-    
+
     const courseId = result.insertId;
-    
+
     // Si se asignó un teacher_id, también crear la relación en teacher_courses con role='principal'
     if (hasTeacherId && teacher_id) {
       try {
@@ -1014,13 +1014,13 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
         } catch (error) {
           // Ignorar error
         }
-        
+
         // Verificar si ya existe la relación
         const [existingRelation] = await pool.query(
           'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
           [teacher_id, courseId]
         );
-        
+
         if (existingRelation.length === 0) {
           // Crear la relación en teacher_courses con role='principal' si existe el campo
           if (hasRole) {
@@ -1042,7 +1042,7 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
         // No fallar la creación del curso si hay error en la relación
       }
     }
-    
+
     // 📝 Registrar en auditoría
     await logCreate(
       'courses',
@@ -1053,7 +1053,7 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
       { name, grade, institution, teacher_id },
       req
     );
-    
+
     res.status(201).json({
       success: true,
       message: 'Curso creado exitosamente',
@@ -1067,10 +1067,10 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error al crear curso:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al crear curso',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1080,20 +1080,20 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, grade, institution, teacher_id } = req.body;
-    
+
     // Verificar que el curso existe
     const [existingRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
     if (existingRows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Curso no encontrado' 
+        message: 'Curso no encontrado'
       });
     }
-    
+
     // Verificar si los campos existen
     let hasInstitution = false;
     let hasTeacherId = false;
-    
+
     try {
       const [institutionCols] = await pool.query(`
         SELECT COLUMN_NAME 
@@ -1103,7 +1103,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
         AND COLUMN_NAME = 'institution'
       `);
       hasInstitution = institutionCols.length > 0;
-      
+
       const [teacherIdCols] = await pool.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
@@ -1115,50 +1115,50 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
     } catch (error) {
       // Ignorar error
     }
-    
+
     // Construir query de actualización
     let updates = [];
     let params = [];
-    
+
     if (name !== undefined) {
       updates.push('name = ?');
       params.push(name);
     }
-    
+
     if (grade !== undefined) {
       updates.push('grade = ?');
       params.push(grade);
     }
-    
+
     if (hasInstitution && institution !== undefined) {
       updates.push('institution = ?');
       params.push(institution || null);
     }
-    
+
     if (hasTeacherId && teacher_id !== undefined) {
       if (teacher_id) {
         // Verificar que el teacher_id existe
         const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacher_id]);
         if (teacherRows.length === 0) {
-          return res.status(400).json({ 
+          return res.status(400).json({
             success: false,
-            message: 'El docente especificado no existe' 
+            message: 'El docente especificado no existe'
           });
         }
       }
       updates.push('teacher_id = ?');
       params.push(teacher_id || null);
     }
-    
+
     if (updates.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'No se proporcionaron campos para actualizar' 
+        message: 'No se proporcionaron campos para actualizar'
       });
     }
-    
+
     params.push(id);
-    
+
     // Obtener valores antiguos para auditoría
     const oldValues = {
       name: existingRows[0].name,
@@ -1166,17 +1166,17 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       institution: existingRows[0].institution,
       teacher_id: existingRows[0].teacher_id
     };
-    
+
     let oldTeacherId = null;
     if (hasTeacherId) {
       oldTeacherId = existingRows[0].teacher_id;
     }
-    
+
     await pool.query(
       `UPDATE courses SET ${updates.join(', ')} WHERE id = ?`,
       params
     );
-    
+
     // 📝 Registrar en auditoría
     await logUpdate(
       'courses',
@@ -1188,7 +1188,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       { name, grade, institution, teacher_id },
       req
     );
-    
+
     // Manejar la relación en teacher_courses si el teacher_id cambió
     if (hasTeacherId && teacher_id !== undefined) {
       // Verificar si el campo role existe en teacher_courses
@@ -1205,9 +1205,9 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       } catch (error) {
         // Ignorar error
       }
-      
+
       const newTeacherId = teacher_id || null;
-      
+
       // Si había un docente anterior y cambió, cambiar su role a 'co-docente' o eliminar relación
       if (oldTeacherId && oldTeacherId !== newTeacherId) {
         try {
@@ -1230,7 +1230,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
           console.error('⚠️ Error al actualizar relación antigua en teacher_courses:', relError);
         }
       }
-      
+
       // Si hay un nuevo docente, crear/actualizar la relación con role='principal'
       if (newTeacherId) {
         try {
@@ -1239,7 +1239,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
             'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
             [newTeacherId, id]
           );
-          
+
           if (existingRelation.length === 0) {
             // Crear nueva relación con role='principal' si existe el campo
             if (hasRole) {
@@ -1270,7 +1270,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
         }
       }
     }
-    
+
     res.json({
       success: true,
       message: 'Curso actualizado exitosamente',
@@ -1278,10 +1278,10 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error al actualizar curso:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al actualizar curso',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1290,25 +1290,25 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
 app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Verificar que el curso existe
     const [existingRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
     if (existingRows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Curso no encontrado' 
+        message: 'Curso no encontrado'
       });
     }
-    
+
     // Verificar si hay estudiantes asignados a este curso
     const [studentsRows] = await pool.query('SELECT COUNT(*) as count FROM students WHERE course_id = ?', [id]);
     if (studentsRows[0].count > 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: `No se puede eliminar el curso porque tiene ${studentsRows[0].count} estudiante(s) asignado(s)` 
+        message: `No se puede eliminar el curso porque tiene ${studentsRows[0].count} estudiante(s) asignado(s)`
       });
     }
-    
+
     // Eliminar todas las relaciones en teacher_courses para este curso
     try {
       await pool.query('DELETE FROM teacher_courses WHERE course_id = ?', [id]);
@@ -1317,7 +1317,7 @@ app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       console.error('⚠️ Error al eliminar relaciones en teacher_courses (no crítico):', relError);
       // Continuar con la eliminación del curso aunque falle la eliminación de relaciones
     }
-    
+
     // Guardar datos para auditoría antes de eliminar
     const deletedCourseData = {
       name: existingRows[0].name,
@@ -1325,10 +1325,10 @@ app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       institution: existingRows[0].institution,
       teacher_id: existingRows[0].teacher_id
     };
-    
+
     // Eliminar el curso
     await pool.query('DELETE FROM courses WHERE id = ?', [id]);
-    
+
     // 📝 Registrar en auditoría
     await logDelete(
       'courses',
@@ -1339,7 +1339,7 @@ app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       deletedCourseData,
       req
     );
-    
+
     res.json({
       success: true,
       message: 'Curso eliminado exitosamente',
@@ -1347,10 +1347,10 @@ app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error al eliminar curso:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al eliminar curso',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1359,7 +1359,7 @@ app.delete('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
 app.get('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Verificar si el campo role existe en teacher_courses
     let hasRole = false;
     try {
@@ -1374,12 +1374,12 @@ app.get('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => {
     } catch (error) {
       // Ignorar error
     }
-    
+
     let roleField = '';
     if (hasRole) {
       roleField = ', tc.role';
     }
-    
+
     const query = `
       SELECT tc.id, tc.teacher_id, tc.assigned_date${roleField},
              t.subject, u.name as teacher_name, u.email as teacher_email
@@ -1389,15 +1389,15 @@ app.get('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => {
       WHERE tc.course_id = ?
       ORDER BY ${hasRole ? "tc.role = 'principal' DESC, " : ''}tc.assigned_date DESC
     `;
-    
+
     const [rows] = await pool.query(query, [id]);
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener docentes del curso:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al obtener docentes del curso',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1407,32 +1407,32 @@ app.post('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => 
   try {
     const { id } = req.params;
     const { teacher_id, role } = req.body;
-    
+
     if (!teacher_id) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Se requiere teacher_id' 
+        message: 'Se requiere teacher_id'
       });
     }
-    
+
     // Verificar que el curso existe
     const [courseRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
     if (courseRows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Curso no encontrado' 
+        message: 'Curso no encontrado'
       });
     }
-    
+
     // Verificar que el docente existe
     const [teacherRows] = await pool.query('SELECT id FROM teachers WHERE id = ?', [teacher_id]);
     if (teacherRows.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'El docente especificado no existe' 
+        message: 'El docente especificado no existe'
       });
     }
-    
+
     // Verificar si el campo role existe
     let hasRole = false;
     try {
@@ -1447,20 +1447,20 @@ app.post('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => 
     } catch (error) {
       // Ignorar error
     }
-    
+
     // Verificar si ya existe la relación
     const [existingRelation] = await pool.query(
       'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
       [teacher_id, id]
     );
-    
+
     if (existingRelation.length > 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Este docente ya está asignado a este curso' 
+        message: 'Este docente ya está asignado a este curso'
       });
     }
-    
+
     // Crear la relación
     const finalRole = hasRole ? (role || 'co-docente') : null;
     if (hasRole && finalRole) {
@@ -1474,7 +1474,7 @@ app.post('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => 
         [teacher_id, id]
       );
     }
-    
+
     res.status(201).json({
       success: true,
       message: 'Docente asignado al curso exitosamente',
@@ -1482,10 +1482,10 @@ app.post('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => 
     });
   } catch (error) {
     console.error('❌ Error al asignar docente al curso:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al asignar docente al curso',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1494,35 +1494,35 @@ app.post('/api/courses/:id/teachers', verifyToken, isAdmin, async (req, res) => 
 app.delete('/api/courses/:id/teachers/:teacherId', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id, teacherId } = req.params;
-    
+
     // Verificar que la relación existe
     const [existingRelation] = await pool.query(
       'SELECT * FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
       [teacherId, id]
     );
-    
+
     if (existingRelation.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Relación no encontrada' 
+        message: 'Relación no encontrada'
       });
     }
-    
+
     // No permitir eliminar el docente principal si está en courses.teacher_id
     const [courseRows] = await pool.query('SELECT teacher_id FROM courses WHERE id = ?', [id]);
     if (courseRows.length > 0 && courseRows[0].teacher_id == teacherId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'No se puede eliminar el docente principal. Primero cambia el docente principal del curso.' 
+        message: 'No se puede eliminar el docente principal. Primero cambia el docente principal del curso.'
       });
     }
-    
+
     // Eliminar la relación
     await pool.query(
       'DELETE FROM teacher_courses WHERE teacher_id = ? AND course_id = ?',
       [teacherId, id]
     );
-    
+
     res.json({
       success: true,
       message: 'Docente eliminado del curso exitosamente',
@@ -1530,10 +1530,10 @@ app.delete('/api/courses/:id/teachers/:teacherId', verifyToken, isAdmin, async (
     });
   } catch (error) {
     console.error('❌ Error al eliminar docente del curso:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al eliminar docente del curso',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -1764,7 +1764,7 @@ app.get('/api/students/complete', verifyToken, isTeacherOrAdmin, async (req, res
 app.get('/api/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Verificar si institution existe antes de incluirla
     let hasInstitution = false;
     try {
@@ -1779,11 +1779,11 @@ app.get('/api/students/:id', async (req, res) => {
     } catch (error) {
       // Ignorar
     }
-    
-    const institutionFields = hasInstitution 
-      ? 's.institution, u.institution as user_institution, ' 
+
+    const institutionFields = hasInstitution
+      ? 's.institution, u.institution as user_institution, '
       : '';
-    
+
     const [rows] = await db.query(`
       SELECT 
         s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
@@ -1794,11 +1794,11 @@ app.get('/api/students/:id', async (req, res) => {
       LEFT JOIN courses c ON s.course_id = c.id
       WHERE s.id = ?
     `, [id]);
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Estudiante no encontrado' });
     }
-    
+
     res.json(rows[0]);
   } catch (error) {
     console.error('❌ Error al obtener estudiante:', error);
@@ -1820,7 +1820,7 @@ app.get('/api/students/user/:userId', verifyToken, async (req, res) => {
       );
       if (!assigned.length) return res.status(403).json({ message: 'No tienes acceso a este estudiante.' });
     }
-    
+
     // Verificar si institution existe
     let hasInstitution = false;
     try {
@@ -1835,11 +1835,11 @@ app.get('/api/students/user/:userId', verifyToken, async (req, res) => {
     } catch (error) {
       // Ignorar
     }
-    
-    const institutionFields = hasInstitution 
-      ? 's.institution, u.institution as user_institution, ' 
+
+    const institutionFields = hasInstitution
+      ? 's.institution, u.institution as user_institution, '
       : '';
-    
+
     const [rows] = await db.query(`
       SELECT 
         s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
@@ -1851,11 +1851,11 @@ app.get('/api/students/user/:userId', verifyToken, async (req, res) => {
       LEFT JOIN courses c ON s.course_id = c.id
       WHERE s.user_id = ?
     `, [userId]);
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Estudiante no encontrado para este usuario' });
     }
-    
+
     res.json(rows[0]);
   } catch (error) {
     console.error('❌ Error al obtener estudiante por user_id:', error);
@@ -1870,7 +1870,7 @@ app.get('/api/users/:userId/institution', verifyToken, async (req, res) => {
     if (req.user.role === 'estudiante' && Number(userId) !== Number(req.user.id)) {
       return res.status(403).json({ message: 'Solo puedes consultar tu propia institución.' });
     }
-    
+
     // Verificar si institution existe
     let hasInstitution = false;
     try {
@@ -1885,20 +1885,20 @@ app.get('/api/users/:userId/institution', verifyToken, async (req, res) => {
     } catch (error) {
       // Ignorar
     }
-    
+
     if (!hasInstitution) {
       return res.json({ institution: null });
     }
-    
+
     const [rows] = await db.query(
       'SELECT institution FROM users WHERE id = ?',
       [userId]
     );
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
-    
+
     res.json({ institution: rows[0].institution || null });
   } catch (error) {
     console.error('❌ Error al obtener institución del usuario:', error);
@@ -1920,7 +1920,7 @@ app.get('/api/users/incomplete/students', verifyToken, isAdmin, async (req, res)
       )
       ORDER BY u.created_at DESC
     `);
-    
+
     console.log(`✅ Se encontraron ${rows.length} estudiantes con registro incompleto`);
     res.json(rows);
   } catch (error) {
@@ -1943,7 +1943,7 @@ app.get('/api/users/incomplete/teachers', verifyToken, isAdmin, async (req, res)
       )
       ORDER BY u.created_at DESC
     `);
-    
+
     console.log(`✅ Se encontraron ${rows.length} docentes con registro incompleto`);
     res.json(rows);
   } catch (error) {
@@ -1963,7 +1963,7 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
       'SELECT user_id FROM students WHERE id = ?',
       [id]
     );
-    
+
     if (studentRows.length === 0) {
       return res.status(404).json({ message: 'Estudiante no encontrado' });
     }
@@ -1994,15 +1994,15 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
     } else if (!['estudiante', 'admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
       return res.status(403).json({ message: 'No tienes permiso para editar estudiantes.' });
     }
-    
+
     const userId = studentRows[0].user_id;
-    
+
     // Actualizar datos en la tabla users
     await db.query(
       'UPDATE users SET name = ?, email = ?, phone = ? WHERE id = ?',
       [name, email, phone, userId]
     );
-    
+
     // Verificar si el campo institution existe
     let hasInstitution = false;
     try {
@@ -2017,7 +2017,7 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
     } catch (error) {
       // Ignorar error
     }
-    
+
     // Obtener institution del usuario para sincronizar con students
     let userInstitution = null;
     if (hasInstitution) {
@@ -2028,7 +2028,7 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
         // Ignorar error
       }
     }
-    
+
     // Actualizar datos en la tabla students
     if (hasInstitution) {
       await db.query(
@@ -2041,18 +2041,18 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
         [contact_phone, contact_email, age, grade, course_id, id]
       );
     }
-    
+
     // Si se proporcionó un teacher_id, actualizar la relación en teacher_students
     if (teacher_id) {
       // Obtener año académico actual
       const currentAcademicYear = new Date().getFullYear();
-      
+
       // Verificar si ya existe una relación
       const [existingRelation] = await db.query(
         'SELECT * FROM teacher_students WHERE student_id = ?',
         [id]
       );
-      
+
       if (existingRelation.length > 0) {
         // Actualizar la relación existente (asegurar academic_year)
         await db.query(
@@ -2066,7 +2066,7 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
           [teacher_id, id, currentAcademicYear]
         );
       }
-      
+
       // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
       try {
         await syncTeacherStudentData(teacher_id, id, currentAcademicYear);
@@ -2076,7 +2076,7 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
         // No fallar la actualización si hay error en la sincronización
       }
     }
-    
+
     res.json({ message: 'Datos de estudiante actualizados correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar estudiante:', error);
@@ -2088,28 +2088,28 @@ app.put('/api/students/:id', verifyToken, async (req, res) => {
 app.delete('/api/students/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Obtener el user_id del estudiante
     const [studentRows] = await db.query(
       'SELECT user_id FROM students WHERE id = ?',
       [id]
     );
-    
+
     if (studentRows.length === 0) {
       return res.status(404).json({ message: 'Estudiante no encontrado' });
     }
-    
+
     const userId = studentRows[0].user_id;
-    
+
     // Eliminar relaciones en teacher_students
     await db.query('DELETE FROM teacher_students WHERE student_id = ?', [id]);
-    
+
     // Eliminar estudiante
     await db.query('DELETE FROM students WHERE id = ?', [id]);
-    
+
     // Eliminar usuario asociado
     await db.query('DELETE FROM users WHERE id = ?', [userId]);
-    
+
     res.json({ message: 'Estudiante eliminado correctamente' });
   } catch (error) {
     console.error('❌ Error al eliminar estudiante:', error);
@@ -2124,10 +2124,10 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
     const { userId } = req.params;
     const authenticatedUserId = req.user.id;
     const userRole = req.user.role;
-    
+
     // Verificar que el usuario solo pueda ver sus propios datos (si es estudiante)
     if (userRole === 'estudiante' && parseInt(userId) !== authenticatedUserId) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
         message: 'No tienes permiso para ver esta información',
         error: 'FORBIDDEN'
@@ -2142,7 +2142,7 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
         return res.status(403).json({ success: false, message: 'No tienes acceso a este estudiante.' });
       }
     }
-    
+
     // Verificar si institution existe en students
     let hasInstitution = false;
     try {
@@ -2157,11 +2157,11 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
     } catch (error) {
       // Ignorar
     }
-    
-    const institutionFields = hasInstitution 
-      ? 's.institution, u.institution as user_institution, ' 
+
+    const institutionFields = hasInstitution
+      ? 's.institution, u.institution as user_institution, '
       : '';
-    
+
     // Obtener año académico actual para filtrar grades
     const currentAcademicYear = new Date().getFullYear();
 
@@ -2178,19 +2178,19 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
         AND (g.academic_year = ? OR g.academic_year IS NULL)
       WHERE s.user_id = ?
     `, [currentAcademicYear, userId]);
-    
+
     if (rows.length === 0) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: 'Estudiante no encontrado' 
+        message: 'Estudiante no encontrado'
       });
     }
-    
+
     // Devolver directamente el objeto del estudiante (el frontend espera esto)
     res.json(rows[0]);
   } catch (error) {
     console.error('❌ Error al obtener estudiante:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al obtener estudiante',
       error: error.message
@@ -2204,31 +2204,31 @@ app.get('/api/students/by-user/:userId/teachers', verifyToken, async (req, res) 
     const { userId } = req.params;
     const authenticatedUserId = req.user.id;
     const userRole = req.user.role;
-    
+
     // Verificar que el usuario solo pueda ver sus propios datos (si es estudiante)
     if (userRole === 'estudiante' && parseInt(userId) !== authenticatedUserId) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         success: false,
         message: 'No tienes permiso para ver esta información',
         error: 'FORBIDDEN'
       });
     }
-    
+
     // Obtener el student_id a partir del user_id
     const [studentRows] = await pool.query(
       'SELECT id FROM students WHERE user_id = ?',
       [userId]
     );
-    
+
     if (studentRows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Estudiante no encontrado'
       });
     }
-    
+
     const studentId = studentRows[0].id;
-    
+
     // Obtener los docentes del estudiante con sus materias e instituciones
     const [teachers] = await pool.query(`
       SELECT 
@@ -2244,7 +2244,7 @@ app.get('/api/students/by-user/:userId/teachers', verifyToken, async (req, res) 
       WHERE ts.student_id = ?
       ORDER BY t.subject, u.name
     `, [studentId]);
-    
+
     // Validar y sincronizar institution para cada relación teacher_students
     if (teachers.length > 0) {
       const { validateTeacherStudentInstitution } = await import('./utils/validateTeacherStudentInstitution.js');
@@ -2257,7 +2257,7 @@ app.get('/api/students/by-user/:userId/teachers', verifyToken, async (req, res) 
       });
       await Promise.allSettled(validationPromises);
     }
-    
+
     res.json({
       success: true,
       data: teachers
@@ -2347,27 +2347,27 @@ app.get('/api/student/attempts/:student_id', verifyToken, async (req, res) => {
 app.get('/api/categories/:subject', async (req, res) => {
   try {
     const { subject } = req.params;
-    
+
     console.log("Buscando categorías para materia:", subject);
-    
+
     // 1. Intentar buscar exactamente como viene
     let [rows] = await db.query(
       'SELECT * FROM subject_categories WHERE subject = ?',
       [subject]
     );
-    
+
     // 2. Si no hay resultados, intentar normalizar (quitar tildes)
     if (rows.length === 0) {
       const normalizedSubject = subject
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, ""); // Quita tildes
-      
+
       [rows] = await db.query(
         'SELECT * FROM subject_categories WHERE subject = ?',
         [normalizedSubject]
       );
     }
-    
+
     // 3. Si aún no hay resultados, buscar con LIKE para coincidencias parciales
     if (rows.length === 0) {
       [rows] = await db.query(
@@ -2375,7 +2375,7 @@ app.get('/api/categories/:subject', async (req, res) => {
         [`%${subject}%`]
       );
     }
-    
+
     // 4. Si todavía no hay resultados, devolver categorías genéricas
     if (rows.length === 0) {
       console.log(`No se encontraron categorías para ${subject}, devolviendo predeterminadas`);
@@ -2385,7 +2385,7 @@ app.get('/api/categories/:subject', async (req, res) => {
         { category: `${subject}_Evaluación` }
       ]);
     }
-    
+
     console.log(`Se encontraron ${rows.length} categorías para ${subject}`);
     res.json(rows);
   } catch (error) {
@@ -2398,23 +2398,23 @@ app.get('/api/categories/:subject', async (req, res) => {
 app.post('/api/subjects', verifyToken, isSuperAdmin, async (req, res) => {
   try {
     const { subject } = req.body;
-    
+
     // Verificar si la materia ya existe
     const [existingRows] = await pool.query(
       'SELECT * FROM subject_categories WHERE subject = ?',
       [subject]
     );
-    
+
     if (existingRows.length > 0) {
       return res.status(400).json({ message: 'Esta materia ya existe' });
     }
-    
+
     // Insertar la materia con una categoría predeterminada
     const [result] = await pool.query(
       'INSERT INTO subject_categories (subject, category) VALUES (?, ?)',
       [subject, `${subject}_General`]
     );
-    
+
     res.status(201).json({
       id: result.insertId,
       subject,
@@ -2432,7 +2432,7 @@ app.get('/api/all-categories', async (req, res) => {
     const [rows] = await pool.query(
       'SELECT * FROM subject_categories ORDER BY subject, category'
     );
-    
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener todas las categorías:', error);
@@ -2446,7 +2446,7 @@ app.get('/api/subjects', async (req, res) => {
     const [rows] = await pool.query(
       'SELECT DISTINCT subject FROM subject_categories ORDER BY subject'
     );
-    
+
     res.json(rows.map(row => row.subject));
   } catch (error) {
     console.error('❌ Error al obtener materias:', error);
@@ -2461,16 +2461,16 @@ app.get('/api/teacher/subject/:userId', verifyToken, async (req, res) => {
     if (Number(userId) !== Number(req.user.id) && !isAdministratorRole(req.user.role)) {
       return res.status(403).json({ message: 'Solo puedes consultar tu propia materia.' });
     }
-    
+
     const [rows] = await pool.query(
       'SELECT subject FROM teachers WHERE user_id = ?',
       [userId]
     );
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Docente no encontrado' });
     }
-    
+
     res.json({ subject: rows[0].subject });
   } catch (error) {
     console.error('❌ Error al obtener materia del docente:', error);
@@ -2485,7 +2485,7 @@ app.get('/api/subject-categories-list/subjects', async (req, res) => {
     const [rows] = await pool.query(
       'SELECT DISTINCT subject FROM subject_categories ORDER BY subject'
     );
-    
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener materias:', error);
@@ -2497,16 +2497,16 @@ app.get('/api/subject-categories-list/subjects', async (req, res) => {
 app.get('/api/subject-categories/:subject', async (req, res) => {
   try {
     const { subject } = req.params;
-    
+
     // Si la materia es "Matemàticas", buscar como "Matematicas" (sin tilde)
     const searchSubject = subject === 'Matemáticas' ? 'Matematicas' : subject;
-    
+
     // Consulta directa a la tabla subject_categories
     const [rows] = await pool.query(
       'SELECT * FROM subject_categories WHERE subject = ?',
       [searchSubject]
     );
-    
+
     // Si no hay categorías para esta materia, devolver categorías predeterminadas
     if (rows.length === 0) {
       return res.json([
@@ -2514,7 +2514,7 @@ app.get('/api/subject-categories/:subject', async (req, res) => {
         { id: 2, subject: searchSubject, category: `${searchSubject}_Categoria2` }
       ]);
     }
-    
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener categorías:', error);
@@ -2526,23 +2526,23 @@ app.get('/api/subject-categories/:subject', async (req, res) => {
 app.post('/api/subject-categories', verifyToken, isSuperAdmin, async (req, res) => {
   try {
     const { subject, category } = req.body;
-    
+
     // Verificar si la categoría ya existe
     const [existingRows] = await pool.query(
       'SELECT * FROM subject_categories WHERE subject = ? AND category = ?',
       [subject, category]
     );
-    
+
     if (existingRows.length > 0) {
       return res.status(400).json({ message: 'Esta categoría ya existe' });
     }
-    
+
     // Insertar la nueva categoría
     const [result] = await pool.query(
       'INSERT INTO subject_categories (subject, category) VALUES (?, ?)',
       [subject, category]
     );
-    
+
     res.status(201).json({
       id: result.insertId,
       subject,
@@ -2559,37 +2559,37 @@ app.put('/api/subject-categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { subject, category } = req.body;
-    
+
     if (!subject || !category) {
       return res.status(400).json({ message: 'Se requiere subject y category' });
     }
-    
+
     // Verificar si la categoría existe
     const [existingRows] = await pool.query(
       'SELECT * FROM subject_categories WHERE id = ?',
       [id]
     );
-    
+
     if (existingRows.length === 0) {
       return res.status(404).json({ message: 'Categoría no encontrada' });
     }
-    
+
     // Verificar si ya existe otra categoría con el mismo subject y category
     const [duplicateRows] = await pool.query(
       'SELECT * FROM subject_categories WHERE subject = ? AND category = ? AND id != ?',
       [subject, category, id]
     );
-    
+
     if (duplicateRows.length > 0) {
       return res.status(400).json({ message: 'Ya existe otra categoría con estos valores' });
     }
-    
+
     // Actualizar la categoría
     await pool.query(
       'UPDATE subject_categories SET subject = ?, category = ? WHERE id = ?',
       [subject, category, id]
     );
-    
+
     res.json({
       id: parseInt(id),
       subject,
@@ -2606,23 +2606,23 @@ app.put('/api/subject-categories/:id', async (req, res) => {
 app.delete('/api/subject-categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Verificar si la categoría existe
     const [existingRows] = await pool.query(
       'SELECT * FROM subject_categories WHERE id = ?',
       [id]
     );
-    
+
     if (existingRows.length === 0) {
       return res.status(404).json({ message: 'Categoría no encontrada' });
     }
-    
+
     // Eliminar la categoría
     await pool.query(
       'DELETE FROM subject_categories WHERE id = ?',
       [id]
     );
-    
+
     res.json({
       message: 'Categoría eliminada exitosamente',
       id: parseInt(id)
@@ -2639,7 +2639,7 @@ app.get('/api/subject-categories-all', async (req, res) => {
     const [rows] = await pool.query(
       'SELECT * FROM subject_categories ORDER BY subject, category'
     );
-    
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener todas las materias y categorías:', error);
@@ -2654,16 +2654,16 @@ app.get('/api/teachers/by-user/:userId', verifyToken, async (req, res) => {
     if (Number(userId) !== Number(req.user.id) && !isAdministratorRole(req.user.role)) {
       return res.status(403).json({ message: 'Solo puedes consultar tu propio perfil docente.' });
     }
-    
+
     const [rows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [userId]
     );
-    
+
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Profesor no encontrado' });
     }
-    
+
     res.json({ id: rows[0].id });
   } catch (error) {
     console.error('❌ Error al obtener profesor:', error);
@@ -2675,27 +2675,27 @@ app.get('/api/teachers/by-user/:userId', verifyToken, async (req, res) => {
 app.get('/api/questions', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { questionnaire_id, created_by, subject } = req.query;
-    
+
     let query = 'SELECT q.*, qn.title as questionnaire_title FROM questions q LEFT JOIN questionnaires qn ON q.questionnaire_id = qn.id WHERE 1=1';
     let params = [];
-    
+
     if (questionnaire_id) {
       query += ' AND q.questionnaire_id = ?';
       params.push(questionnaire_id);
     }
-    
+
     if (created_by) {
       query += ' AND qn.created_by = ?';
       params.push(created_by);
     }
-    
+
     if (subject) {
       query += ' AND (q.category LIKE ? OR qn.category LIKE ?)';
       params.push(`${subject}_%`, `${subject}_%`);
     }
-    
+
     query += ' ORDER BY q.id DESC';
-    
+
     const [rows] = await pool.query(query, params);
     res.json(rows);
   } catch (error) {
@@ -2714,22 +2714,22 @@ app.get('/api/teacher/students/:userId', verifyToken, async (req, res) => {
     if (!isAdministratorRole(req.user.role) && req.user.role !== 'docente') {
       return res.status(403).json({ message: 'Se requiere rol docente o administrador.' });
     }
-    
+
     // Primero obtener el teacher_id a partir del user_id
     const [teacherRows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [userId]
     );
-    
+
     if (teacherRows.length === 0) {
       return res.status(404).json({ message: 'Profesor no encontrado' });
     }
-    
+
     const teacherId = teacherRows[0].id;
-    
+
     // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();
-    
+
     // Ahora obtener los estudiantes asociados a ese teacher_id (filtrados por academic_year)
     const [rows] = await pool.query(`
       SELECT s.*, c.name as course_name, u.name, u.email, u.phone
@@ -2740,7 +2740,7 @@ app.get('/api/teacher/students/:userId', verifyToken, async (req, res) => {
       WHERE ts.teacher_id = ? 
       AND (ts.academic_year = ? OR ts.academic_year IS NULL)
     `, [teacherId, currentAcademicYear]);
-    
+
     // Validar y sincronizar institution para cada relación teacher_students
     if (rows.length > 0) {
       const { validateTeacherStudentInstitution } = await import('./utils/validateTeacherStudentInstitution.js');
@@ -2753,7 +2753,7 @@ app.get('/api/teacher/students/:userId', verifyToken, async (req, res) => {
       });
       await Promise.allSettled(validationPromises);
     }
-    
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener estudiantes del profesor:', error);
@@ -2771,19 +2771,19 @@ app.get('/api/teacher/student-grades/:teacherId', verifyToken, async (req, res) 
     if (!isAdministratorRole(req.user.role) && req.user.role !== 'docente') {
       return res.status(403).json({ message: 'No tienes permiso para consultar calificaciones docentes.' });
     }
-    
+
     const [teacherRows] = await pool.query(
       'SELECT id FROM teachers WHERE user_id = ?',
       [teacherId]
     );
-    
+
     if (teacherRows.length === 0) {
       return res.json([]);
     }
-    
+
     const realTeacherId = teacherRows[0].id;
     const currentAcademicYear = new Date().getFullYear();
-    
+
     const [rows] = await pool.query(`
       SELECT
         s.id AS student_id,
@@ -2817,7 +2817,7 @@ app.get('/api/teacher/student-grades/:teacherId', verifyToken, async (req, res) 
       GROUP BY s.id, s.user_id, s.grade, c.id, c.name, u.name
       ORDER BY s.grade, c.name, u.name
     `, [currentAcademicYear, realTeacherId, realTeacherId, currentAcademicYear]);
-    
+
     res.json(rows);
   } catch (error) {
     console.error('❌ Error al obtener calificaciones:', error);
@@ -2842,11 +2842,11 @@ app.get('/api/quiz-attempts/:id', verifyToken, async (req, res) => {
       JOIN questionnaires q ON qa.questionnaire_id = q.id
       WHERE qa.id = ?
     `, [req.params.id]);
-    
+
     if (attempts.length === 0) {
       return res.status(404).json({ message: 'Intento no encontrado' });
     }
-    
+
     res.json(attempts[0]);
   } catch (error) {
     console.error('Error al obtener detalles del intento:', error);
@@ -2861,7 +2861,7 @@ app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', 
     if (!(await canAccessStudent(req.user, studentId))) {
       return res.status(403).json({ message: 'No tienes acceso a estos intentos.' });
     }
-    
+
     const [attempts] = await pool.query(`
       SELECT qa.*,
              u.name as student_name,
@@ -2873,7 +2873,7 @@ app.get('/api/quiz-attempts/student/:studentId/questionnaire/:questionnaireId', 
       WHERE qa.student_id = ? AND qa.questionnaire_id = ?
       ORDER BY qa.attempt_number ASC
     `, [studentId, questionnaireId]);
-    
+
     console.log(`🎯 Intentos encontrados para estudiante ${studentId} y cuestionario ${questionnaireId}:`, attempts);
     res.json(attempts);
   } catch (error) {
@@ -2889,7 +2889,7 @@ app.get('/api/quiz-attempts/student/:studentId', verifyToken, async (req, res) =
     if (!(await canAccessStudent(req.user, studentId))) {
       return res.status(403).json({ message: 'No tienes acceso a estos intentos.' });
     }
-    
+
     const [attempts] = await pool.query(`
       SELECT qa.*,
              u.name as student_name,
@@ -2901,7 +2901,7 @@ app.get('/api/quiz-attempts/student/:studentId', verifyToken, async (req, res) =
       WHERE qa.student_id = ?
       ORDER BY qa.questionnaire_id, qa.attempt_number ASC
     `, [studentId]);
-    
+
     console.log(`🎯 Todos los intentos encontrados para estudiante ${studentId}:`, attempts);
     res.json(attempts);
   } catch (error) {
@@ -2926,7 +2926,7 @@ app.get('/api/teachers/:id/courses', verifyToken, async (req, res) => {
       JOIN teacher_students ts ON s.id = ts.student_id
       WHERE ts.teacher_id = ?
     `, [req.params.id]);
-    
+
     res.json(courses);
   } catch (error) {
     console.error('Error al obtener cursos del profesor:', error);
@@ -2939,10 +2939,10 @@ app.get('/api/students/:studentId/grades', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
     console.log(`📊 Solicitud de notas para estudiante ${studentId}`);
-    
+
     // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();
-    
+
     const [grades] = await pool.query(`
       SELECT g.*, q.title as questionnaire_title
       FROM grades g
@@ -2951,7 +2951,7 @@ app.get('/api/students/:studentId/grades', verifyToken, async (req, res) => {
       AND (g.academic_year = ? OR g.academic_year IS NULL)
       ORDER BY g.created_at DESC
     `, [studentId, currentAcademicYear]);
-    
+
     res.json(grades);
   } catch (error) {
     console.error('Error al obtener notas del estudiante:', error);
@@ -2964,16 +2964,16 @@ app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
     const { phase1, phase2, phase3, phase4, average } = req.body;
-    
-    
+
+
     // Obtener año académico actual
     const currentAcademicYear = new Date().getFullYear();
-    
+
     // Buscar si ya existe un registro de notas para este estudiante (filtrado por academic_year)
     const [existingGrades] = await pool.query(`
       SELECT id FROM grades WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)
     `, [studentId, currentAcademicYear]);
-    
+
     if (existingGrades.length > 0) {
       // Actualizar notas existentes (asegurar academic_year)
       await pool.query(`
@@ -2988,7 +2988,7 @@ app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
       `, [studentId, phase1, phase2, phase3, phase4, average, currentAcademicYear]);
     }
-    
+
     // Actualizar phase_averages si hay notas válidas
     // Recalcular automáticamente phase_averages basándose en evaluation_results
     try {
@@ -3003,10 +3003,10 @@ app.put('/api/students/:studentId/grades', verifyToken, async (req, res) => {
       console.error('❌ Error crítico al recalcular phase_averages automáticamente:', error);
       // No interrumpir el flujo principal si hay error en el recálculo automático
     }
-    
+
     console.log(`✅ Notas actualizadas exitosamente para estudiante ${studentId}`);
     res.json({ success: true, message: 'Notas actualizadas correctamente' });
-    
+
   } catch (error) {
     console.error('Error al actualizar notas del estudiante:', error);
     res.status(500).json({ message: 'Error al actualizar notas del estudiante' });
@@ -3027,15 +3027,15 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, isTeacherOrAdmin, async (r
     if (!Number.isFinite(numericScore) || numericScore < 0 || numericScore > 5) {
       return res.status(400).json({ message: 'La calificación debe estar entre 0 y 5.' });
     }
-    
+
     console.log(`📝 Actualizando intento ${attemptId} con puntaje ${score}`);
-    
+
     await pool.query(`
       UPDATE quiz_attempts 
       SET score = ?, attempt_date = NOW()
       WHERE id = ?
     `, [score, attemptId]);
-    
+
     // Obtener información del intento actualizado
     const [updatedAttempt] = await pool.query(`
       SELECT qa.*, s.id as student_id
@@ -3043,10 +3043,10 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, isTeacherOrAdmin, async (r
       JOIN students s ON qa.student_id = s.id
       WHERE qa.id = ?
     `, [attemptId]);
-    
+
     if (updatedAttempt.length > 0) {
       const attempt = updatedAttempt[0];
-      
+
       // Sincronizar phase desde questionnaire (coherencia con quiz_attempts)
       const [qPhase] = await pool.query(
         'SELECT phase FROM questionnaires WHERE id = ?',
@@ -3063,7 +3063,7 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, isTeacherOrAdmin, async (r
          WHERE student_id = ? AND questionnaire_id = ?`,
         [attempt.student_id, attempt.questionnaire_id, attempt.student_id, attempt.questionnaire_id, phaseFromQ, attempt.student_id, attempt.questionnaire_id]
       );
-      
+
       // Recalcular automáticamente phase_averages después de actualizar intentos
       try {
         console.log(`🔄 Iniciando recálculo automático para estudiante ${attempt.student_id}...`);
@@ -3078,10 +3078,10 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, isTeacherOrAdmin, async (r
         // No interrumpir el flujo principal si hay error en el recálculo automático
       }
     }
-    
+
     console.log(`✅ Intento ${attemptId} actualizado exitosamente`);
     res.json({ success: true, message: 'Intento actualizado correctamente' });
-    
+
   } catch (error) {
     console.error('Error al actualizar intento:', error);
     res.status(500).json({ message: 'Error al actualizar intento' });
@@ -3092,21 +3092,21 @@ app.put('/api/quiz-attempts/:attemptId', verifyToken, isTeacherOrAdmin, async (r
 app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
   try {
     let { teacher_id, student_id, user_id } = req.body;
-    
+
     // Si se proporciona user_id en lugar de teacher_id, obtener el teacher_id
     if (!teacher_id && user_id) {
       const [teacherRows] = await pool.query(
         'SELECT id FROM teachers WHERE user_id = ?',
         [user_id]
       );
-      
+
       if (teacherRows.length === 0) {
         return res.status(404).json({ message: 'Profesor no encontrado' });
       }
-      
+
       teacher_id = teacherRows[0].id;
     }
-    
+
     if (req.user.role === 'docente') {
       if (teacher_id && Number(teacher_id) !== Number(req.user.teacher_id)) {
         return res.status(403).json({ message: 'Solo puedes asignar estudiantes a tu propio perfil docente.' });
@@ -3143,16 +3143,16 @@ app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
         teacher_id = teacherRows[0].id;
       }
     }
-    
+
     // Obtener año académico actual
     const currentAcademicYear = new Date().getFullYear();
-    
+
     // Verificar si ya existe la relación
     const [existingRows] = await pool.query(
       'SELECT * FROM teacher_students WHERE student_id = ?',
       [student_id]
     );
-    
+
     if (existingRows.length > 0) {
       // Actualizar la relación existente
       await pool.query(
@@ -3166,7 +3166,7 @@ app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
         [teacher_id, student_id, currentAcademicYear]
       );
     }
-    
+
     // Sincronizar datos automáticamente
     try {
       await syncTeacherStudentData(teacher_id, student_id, currentAcademicYear);
@@ -3174,17 +3174,17 @@ app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
     } catch (syncError) {
       console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
     }
-    
-    res.status(201).json({ 
+
+    res.status(201).json({
       success: true,
-      message: 'Estudiante asignado correctamente al profesor' 
+      message: 'Estudiante asignado correctamente al profesor'
     });
   } catch (error) {
     console.error('❌ Error al asignar estudiante:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: 'Error al asignar estudiante',
-      error: error.message 
+      error: error.message
     });
   }
 });
@@ -3195,7 +3195,7 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
     const { teacher_id, course_id } = req.body;
     const userRole = req.user.role;
     const userId = req.user.id;
-    
+
     // Si el usuario es docente, usar su teacher_id
     let finalTeacherId = teacher_id;
     if (userRole === 'docente') {
@@ -3210,9 +3210,9 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
       if (teacherRows.length > 0) {
         finalTeacherId = teacherRows[0].id;
       } else {
-        return res.status(404).json({ 
+        return res.status(404).json({
           success: false,
-          message: 'Profesor no encontrado' 
+          message: 'Profesor no encontrado'
         });
       }
       const [courseAssignment] = await pool.query(
@@ -3223,17 +3223,17 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
     } else if (!['admin', 'administrador', 'super_administrador'].includes(userRole)) {
       return res.status(403).json({ success: false, message: 'No tienes permiso para asignar cursos.' });
     }
-    
+
     if (!finalTeacherId || !course_id) {
       return res.status(400).json({
         success: false,
         message: 'Se requiere teacher_id y course_id'
       });
     }
-    
+
     // Obtener año académico actual
     const currentAcademicYear = new Date().getFullYear();
-    
+
     // Obtener todos los estudiantes del curso que no tengan profesor asignado
     const [students] = await pool.query(
       `SELECT s.id, s.user_id
@@ -3242,7 +3242,7 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
        WHERE s.course_id = ? AND ts.student_id IS NULL`,
       [course_id]
     );
-    
+
     if (students.length === 0) {
       return res.json({
         success: true,
@@ -3250,11 +3250,11 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
         assigned: 0
       });
     }
-    
+
     // Asignar cada estudiante al docente
     let assignedCount = 0;
     const errors = [];
-    
+
     for (const student of students) {
       try {
         // Verificar si ya existe relación
@@ -3262,21 +3262,21 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
           'SELECT id FROM teacher_students WHERE student_id = ?',
           [student.id]
         );
-        
+
         if (existing.length === 0) {
           // Crear relación
           await pool.query(
             'INSERT INTO teacher_students (teacher_id, student_id, academic_year) VALUES (?, ?, ?)',
             [finalTeacherId, student.id, currentAcademicYear]
           );
-          
+
           // Sincronizar datos
           try {
             await syncTeacherStudentData(finalTeacherId, student.id, currentAcademicYear);
           } catch (syncError) {
             console.error(`⚠️ Error en sincronización para estudiante ${student.id}:`, syncError.message);
           }
-          
+
           assignedCount++;
         }
       } catch (error) {
@@ -3284,7 +3284,7 @@ app.post('/api/teacher/assign-course-students', verifyToken, async (req, res) =>
         errors.push({ student_id: student.id, error: error.message });
       }
     }
-    
+
     res.json({
       success: true,
       message: `Se asignaron ${assignedCount} estudiantes al docente`,
@@ -3316,12 +3316,12 @@ app.delete('/api/teacher/unassign-student', verifyToken, async (req, res) => {
     } else if (!['docente', 'admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
       return res.status(403).json({ message: 'No tienes permiso para modificar asignaciones.' });
     }
-    
+
     await pool.query(
       'DELETE FROM teacher_students WHERE teacher_id = ? AND student_id = ?',
       [teacher_id, student_id]
     );
-    
+
     res.json({ message: 'Estudiante desasignado correctamente del profesor' });
   } catch (error) {
     console.error('❌ Error al desasignar estudiante:', error);
@@ -3342,17 +3342,17 @@ app.delete('/api/teacher/student/:studentId/teacher', verifyToken, async (req, r
     } else if (!['admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
       return res.status(403).json({ message: 'No tienes permiso para modificar asignaciones.' });
     }
-    
+
     console.log(`🗑️ Eliminando relaciones teacher_students para student_id: ${studentId}`);
-    
+
     const [result] = await db.query(
       'DELETE FROM teacher_students WHERE student_id = ?',
       [studentId]
     );
-    
+
     console.log(`✅ Relaciones eliminadas: ${result.affectedRows}`);
-    
-    res.json({ 
+
+    res.json({
       message: 'Relaciones eliminadas correctamente',
       deletedRows: result.affectedRows
     });
@@ -3367,7 +3367,7 @@ app.delete('/api/teacher/student/:studentId/teacher', verifyToken, async (req, r
 app.get('/api/student/evaluation-results/:studentId', verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
-    
+
     // Obtener el ID real del estudiante
     const [studentRows] = await pool.query(
       'SELECT id FROM students WHERE user_id = ?',
@@ -3382,7 +3382,7 @@ app.get('/api/student/evaluation-results/:studentId', verifyToken, async (req, r
     }
 
     const realStudentId = studentRows[0].id;
-    
+
     // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();
 
@@ -3595,11 +3595,11 @@ app.get('/api/teacher/student-teacher/:studentId', verifyToken, async (req, res)
       FROM teacher_students 
       WHERE student_id = ?
     `, [req.params.studentId]);
-    
+
     if (rows.length === 0) {
       return res.json({ teacher_id: null });
     }
-    
+
     // Obtener información del profesor
     const [teacherRows] = await pool.query(`
       SELECT t.id as teacher_id, t.user_id, u.name
@@ -3607,11 +3607,11 @@ app.get('/api/teacher/student-teacher/:studentId', verifyToken, async (req, res)
       JOIN users u ON t.user_id = u.id
       WHERE t.id = ?
     `, [rows[0].teacher_id]);
-    
+
     if (teacherRows.length === 0) {
       return res.json({ teacher_id: null });
     }
-    
+
     res.json(teacherRows[0]);
   } catch (error) {
     console.error('❌ Error al obtener profesor del estudiante:', error);
@@ -3647,16 +3647,16 @@ app.post('/api/teacher/update-student-teacher', verifyToken, async (req, res) =>
         return res.status(403).json({ message: 'No tienes permiso para cambiar asignaciones.' });
       }
     }
-    
+
     // Obtener año académico actual
     const currentAcademicYear = new Date().getFullYear();
-    
+
     // Verificar si ya existe la relación
     const [existingRows] = await pool.query(
       'SELECT * FROM teacher_students WHERE student_id = ?',
       [student_id]
     );
-    
+
     if (existingRows.length > 0) {
       // Actualizar la relación existente (asegurar academic_year)
       await pool.query(
@@ -3670,7 +3670,7 @@ app.post('/api/teacher/update-student-teacher', verifyToken, async (req, res) =>
         [teacher_id, student_id, currentAcademicYear]
       );
     }
-    
+
     // 🔄 Sincronización automática de datos (institution, academic_year, grade, course_id)
     try {
       await syncTeacherStudentData(teacher_id, student_id, currentAcademicYear);
@@ -3679,7 +3679,7 @@ app.post('/api/teacher/update-student-teacher', verifyToken, async (req, res) =>
       console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
       // No fallar la actualización si hay error en la sincronización
     }
-    
+
     res.json({ message: 'Relación estudiante-profesor actualizada correctamente' });
   } catch (error) {
     console.error('❌ Error al actualizar relación estudiante-profesor:', error);
@@ -3749,7 +3749,7 @@ app.get('/api/auth/verify', verificarToken, (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, async () => {
   console.log(`🚀 Servidor corriendo en el puerto ${PORT}`);
-  
+
   // Sincronizar subject_categories con questionnaires al iniciar
   try {
     await syncSubjectCategories();
@@ -3766,9 +3766,9 @@ app.post('/api/recalculate-phase-averages/:studentId', verifyToken, isTeacherOrA
       return res.status(403).json({ message: 'No tienes permiso para recalcular las notas de este estudiante.' });
     }
     console.log(`🔧 Solicitud manual de recálculo para estudiante ${studentId}`);
-    
+
     const result = await recalculatePhaseAverages(parseInt(studentId));
-    
+
     if (result.success) {
       console.log(`✅ Recálculo manual exitoso para estudiante ${studentId}`);
       res.json(result);
@@ -3793,7 +3793,7 @@ app.post('/api/recalculate-phase-averages/teacher/:teacherId', verifyToken, asyn
       return res.status(403).json({ message: 'Se requiere rol docente o administrador.' });
     }
     const result = await recalculateAllStudentsPhaseAverages(parseInt(teacherId));
-    
+
     if (result.success) {
       res.json(result);
     } else {
@@ -3811,6 +3811,170 @@ const allowTeacherOrAdmin = (req, res, next) => {
   if (r === 'docente' || r === 'administrador' || r === 'super_administrador' || r === 'admin') return next();
   return res.status(403).json({ success: false, error: 'Se requiere rol docente, administrador o super administrador.' });
 };
+
+const getAssignedTeacherForManualGrades = async (studentId, requestedTeacherId = null) => {
+  const year = new Date().getFullYear();
+  const [rows] = await pool.query(
+    `SELECT teacher_id FROM teacher_students
+     WHERE student_id = ? AND (academic_year = ? OR academic_year IS NULL)
+     ORDER BY (academic_year = ?) DESC, teacher_id`,
+    [studentId, year, year]
+  );
+  if (requestedTeacherId) {
+    return rows.find(row => Number(row.teacher_id) === Number(requestedTeacherId))?.teacher_id || null;
+  }
+  return rows[0]?.teacher_id || null;
+};
+
+const validateManualGradeInput = (phase, score) => {
+  const parsedPhase = Number(phase);
+  const parsedScore = Number(score);
+  if (![1, 2, 3, 4].includes(parsedPhase)) return { error: 'Fase debe ser 1, 2, 3 o 4.' };
+  if (!Number.isFinite(parsedScore) || parsedScore < 0 || parsedScore > 5) {
+    return { error: 'La nota debe ser un número entre 0 y 5.' };
+  }
+  return { phase: parsedPhase, score: Math.round(parsedScore * 100) / 100 };
+};
+
+const ensureManualGradeAccess = (req, res, teacherId) => {
+  if (req.user.role === 'docente' && Number(req.user.teacher_id) !== Number(teacherId)) {
+    res.status(403).json({ success: false, error: 'No tienes permiso para modificar las notas de este estudiante.' });
+    return false;
+  }
+  return true;
+};
+
+app.get('/api/phase-averages/students/:studentId/manual-grades', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const requestedTeacherId = req.user.role === 'docente' ? req.user.teacher_id : req.query.teacher_id;
+    const teacherId = await getAssignedTeacherForManualGrades(studentId, requestedTeacherId);
+    if (!teacherId) {
+      return res.status(404).json({ success: false, error: 'No se encontró un docente asignado a este estudiante.' });
+    }
+    if (!ensureManualGradeAccess(req, res, teacherId)) return;
+
+    const [rows] = await pool.query(
+      `SELECT id, phase, score, description, assessment_date, created_at
+       FROM manual_phase_grades
+       WHERE student_id = ? AND teacher_id = ?
+       ORDER BY phase, assessment_date, id`,
+      [studentId, teacherId]
+    );
+    res.json({ success: true, teacher_id: teacherId, grades: rows });
+  } catch (error) {
+    console.error('Error al listar notas manuales:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/phase-averages/students/:studentId/recalculate', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const requestedTeacherId = req.user.role === 'docente' ? req.user.teacher_id : req.body.teacher_id;
+    const teacherId = await getAssignedTeacherForManualGrades(studentId, requestedTeacherId);
+    if (!teacherId) {
+      return res.status(404).json({ success: false, error: 'No se encontró un docente asignado a este estudiante.' });
+    }
+    if (!ensureManualGradeAccess(req, res, teacherId)) return;
+
+    const result = await recalculatePhaseAverages(studentId, teacherId);
+    if (!result.success) return res.status(500).json({ success: false, error: result.error });
+    res.json({ success: true, message: 'Promedios recalculados.' });
+  } catch (error) {
+    console.error('Error al recalcular notas manuales:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/phase-averages/students/:studentId/manual-grades', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId, 10);
+    const validation = validateManualGradeInput(req.body.phase, req.body.score);
+    if (validation.error) return res.status(400).json({ success: false, error: validation.error });
+
+    const requestedTeacherId = req.user.role === 'docente' ? req.user.teacher_id : req.body.teacher_id;
+    const teacherId = await getAssignedTeacherForManualGrades(studentId, requestedTeacherId);
+    if (!teacherId) {
+      return res.status(404).json({ success: false, error: 'No se encontró un docente asignado a este estudiante.' });
+    }
+    if (!ensureManualGradeAccess(req, res, teacherId)) return;
+
+    const description = String(req.body.description || '').trim().slice(0, 255) || null;
+    const assessmentDate = req.body.assessment_date || null;
+    if (assessmentDate && !/^\d{4}-\d{2}-\d{2}$/.test(assessmentDate)) {
+      return res.status(400).json({ success: false, error: 'La fecha debe tener formato AAAA-MM-DD.' });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO manual_phase_grades
+        (student_id, teacher_id, phase, score, description, assessment_date, entered_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [studentId, teacherId, validation.phase, validation.score, description, assessmentDate, req.user.id]
+    );
+    const recalculation = await recalculatePhaseAverages(studentId, teacherId);
+    if (!recalculation.success) {
+      return res.status(500).json({ success: false, error: recalculation.error || 'No se pudo recalcular la definitiva.' });
+    }
+    res.status(201).json({ success: true, id: result.insertId, message: 'Nota manual guardada y promedios recalculados.' });
+  } catch (error) {
+    console.error('Error al guardar nota manual:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.put('/api/phase-averages/manual-grades/:gradeId', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradeId = parseInt(req.params.gradeId, 10);
+    const [rows] = await pool.query('SELECT * FROM manual_phase_grades WHERE id = ?', [gradeId]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No se encontró la nota manual.' });
+    const grade = rows[0];
+    if (!ensureManualGradeAccess(req, res, grade.teacher_id)) return;
+
+    const validation = validateManualGradeInput(req.body.phase ?? grade.phase, req.body.score);
+    if (validation.error) return res.status(400).json({ success: false, error: validation.error });
+    const description = String(req.body.description || '').trim().slice(0, 255) || null;
+    const assessmentDate = req.body.assessment_date || null;
+    if (assessmentDate && !/^\d{4}-\d{2}-\d{2}$/.test(assessmentDate)) {
+      return res.status(400).json({ success: false, error: 'La fecha debe tener formato AAAA-MM-DD.' });
+    }
+
+    await pool.query(
+      `UPDATE manual_phase_grades
+       SET phase = ?, score = ?, description = ?, assessment_date = ?
+       WHERE id = ?`,
+      [validation.phase, validation.score, description, assessmentDate, gradeId]
+    );
+    const recalculation = await recalculatePhaseAverages(grade.student_id, grade.teacher_id);
+    if (!recalculation.success) {
+      return res.status(500).json({ success: false, error: recalculation.error || 'No se pudo recalcular la definitiva.' });
+    }
+    res.json({ success: true, message: 'Nota manual actualizada.' });
+  } catch (error) {
+    console.error('Error al actualizar nota manual:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/phase-averages/manual-grades/:gradeId', verifyToken, allowTeacherOrAdmin, async (req, res) => {
+  try {
+    const gradeId = parseInt(req.params.gradeId, 10);
+    const [rows] = await pool.query('SELECT student_id, teacher_id FROM manual_phase_grades WHERE id = ?', [gradeId]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No se encontró la nota manual.' });
+    const grade = rows[0];
+    if (!ensureManualGradeAccess(req, res, grade.teacher_id)) return;
+
+    await pool.query('DELETE FROM manual_phase_grades WHERE id = ?', [gradeId]);
+    const recalculation = await recalculatePhaseAverages(grade.student_id, grade.teacher_id);
+    if (!recalculation.success) {
+      return res.status(500).json({ success: false, error: recalculation.error || 'No se pudo recalcular la definitiva.' });
+    }
+    res.json({ success: true, message: 'Nota manual eliminada.' });
+  } catch (error) {
+    console.error('Error al eliminar nota manual:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 app.put('/api/phase-averages/students/:studentId/phases/:phase/manual', verifyToken, allowTeacherOrAdmin, async (req, res) => {
   try {
@@ -3839,23 +4003,43 @@ app.put('/api/phase-averages/students/:studentId/phases/:phase/manual', verifyTo
 
     const manualVal = average_score_manual === null || average_score_manual === undefined || average_score_manual === ''
       ? null
-      : Math.min(5, Math.max(0, parseFloat(average_score_manual)));
+      : Number(average_score_manual);
 
-    const [existing] = await pool.query(
-      'SELECT id FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
-      [studentId, teacherId, phase]
-    );
-    if (existing.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'No existe registro de fase para este estudiante. Debe haber evaluaciones del sistema en esa fase antes de agregar nota manual.'
-      });
+    if (manualVal !== null && (!Number.isFinite(manualVal) || manualVal < 0 || manualVal > 5)) {
+      return res.status(400).json({ success: false, error: 'La nota debe ser un número entre 0 y 5.' });
     }
 
     await pool.query(
-      'UPDATE phase_averages SET average_score_manual = ? WHERE student_id = ? AND teacher_id = ? AND phase = ?',
-      [manualVal, studentId, teacherId, phase]
+      'DELETE FROM manual_phase_grades WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+      [studentId, teacherId, phase]
     );
+    if (manualVal !== null) {
+      await pool.query(
+        `INSERT INTO manual_phase_grades
+          (student_id, teacher_id, phase, score, description, entered_by)
+         VALUES (?, ?, ?, ?, 'Nota manual', ?)`,
+        [studentId, teacherId, phase, Math.round(manualVal * 100) / 100, req.user.id]
+      );
+    }
+
+    const [existing] = await pool.query(
+      'SELECT id, average_score, evaluations_completed FROM phase_averages WHERE student_id = ? AND teacher_id = ? AND phase = ?',
+      [studentId, teacherId, phase]
+    );
+
+    if (existing.length > 0) {
+      const phaseRow = existing[0];
+      await pool.query(
+        'UPDATE phase_averages SET average_score_manual = ? WHERE id = ?',
+        [manualVal, phaseRow.id]
+      );
+    } else if (manualVal !== null) {
+      // Permite calificar manualmente una fase aunque no haya evaluación virtual.
+      await pool.query(
+        'INSERT INTO phase_averages (student_id, teacher_id, phase, average_score, average_score_manual, evaluations_completed) VALUES (?, ?, ?, NULL, ?, 0)',
+        [studentId, teacherId, phase, manualVal]
+      );
+    }
 
     const result = await recalculatePhaseAverages(studentId, teacherId);
     if (!result.success) {

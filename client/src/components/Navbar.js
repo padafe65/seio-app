@@ -12,10 +12,6 @@ const Navbar = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
-  useEffect(() => {
-    console.log("🔄 Cambios en authToken:", authToken);
-  }, [authToken]);
-  
   const toggleMenu = () => {
     setIsMenuOpen(prev => !prev);
   };

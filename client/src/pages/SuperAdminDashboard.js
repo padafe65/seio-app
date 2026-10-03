@@ -142,7 +142,10 @@ const handleAdminPrint = async () => {
       <div className="card border-primary mb-2">
         <div className="card-body py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
           <span className="fw-medium">Calificaciones por fase</span>
-          <Link to="/calificaciones-fase" className="btn btn-primary btn-sm">Ver tabla y filtros</Link>
+          <div className="d-flex flex-wrap gap-2">
+            <Link to="/estudiantes" className="btn btn-outline-primary btn-sm">Registrar notas manuales</Link>
+            <Link to="/calificaciones-fase" className="btn btn-primary btn-sm">Ver tabla y filtros</Link>
+          </div>
         </div>
       </div>
 

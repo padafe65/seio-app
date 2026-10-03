@@ -59,10 +59,9 @@ export const sendPasswordResetEmail = async (toEmail, userName, resetUrl) => {
 
     if (!transporter) {
       console.warn('⚠️ No se puede enviar correo: no hay configuración SMTP');
-      // En desarrollo, mostrar el link en consola
+      // El enlace contiene un token de un solo uso, así que nunca se registra.
       if (process.env.NODE_ENV === 'development') {
-        console.log(`📧 [DEV] Correo de recuperación para ${toEmail}:`);
-        console.log(`🔗 Link: ${resetUrl}`);
+        console.log(`📧 [DEV] No se pudo enviar el correo de recuperación a ${toEmail}.`);
       }
       return { success: false, message: 'Servicio de correo no configurado' };
     }
@@ -188,10 +187,9 @@ export const sendPasswordResetEmail = async (toEmail, userName, resetUrl) => {
   } catch (error) {
     console.error('❌ Error al enviar correo de recuperación:', error);
     
-    // En desarrollo, mostrar el link en consola si falla el envío
+    // No registrar el enlace: contiene el token de recuperación.
     if (process.env.NODE_ENV === 'development') {
-      console.log(`📧 [DEV] Falló el envío, pero aquí está el link para ${toEmail}:`);
-      console.log(`🔗 Link: ${resetUrl}`);
+      console.log(`📧 [DEV] Falló el envío del correo de recuperación a ${toEmail}.`);
     }
     
     return { success: false, error: error.message };
@@ -208,9 +206,17 @@ export const sendPasswordResetEmail = async (toEmail, userName, resetUrl) => {
  * @param {Buffer|null} pdfBuffer - Buffer del PDF adjunto (opcional)
  * @returns {Promise<Object>} Resultado del envío
  */
-export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, improvementPlan, failedIndicators = [], pdfBuffer = null) => {
+export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, improvementPlan, failedIndicators = [], pdfBuffer = null, options = {}) => {
   try {
+    phaseScore = Number(phaseScore);
+    if (!Number.isFinite(phaseScore)) {
+      throw new Error('La nota de fase no es un número válido.');
+    }
     const transporter = createTransporter();
+    const recipients = options.recipients || [studentData.email, studentData.contact_email].filter(Boolean);
+    const achievedIndicators = options.achievedIndicators || [];
+    const contactEmail = String(studentData.contact_email || '').trim();
+    const hasContactRecipient = Boolean(contactEmail && recipients.includes(contactEmail));
 
     if (!transporter) {
       console.warn('⚠️ No se puede enviar correo: no hay configuración SMTP');
@@ -229,15 +235,24 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
     const statusColor = passed ? '#28a745' : '#dc3545';
     const statusIcon = passed ? '✅' : '❌';
 
-    // Construir lista de indicadores fallidos
+    // Mostrar los indicadores que corresponden al resultado de la fase.
+    const resultIndicators = passed ? achievedIndicators : failedIndicators;
+    const indicatorsHeading = passed ? 'Indicadores Alcanzados:' : 'Indicadores No Alcanzados:';
     let indicatorsHtml = '';
-    if (failedIndicators.length > 0) {
+    if (resultIndicators.length > 0) {
       indicatorsHtml = `
         <div class="section">
-          <h3>📋 Indicadores No Alcanzados:</h3>
+          <h3>📋 ${indicatorsHeading}</h3>
           <ul>
-            ${failedIndicators.map(ind => `<li>${ind.description || ind}</li>`).join('')}
+            ${resultIndicators.map(ind => `<li>${ind.description || ind}</li>`).join('')}
           </ul>
+        </div>
+      `;
+    } else {
+      indicatorsHtml = `
+        <div class="section">
+          <h3>Indicadores ${passed ? 'Alcanzados' : 'No Alcanzados'}:</h3>
+          <p>No hay indicadores registrados para esta fase.</p>
         </div>
       `;
     }
@@ -279,7 +294,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
 
     const mailOptions = {
       from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@seio.com',
-      to: [studentData.email, studentData.contact_email].filter(Boolean).join(', '), // Enviar a estudiante y acudiente
+      to: recipients.join(', '),
       subject: `Resultados Fase ${phase} - ${studentData.name} - ${statusText}`,
       attachments: attachments.length > 0 ? attachments : undefined,
       html: `
@@ -376,7 +391,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
               <h1>📊 Resultados Fase ${phase}</h1>
             </div>
             <div class="content">
-              <p>Estimado(a) <strong>${studentData.name}</strong> y acudiente,</p>
+              <p>Estimado(a) <strong>${studentData.name}</strong>${hasContactRecipient ? ' y acudiente' : ''},</p>
               <p>Le informamos los resultados académicos de la <strong>Fase ${phase}</strong> del período académico:</p>
               
               <div class="score-display">
@@ -402,14 +417,14 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
       text: `
         Resultados Fase ${phase} - SEIO
         
-        Estimado(a) ${studentData.name} y acudiente,
+        Estimado(a) ${studentData.name}${hasContactRecipient ? ' y acudiente' : ''},
         
         Le informamos los resultados académicos de la Fase ${phase}:
         
         Nota Fase ${phase}: ${phaseScore.toFixed(2)}
         Estado: ${statusText}
         
-        ${failedIndicators.length > 0 ? `\nIndicadores No Alcanzados:\n${failedIndicators.map(ind => `- ${ind.description || ind}`).join('\n')}` : ''}
+        ${resultIndicators.length > 0 ? `\n${indicatorsHeading}\n${resultIndicators.map(ind => `- ${ind.description || ind}`).join('\n')}` : '\nNo hay indicadores registrados para esta fase.'}
         
         ${improvementPlan ? `\nPlan de Mejoramiento:\n${improvementPlan.title || 'Plan de Recuperación'}\nMateria: ${improvementPlan.subject || 'N/A'}\nFecha límite: ${improvementPlan.deadline || 'Por definir'}` : '\nEl docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días.'}
         
@@ -418,7 +433,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Correo de resultados fase ${phase} enviado a ${studentData.email} y ${studentData.contact_email}:`, info.messageId);
+    console.log(`✅ Correo de resultados fase ${phase} enviado a ${recipients.join(', ')}:`, info.messageId);
     return { success: true, messageId: info.messageId };
 
   } catch (error) {
@@ -435,9 +450,20 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
  * @param {Buffer|null} pdfBuffer - Buffer del PDF adjunto (opcional)
  * @returns {Promise<Object>} Resultado del envío
  */
-export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades = {}, pdfBuffer = null) => {
+export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades = {}, pdfBuffer = null, recipients = null) => {
   try {
+    finalGrade = Number(finalGrade);
+    if (!Number.isFinite(finalGrade)) {
+      throw new Error('La nota final no es un número válido.');
+    }
+    phaseGrades = Object.fromEntries(Object.entries(phaseGrades).map(([key, value]) => [
+      key,
+      value == null || value === '' ? null : Number(value)
+    ]));
     const transporter = createTransporter();
+    recipients = recipients || [studentData.email, studentData.contact_email].filter(Boolean);
+    const contactEmail = String(studentData.contact_email || '').trim();
+    const hasContactRecipient = Boolean(contactEmail && recipients.includes(contactEmail));
 
     if (!transporter) {
       console.warn('⚠️ No se puede enviar correo: no hay configuración SMTP');
@@ -493,7 +519,7 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
 
     const mailOptions = {
       from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@seio.com',
-      to: [studentData.email, studentData.contact_email].filter(Boolean).join(', '),
+      to: recipients.join(', '),
       subject: `Nota Final - ${studentData.name} - ${statusText}`,
       attachments: attachments.length > 0 ? attachments : undefined,
       html: `
@@ -578,7 +604,7 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
               <h1>🎓 Nota Final - Período Académico</h1>
             </div>
             <div class="content">
-              <p>Estimado(a) <strong>${studentData.name}</strong> y acudiente,</p>
+              <p>Estimado(a) <strong>${studentData.name}</strong>${hasContactRecipient ? ' y acudiente' : ''},</p>
               <p>Le informamos la <strong>nota final</strong> del período académico:</p>
               
               <div class="score-display">
@@ -619,7 +645,7 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
       text: `
         Nota Final - SEIO
         
-        Estimado(a) ${studentData.name} y acudiente,
+        Estimado(a) ${studentData.name}${hasContactRecipient ? ' y acudiente' : ''},
         
         Le informamos la nota final del período académico:
         
@@ -640,7 +666,7 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ Correo de nota final enviado a ${studentData.email} y ${studentData.contact_email}:`, info.messageId);
+    console.log(`✅ Correo de nota final enviado a ${recipients.join(', ')}:`, info.messageId);
     return { success: true, messageId: info.messageId };
 
   } catch (error) {
