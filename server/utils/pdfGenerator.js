@@ -205,8 +205,12 @@ export const generatePhaseResultsPDF = async (data) => {
       yPosition += 25;
 
       const phaseScore = parseFloat(data.phaseScore) || 0;
-      const passed = phaseScore >= 3.5;
-      const statusText = passed ? 'APROBÓ' : 'NO APROBÓ';
+      const hasFinalOutcome = data.isFinalPass !== null && data.isFinalPass !== undefined;
+      const passed = hasFinalOutcome ? Boolean(data.isFinalPass) : phaseScore >= 3.5;
+      const displayedScore = hasFinalOutcome ? Number(data.finalGrade) : phaseScore;
+      const statusText = hasFinalOutcome
+        ? (passed ? 'PROMOVIDO' : 'NO PROMOVIDO')
+        : (passed ? 'APROBÓ' : 'NO APROBÓ');
       const statusColor = passed ? '#28a745' : '#dc3545';
       const phaseIndicators = passed
         ? (data.achievedIndicators || [])
@@ -219,12 +223,12 @@ export const generatePhaseResultsPDF = async (data) => {
       doc.fontSize(16)
          .font('Helvetica-Bold')
          .fillColor('#1a1a1a')
-         .text('Nota de la Fase:', 50, yPosition);
+         .text(hasFinalOutcome ? 'Nota Definitiva:' : 'Nota de la Fase:', 50, yPosition);
 
       doc.fontSize(24)
          .font('Helvetica-Bold')
          .fillColor(statusColor)
-         .text(phaseScore.toFixed(2), 200, yPosition - 5);
+         .text(displayedScore.toFixed(2), 200, yPosition - 5);
 
       doc.fontSize(14)
          .font('Helvetica-Bold')
@@ -237,7 +241,7 @@ export const generatePhaseResultsPDF = async (data) => {
       doc.fontSize(10)
          .font('Helvetica')
          .fillColor('#666666')
-         .text('Nota mínima para aprobar: 3.5', 50, yPosition, { width: 500 });
+         .text(hasFinalOutcome ? 'Nota mínima para promoción: 3.0' : 'Nota mínima para aprobar fase: 3.5', 50, yPosition, { width: 500 });
 
       yPosition += 20;
 
@@ -282,7 +286,7 @@ export const generatePhaseResultsPDF = async (data) => {
       // ============================================
       // PLAN DE MEJORAMIENTO
       // ============================================
-      if (data.improvementPlan) {
+      if (data.improvementPlan && !passed) {
         // Verificar si hay espacio suficiente
         if (yPosition > 600) {
           doc.addPage();
@@ -399,8 +403,8 @@ export const generatePhaseResultsPDF = async (data) => {
             yPosition += 15;
           });
         }
-      } else {
-        // Mensaje si no hay plan
+      } else if (!passed) {
+        // Mostrar el aviso de entrega del plan solo al estudiante que no aprobó.
         if (yPosition > 650) {
           doc.addPage();
           yPosition = 50;
@@ -578,7 +582,7 @@ export const generateFinalGradePDF = async (data) => {
 
       // Nota final destacada
       const finalGrade = parseFloat(data.finalGrade) || 0;
-      const passed = finalGrade >= 3.5;
+      const passed = finalGrade >= 3.0;
       const statusColor = passed ? '#28a745' : '#dc3545';
 
       doc.fontSize(18)
@@ -594,9 +598,16 @@ export const generateFinalGradePDF = async (data) => {
       doc.fontSize(16)
          .font('Helvetica-Bold')
          .fillColor(statusColor)
-         .text(passed ? 'APROBÓ' : 'REPROBÓ', 300, yPosition + 5);
+         .text(passed ? 'APROBÓ' : 'NO PROMOVIDO', 300, yPosition + 5);
 
-      yPosition += 50;
+      yPosition += 30;
+      doc.fontSize(10)
+         .font('Helvetica')
+         .fillColor(statusColor)
+         .text(passed
+           ? `Felicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${data.teacherSubject || 'la materia'}. Sigue adelante con ese esfuerzo.`
+           : 'Sigue esforzándote para alcanzar los objetivos de aprendizaje. El docente te orientará sobre el proceso de mejoramiento.', 50, yPosition, { width: 500 });
+      yPosition += 35;
 
       // Tabla de notas por fase
       doc.fontSize(12)

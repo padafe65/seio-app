@@ -19,7 +19,14 @@ const CalificacionesPorFasePage = () => {
       axiosClient.get('/admin/users').then((r) => {
         const data = r.data?.data || r.data || [];
         const docentes = Array.isArray(data) ? data.filter((u) => u.role === 'docente') : [];
-        setTeachers(docentes.map((u) => ({ id: u.id, name: u.name })));
+        // /admin/users puede repetir un usuario cuando tiene varios registros en teachers.
+        const uniqueTeachers = new Map();
+        docentes.forEach((u) => {
+          if (!uniqueTeachers.has(String(u.id))) {
+            uniqueTeachers.set(String(u.id), { id: u.id, name: u.name });
+          }
+        });
+        setTeachers([...uniqueTeachers.values()]);
       }).catch(() => setTeachers([]));
     }
   }, [isAdmin]);
@@ -56,6 +63,14 @@ const CalificacionesPorFasePage = () => {
     }).map((g) => ({ id: g.course_id ?? g.course_name, name: g.course_name || '—' }));
   }, [grades]);
   const formatGrade = (v) => (v != null && !isNaN(parseFloat(v)) ? parseFloat(v).toFixed(1) : 'N/A');
+  const getPromotionStatus = (student) => {
+    const hasAllPhases = [1, 2, 3, 4].every(phase => {
+      const grade = student[`phase${phase}`];
+      return grade != null && Number.isFinite(Number(grade));
+    });
+    if (!hasAllPhases || student.average == null || !Number.isFinite(Number(student.average))) return 'Pendiente';
+    return Number(student.average) >= 3.0 ? 'Promovido' : 'No promovido';
+  };
 
   const filtered = useMemo(() => {
     let out = grades;
@@ -77,6 +92,7 @@ const CalificacionesPorFasePage = () => {
         <h4 className="mb-0">Calificaciones por Fase</h4>
         <Link to="/dashboard" className="btn btn-outline-secondary">Volver al Dashboard</Link>
       </div>
+      <p className="text-muted small mb-3">La promoción se calcula con una definitiva mínima de 3,0 y queda pendiente hasta registrar las cuatro fases.</p>
 
       {isAdmin && teachers.length > 0 && (
         <div className="card mb-4">
@@ -170,11 +186,13 @@ const CalificacionesPorFasePage = () => {
                     <th>Fase 3</th>
                     <th>Fase 4</th>
                     <th>Promedio</th>
+                    <th>Promoción</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.map((g) => {
+                    const promotionStatus = getPromotionStatus(g);
                     const phaseBadge = (n) => {
                       const manual = g[`phase${n}_manual`];
                       const val = formatGrade(g[`phase${n}`]);
@@ -192,6 +210,13 @@ const CalificacionesPorFasePage = () => {
                         <td>{phaseBadge(3)}</td>
                         <td>{phaseBadge(4)}</td>
                         <td>{formatGrade(g.average)}</td>
+                        <td>
+                          <span className={`badge ${promotionStatus === 'Promovido' ? 'bg-success' : promotionStatus === 'No promovido' ? 'bg-danger' : 'bg-secondary'}`}>
+                            {promotionStatus}
+                          </span>
+                          {promotionStatus === 'Promovido' && <small className="d-block text-success mt-1">¡Felicitaciones por tu esfuerzo y por aprobar los objetivos de aprendizaje propuestos para {g.subject || 'la materia'}!</small>}
+                          {promotionStatus === 'No promovido' && <small className="d-block text-muted mt-1">Sigue esforzándote para alcanzar los objetivos e indicadores de aprendizaje de {g.subject || 'la materia'}.</small>}
+                        </td>
                         <td>
                           <Link to={`/estudiantes/${g.student_id}/calificaciones`} className="btn btn-sm btn-outline-primary">Ver / Editar</Link>
                         </td>

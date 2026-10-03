@@ -98,6 +98,8 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
     
     for (const student of students) {
       studentsProcessed++;
+      const hasAllPhases = [student.phase1, student.phase2, student.phase3, student.phase4]
+        .every(score => score !== null && score !== undefined && Number.isFinite(Number(score)));
       
       // Obtener indicadores no alcanzados para esta fase
       // Buscar indicadores del estudiante que no alcanzó en esta fase
@@ -181,7 +183,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
       }
       
       // Si es la fase final (4) y el promedio general es < 3.0, marcar como materia perdida
-      if (phase === 4 && student.overall_average < 3.0) {
+      if (phase === 4 && hasAllPhases && student.overall_average < 3.0) {
         const result = await markFailedSubject(student);
         if (result && result.created) plansCreated++;
         if (result && result.updated) plansUpdated++;
@@ -194,8 +196,13 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
         email: student.student_email,
         contact_email: student.contact_email,
         grade: student.grade,
-        course_name: student.course_name
+        course_name: student.course_name,
+        subject: student.teacher_subject,
+        final_grade: student.overall_average
       };
+      const finalPromotionPassed = phase === 4 && hasAllPhases && student.overall_average != null
+        ? Number(student.overall_average) >= 3.0
+        : null;
       const resultRecipients = getResultEmailRecipients(student);
 
       // Preparar datos para el PDF
@@ -205,6 +212,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
         courseName: student.course_name,
         phase: phase,
         phaseScore: student.phase_score,
+        finalGrade: student.overall_average,
         teacherName: student.teacher_name || 'N/A',
         teacherSubject: student.teacher_subject || 'N/A',
         reportBrandName: student.report_brand_name || null,
@@ -213,6 +221,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
         academicPeriod: academicPeriod,
         failedIndicators: failedIndicators,
         achievedIndicators: achievedIndicators,
+        isFinalPass: finalPromotionPassed,
         improvementPlan: improvementPlan
       };
       
@@ -236,7 +245,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
             improvementPlan,
             failedIndicators,
             pdfBuffer,
-            { recipients: resultRecipients, achievedIndicators }
+            { recipients: resultRecipients, achievedIndicators, isFinalPass: finalPromotionPassed }
           );
           
           if (emailResult.success) {
@@ -244,7 +253,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
             console.log(`✅ Email enviado a ${student.student_name} (fase ${phase})`);
             
             // Si hay plan, marcar como enviado
-            if (improvementPlan) {
+            if (improvementPlan && student.phase_score < 3.5 && finalPromotionPassed !== true) {
               await pool.query(
                 'UPDATE improvement_plans SET email_sent = 1 WHERE id = ?',
                 [improvementPlan.id]
@@ -263,7 +272,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
       }
       
       // Si es fase 4, enviar también email con nota final
-      if (phase === 4 && resultRecipients.length > 0) {
+      if (phase === 4 && hasAllPhases && resultRecipients.length > 0) {
         try {
           const phaseGrades = {
             phase1: student.phase1,

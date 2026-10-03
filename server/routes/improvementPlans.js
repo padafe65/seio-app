@@ -702,6 +702,15 @@ router.delete('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
 router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', async (req, res) => {
   try {
     const { studentId, grade, phase } = req.params;
+    if (!['administrador', 'super_administrador', 'admin'].includes(req.user.role)) {
+      let accessRows = [];
+      if (req.user.role === 'estudiante') {
+        [accessRows] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [studentId, req.user.id]);
+      } else if (req.user.role === 'docente') {
+        [accessRows] = await pool.query('SELECT id FROM teacher_students WHERE student_id = ? AND teacher_id = ?', [studentId, req.user.teacher_id]);
+      }
+      if (!accessRows.length) return res.status(403).json({ message: 'No tienes acceso a los indicadores de este estudiante.' });
+    }
     console.log(`🔍 Buscando indicadores no alcanzados para estudiante ${studentId}, grado ${grade}, fase ${phase}`);
     
     // Obtener indicadores no alcanzados para este estudiante en esta fase
@@ -717,13 +726,12 @@ router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', asyn
         si.questionnaire_id,
         qi.passing_score
       FROM indicators i
-      JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
-      LEFT JOIN student_indicators si ON i.id = si.indicator_id AND si.student_id = ?
+      JOIN teacher_students ts ON i.teacher_id = ts.teacher_id AND ts.student_id = ?
+      JOIN student_indicators si ON i.id = si.indicator_id AND si.student_id = ?
       LEFT JOIN questionnaire_indicators qi ON i.id = qi.indicator_id AND si.questionnaire_id = qi.questionnaire_id
-      WHERE ts.student_id = ? 
-        AND i.grade = ? 
+      WHERE i.grade = ? 
         AND i.phase = ?
-        AND (si.achieved = 0 OR si.achieved IS NULL)
+        AND si.achieved = 0
       ORDER BY i.subject, i.id
     `, [studentId, studentId, grade, phase]);
     
@@ -750,15 +758,26 @@ router.get('/improvement-plans/indicators/failed/:studentId/:grade/:phase', asyn
 router.get('/improvement-plans/indicators/passed/:studentId/:grade/:phase', async (req, res) => {
   try {
     const { studentId, grade, phase } = req.params;
+
+    if (!['administrador', 'super_administrador', 'admin'].includes(req.user.role)) {
+      let accessRows = [];
+      if (req.user.role === 'estudiante') {
+        [accessRows] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [studentId, req.user.id]);
+      } else if (req.user.role === 'docente') {
+        [accessRows] = await pool.query('SELECT id FROM teacher_students WHERE student_id = ? AND teacher_id = ?', [studentId, req.user.teacher_id]);
+      }
+      if (!accessRows.length) return res.status(403).json({ message: 'No tienes acceso a los indicadores de este estudiante.' });
+    }
     
     // Obtener indicadores alcanzados para este estudiante en esta fase
     const [indicators] = await pool.query(`
-      SELECT i.id, i.description, i.subject, i.phase, i.grade, i.achieved
+      SELECT DISTINCT i.id, i.description, i.subject, i.phase, i.grade, si.achieved
       FROM indicators i
-      JOIN teacher_students ts ON i.teacher_id = ts.teacher_id
-      WHERE ts.student_id = ? AND i.grade = ? AND i.phase = ? AND i.achieved = true
-      ORDER BY i.subject
-    `, [studentId, grade, phase]);
+      JOIN teacher_students ts ON i.teacher_id = ts.teacher_id AND ts.student_id = ?
+      JOIN student_indicators si ON si.indicator_id = i.id AND si.student_id = ?
+      WHERE i.grade = ? AND i.phase = ? AND si.achieved = 1
+      ORDER BY i.subject, i.id
+    `, [studentId, studentId, grade, phase]);
     
     res.json(indicators);
   } catch (error) {

@@ -1167,6 +1167,19 @@ router.get('/student/:userId', verifyToken, async (req, res) => {
     }
     
     const student = studentRows[0];
+    const adminRoles = ['admin', 'administrador', 'super_administrador'];
+    if (req.user.role === 'estudiante' && Number(userId) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Solo puedes consultar tus propios indicadores.' });
+    }
+    if (req.user.role === 'docente') {
+      const teacherIds = (req.user.teacher_ids || (req.user.teacher_id ? [req.user.teacher_id] : [])).map(Number);
+      const [assignments] = teacherIds.length
+        ? await connection.query('SELECT id FROM teacher_students WHERE student_id = ? AND teacher_id IN (?) LIMIT 1', [student.id, teacherIds])
+        : [[]];
+      if (!assignments.length) return res.status(403).json({ success: false, message: 'No tienes acceso a los indicadores de este estudiante.' });
+    } else if (req.user.role !== 'estudiante' && !adminRoles.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Acceso denegado.' });
+    }
     console.log(`✅ Estudiante encontrado: ${student.student_name} (Grado: ${student.grade})`);
     
     // 2. Obtener los indicadores asociados al estudiante a través de student_indicators
@@ -1197,7 +1210,7 @@ router.get('/student/:userId', verifyToken, async (req, res) => {
       LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       LEFT JOIN courses c ON q.course_id = c.id
       WHERE si.student_id = ?
-      ORDER BY i.phase, i.subject, i.created_at DESC
+      ORDER BY i.phase, i.subject, si.assigned_at DESC, si.id DESC
     `, [student.id]);
     
     console.log(`✅ Se encontraron ${indicatorRows.length} indicadores para el estudiante`);

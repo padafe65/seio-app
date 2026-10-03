@@ -10,6 +10,7 @@ const ImprovementPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [indicators, setIndicators] = useState([]);
+  const [isPromoted, setIsPromoted] = useState(null);
   const { user } = useAuth();
   const navigate = useNavigate();
   
@@ -30,11 +31,25 @@ const ImprovementPage = () => {
         const plansResponse = await axiosClient.get(`/improvement-plans/student-id/${studentId}`);
         setPlans(plansResponse.data || []);
         
-        // Obtener indicadores no alcanzados para este estudiante
-        const indicatorsResponse = await axiosClient.get(
-          `/improvement-plans/indicators/failed/${studentId}/${studentResponse.data.grade}/1`
-        );
-        setIndicators(indicatorsResponse.data || []);
+        // Esta ruta devuelve todos los indicadores asignados, logrados y pendientes,
+        // sin asumir de antemano cuántas fases tiene el curso.
+        const indicatorsResponse = await axiosClient.get(`/indicators/student/${user.id}`);
+        const indicatorsData = indicatorsResponse.data?.data;
+        setIndicators(Array.isArray(indicatorsData) ? indicatorsData : []);
+
+        try {
+          const gradesResponse = await axiosClient.get(`/reports/generate-grade-report?studentId=${studentId}`);
+          const gradeRows = Array.isArray(gradesResponse.data) ? gradesResponse.data : [];
+          const finalGradeValue = gradeRows.find(row => row.final_grade != null)?.final_grade;
+          const finalGrade = finalGradeValue == null ? NaN : Number(finalGradeValue);
+          const hasAllFourPhases = [1, 2, 3, 4].every(phase =>
+            gradeRows.some(row => row[`phase${phase}`] != null && Number.isFinite(Number(row[`phase${phase}`])))
+          );
+          setIsPromoted(hasAllFourPhases && Number.isFinite(finalGrade) ? finalGrade >= 3.0 : null);
+        } catch (gradeError) {
+          console.error('No se pudo determinar el resultado final del estudiante:', gradeError);
+          setIsPromoted(null);
+        }
         
         setLoading(false);
       } catch (error) {
@@ -54,6 +69,9 @@ const ImprovementPage = () => {
     const date = new Date(dateString);
     return date.toLocaleDateString('es-CO');
   };
+
+  const achievedIndicators = indicators.filter(indicator => indicator.achieved === true || Number(indicator.achieved) === 1);
+  const failedIndicators = indicators.filter(indicator => indicator.achieved === false || Number(indicator.achieved) === 0);
   
   if (loading) {
     return (
@@ -146,9 +164,9 @@ const ImprovementPage = () => {
               <h5 className="mb-0">Indicadores No Alcanzados</h5>
             </div>
             <div className="card-body">
-              {indicators.length > 0 ? (
+              {failedIndicators.length > 0 ? (
                 <ul className="list-group">
-                  {indicators.map(indicator => (
+                  {failedIndicators.map(indicator => (
                     <li key={indicator.id} className="list-group-item">
                       <div className="d-flex justify-content-between align-items-center">
                         <div>
@@ -169,6 +187,40 @@ const ImprovementPage = () => {
           </div>
         </div>
       </div>
+
+      <div className="card mt-4">
+        <div className="card-header bg-success text-white">
+          <h5 className="mb-0">Indicadores Alcanzados</h5>
+        </div>
+        <div className="card-body">
+          {achievedIndicators.length > 0 ? (
+            <>
+              <div className="alert alert-success">
+                ¡Felicitaciones por tu esfuerzo y por alcanzar estos objetivos de aprendizaje! Sigue avanzando en {achievedIndicators.map(i => i.subject).filter((s, idx, all) => s && all.indexOf(s) === idx).join(', ') || 'tus materias'}.
+              </div>
+              <ul className="list-group">
+                {achievedIndicators.map(indicator => (
+                  <li key={indicator.student_indicator_id || `${indicator.id}-${indicator.phase}`} className="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                      <p className="mb-1">{indicator.description}</p>
+                      <small className="text-muted">Materia: {indicator.subject || '—'}</small>
+                    </div>
+                    <span className="badge bg-success">Fase {indicator.phase}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="mb-0 text-muted">Aún no hay indicadores alcanzados registrados.</p>
+          )}
+        </div>
+      </div>
+
+      {isPromoted === false && (
+        <div className="alert alert-info mt-4" role="status">
+          Sigue esforzándote para alcanzar los objetivos de aprendizaje. El docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días. Por favor, está atento a las comunicaciones del docente.
+        </div>
+      )}
       
       <div className="card mt-4">
         <div className="card-header bg-info text-white">

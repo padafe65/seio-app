@@ -22,7 +22,8 @@ const cargarImagenComoBase64 = (url) => {
 
 export const generateGradePDF = async (data, type = 'individual', teacherInfo = {}) => {
   // Si es grupal, usamos 'l' (landscape/horizontal) para que quepan las fases
-  const doc = new jsPDF(type === 'group' ? 'l' : 'p'); 
+  const isGroupReport = type === 'group' || type === 'course';
+  const doc = new jsPDF(isGroupReport ? 'l' : 'p'); 
   const primaryColor = [41, 128, 185];
 
   // --- 1. PROCESAR LOGO ---
@@ -57,21 +58,25 @@ export const generateGradePDF = async (data, type = 'individual', teacherInfo = 
   let finalY = 0;
   doc.setTextColor(0);
 
-  if (type === 'group') {
+  if (isGroupReport) {
     // TABLA GRUPAL (PLANILLA)
     doc.setFont("helvetica", "bold").setFontSize(12);
     doc.text(`PLANILLA DE CALIFICACIONES: ${data[0]?.course_name || 'General'}`, 14, 48);
     
     autoTable(doc, {
       startY: 55,
-      head: [['Estudiante', 'Fase 1', 'Fase 2', 'Fase 3', 'Fase 4', 'Definitiva']],
+      head: [['Estudiante', 'Fase 1', 'Fase 2', 'Fase 3', 'Fase 4', 'Definitiva', 'Promoción']],
       body: data.map(item => [
         item.student_name || item.name,
         item.phase1 || '0.0',
         item.phase2 || '0.0',
         item.phase3 || '0.0',
         item.phase4 || '0.0',
-        item.final_grade || item.average || '0.0'
+        item.final_grade || item.average || '0.0',
+        [item.phase1, item.phase2, item.phase3, item.phase4].some(score => score == null || score === '')
+          || (item.final_grade ?? item.average) == null
+          ? 'Pendiente'
+          : Number(item.final_grade ?? item.average) >= 3.0 ? 'Promovido' : 'No promovido'
       ]),
       headStyles: { fillColor: primaryColor, halign: 'center' },
       styles: { halign: 'center', fontSize: 9 },
@@ -98,8 +103,8 @@ export const generateGradePDF = async (data, type = 'individual', teacherInfo = 
   if (firmaY > (pageHeight - 30)) doc.addPage();
   const yFinal = (firmaY > (pageHeight - 30)) ? 40 : firmaY;
 
-  doc.setDrawColor(180).line(type === 'group' ? 110 : 70, yFinal, type === 'group' ? 180 : 140, yFinal);
-  doc.setFontSize(9).text(teacherInfo.name || 'Firma Docente', type === 'group' ? 145 : 105, yFinal + 5, { align: 'center' });
+  doc.setDrawColor(180).line(isGroupReport ? 110 : 70, yFinal, isGroupReport ? 180 : 140, yFinal);
+  doc.setFontSize(9).text(teacherInfo.name || 'Firma Docente', isGroupReport ? 145 : 105, yFinal + 5, { align: 'center' });
 
   doc.save(`Reporte_${institucion.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
 };

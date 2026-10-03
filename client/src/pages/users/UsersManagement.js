@@ -34,6 +34,17 @@ const UsersManagement = () => {
       setLoading(true);
       const response = await axiosClient.get('/admin/users');
       let usersData = response.data.data || response.data || [];
+
+      // El endpoint puede devolver varias filas por usuario si tiene varios registros en teachers.
+      // La tabla de administración representa cuentas de users, así que cada ID debe aparecer una vez.
+      if (Array.isArray(usersData)) {
+        const uniqueUsers = new Map();
+        usersData.forEach((userItem) => {
+          const key = userItem.id == null ? null : String(userItem.id);
+          if (key !== null && !uniqueUsers.has(key)) uniqueUsers.set(key, userItem);
+        });
+        usersData = [...uniqueUsers.values()];
+      }
       
       // Si es administrador (no super), filtrar para que solo vea estudiantes y docentes
       if (user.role === 'administrador') {

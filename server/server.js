@@ -2773,7 +2773,7 @@ app.get('/api/teacher/student-grades/:teacherId', verifyToken, async (req, res) 
     }
 
     const [teacherRows] = await pool.query(
-      'SELECT id FROM teachers WHERE user_id = ?',
+      'SELECT id, subject FROM teachers WHERE user_id = ? ORDER BY id',
       [teacherId]
     );
 
@@ -2781,22 +2781,25 @@ app.get('/api/teacher/student-grades/:teacherId', verifyToken, async (req, res) 
       return res.json([]);
     }
 
-    const realTeacherId = teacherRows[0].id;
+    const teacherIds = teacherRows.map((row) => row.id);
+    const teacherPlaceholders = teacherIds.map(() => '?').join(', ');
     const currentAcademicYear = new Date().getFullYear();
+    const teacherSubject = [...new Set(teacherRows.map((row) => row.subject).filter(Boolean))].join(', ') || null;
 
     const [rows] = await pool.query(`
       SELECT
         s.id AS student_id,
         s.user_id,
         s.grade,
+        ? AS subject,
         c.id AS course_id,
         c.name AS course_name,
         u.name AS student_name,
-        MAX(g.phase1) AS phase1,
-        MAX(g.phase2) AS phase2,
-        MAX(g.phase3) AS phase3,
-        MAX(g.phase4) AS phase4,
-        MAX(g.average) AS average,
+        CASE WHEN COUNT(pa.phase) > 0 THEN MAX(CASE WHEN pa.phase = 1 THEN CASE WHEN pa.average_score IS NOT NULL AND pa.average_score_manual IS NOT NULL THEN (pa.average_score + pa.average_score_manual) / 2 ELSE COALESCE(pa.average_score, pa.average_score_manual) END END) ELSE MAX(g.phase1) END AS phase1,
+        CASE WHEN COUNT(pa.phase) > 0 THEN MAX(CASE WHEN pa.phase = 2 THEN CASE WHEN pa.average_score IS NOT NULL AND pa.average_score_manual IS NOT NULL THEN (pa.average_score + pa.average_score_manual) / 2 ELSE COALESCE(pa.average_score, pa.average_score_manual) END END) ELSE MAX(g.phase2) END AS phase2,
+        CASE WHEN COUNT(pa.phase) > 0 THEN MAX(CASE WHEN pa.phase = 3 THEN CASE WHEN pa.average_score IS NOT NULL AND pa.average_score_manual IS NOT NULL THEN (pa.average_score + pa.average_score_manual) / 2 ELSE COALESCE(pa.average_score, pa.average_score_manual) END END) ELSE MAX(g.phase3) END AS phase3,
+        CASE WHEN COUNT(pa.phase) > 0 THEN MAX(CASE WHEN pa.phase = 4 THEN CASE WHEN pa.average_score IS NOT NULL AND pa.average_score_manual IS NOT NULL THEN (pa.average_score + pa.average_score_manual) / 2 ELSE COALESCE(pa.average_score, pa.average_score_manual) END END) ELSE MAX(g.phase4) END AS phase4,
+        CASE WHEN COUNT(pa.phase) > 0 THEN MAX(avg_pa.teacher_average) ELSE MAX(g.average) END AS average,
         MAX(CASE WHEN pa.phase = 1 THEN pa.average_score END) AS phase1_system,
         MAX(CASE WHEN pa.phase = 1 THEN pa.average_score_manual END) AS phase1_manual,
         MAX(CASE WHEN pa.phase = 2 THEN pa.average_score END) AS phase2_system,
@@ -2811,12 +2814,26 @@ app.get('/api/teacher/student-grades/:teacherId', verifyToken, async (req, res) 
       JOIN courses c ON s.course_id = c.id
       LEFT JOIN grades g ON s.id = g.student_id
         AND (g.academic_year = ? OR g.academic_year IS NULL)
-      LEFT JOIN phase_averages pa ON pa.student_id = s.id AND pa.teacher_id = ?
-      WHERE ts.teacher_id = ?
+      LEFT JOIN phase_averages pa ON pa.student_id = s.id AND pa.teacher_id IN (${teacherPlaceholders})
+      LEFT JOIN (
+        SELECT student_id, ROUND(AVG(definitive_score), 2) AS teacher_average
+        FROM (
+          SELECT student_id,
+            CASE
+              WHEN average_score IS NOT NULL AND average_score_manual IS NOT NULL THEN (average_score + average_score_manual) / 2
+              ELSE COALESCE(average_score, average_score_manual)
+            END AS definitive_score
+          FROM phase_averages
+          WHERE teacher_id IN (${teacherPlaceholders})
+        ) phase_scores
+        WHERE definitive_score IS NOT NULL
+        GROUP BY student_id
+      ) avg_pa ON avg_pa.student_id = s.id
+      WHERE ts.teacher_id IN (${teacherPlaceholders})
         AND (ts.academic_year = ? OR ts.academic_year IS NULL)
       GROUP BY s.id, s.user_id, s.grade, c.id, c.name, u.name
       ORDER BY s.grade, c.name, u.name
-    `, [currentAcademicYear, realTeacherId, realTeacherId, currentAcademicYear]);
+    `, [teacherSubject, currentAcademicYear, ...teacherIds, ...teacherIds, ...teacherIds, currentAcademicYear]);
 
     res.json(rows);
   } catch (error) {

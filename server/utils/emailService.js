@@ -230,8 +230,12 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
       return { success: false, message: 'Servicio de correo no configurado' };
     }
 
-    const passed = phaseScore >= 3.5;
-    const statusText = passed ? 'APROBÓ' : 'NO APROBÓ';
+    const hasFinalOutcome = options.isFinalPass !== null && options.isFinalPass !== undefined;
+    const passed = hasFinalOutcome ? Boolean(options.isFinalPass) : phaseScore >= 3.5;
+    const statusText = hasFinalOutcome
+      ? (passed ? 'PROMOVIDO' : 'NO PROMOVIDO')
+      : (passed ? 'APROBÓ' : 'NO APROBÓ');
+    const displayedScore = hasFinalOutcome ? Number(studentData.final_grade) : phaseScore;
     const statusColor = passed ? '#28a745' : '#dc3545';
     const statusIcon = passed ? '✅' : '❌';
 
@@ -259,7 +263,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
 
     // Construir sección de plan de mejoramiento
     let planHtml = '';
-    if (improvementPlan) {
+    if (improvementPlan && !passed) {
       planHtml = `
         <div class="section plan-section">
           <h3>📚 Plan de Mejoramiento Disponible</h3>
@@ -272,12 +276,20 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
           </div>
         </div>
       `;
-    } else {
+    } else if (!passed) {
       planHtml = `
         <div class="section info-section">
           <h3>ℹ️ Información Importante</h3>
           <p>El docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días.</p>
           <p>Por favor, estar atento a las comunicaciones del docente.</p>
+        </div>
+      `;
+    } else {
+      planHtml = `
+        <div class="section info-section">
+          <h3>Felicitaciones</h3>
+          <p>${hasFinalOutcome ? 'Has sido promovido' : `Has aprobado la fase ${phase}`} y alcanzado los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.</p>
+          <p>Reconocemos tu esfuerzo y te animamos a continuar con ese compromiso.</p>
         </div>
       `;
     }
@@ -395,7 +407,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
               <p>Le informamos los resultados académicos de la <strong>Fase ${phase}</strong> del período académico:</p>
               
               <div class="score-display">
-                ${statusIcon} Nota Fase ${phase}: <span style="color: ${statusColor};">${phaseScore.toFixed(2)}</span>
+                ${statusIcon} ${hasFinalOutcome ? 'Nota Definitiva' : `Nota Fase ${phase}`}: <span style="color: ${statusColor};">${displayedScore.toFixed(2)}</span>
               </div>
               
               <div class="status-badge">
@@ -421,12 +433,16 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
         
         Le informamos los resultados académicos de la Fase ${phase}:
         
-        Nota Fase ${phase}: ${phaseScore.toFixed(2)}
+        ${hasFinalOutcome ? 'Nota Definitiva' : `Nota Fase ${phase}`}: ${displayedScore.toFixed(2)}
         Estado: ${statusText}
         
         ${resultIndicators.length > 0 ? `\n${indicatorsHeading}\n${resultIndicators.map(ind => `- ${ind.description || ind}`).join('\n')}` : '\nNo hay indicadores registrados para esta fase.'}
         
-        ${improvementPlan ? `\nPlan de Mejoramiento:\n${improvementPlan.title || 'Plan de Recuperación'}\nMateria: ${improvementPlan.subject || 'N/A'}\nFecha límite: ${improvementPlan.deadline || 'Por definir'}` : '\nEl docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días.'}
+        ${passed
+          ? `\nFelicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}. Sigue adelante con ese esfuerzo.`
+          : improvementPlan
+            ? `\nPlan de Mejoramiento:\n${improvementPlan.title || 'Plan de Recuperación'}\nMateria: ${improvementPlan.subject || 'N/A'}\nFecha límite: ${improvementPlan.deadline || 'Por definir'}`
+            : '\nEl docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días. Por favor, estar atento a las comunicaciones del docente.'}
         
         © ${new Date().getFullYear()} SEIO
       `
@@ -476,11 +492,11 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
       return { success: false, message: 'Servicio de correo no configurado' };
     }
 
-    const passed = finalGrade >= 3.5;
+    const passed = finalGrade >= 3.0;
     const statusText = passed ? 'APROBÓ' : 'REPROBÓ';
     const statusColor = passed ? '#28a745' : '#dc3545';
     const statusIcon = passed ? '✅' : '❌';
-    const minScore = 3.5;
+    const minScore = 3.0;
 
     // Construir tabla de notas por fase
     const phasesTable = `
@@ -618,6 +634,10 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
                 ${statusText}
               </div>
 
+              <p>${passed
+                ? `Felicitaciones por tu esfuerzo y por aprobar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.`
+                : 'Sigue esforzándote para alcanzar los objetivos de aprendizaje. El docente se comunicará contigo sobre el proceso de mejoramiento.'}</p>
+
               <h3 style="color: #007bff; margin-top: 30px;">Desglose por Fases:</h3>
               ${phasesTable}
 
@@ -659,7 +679,9 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
         Fase 3: ${phaseGrades.phase3 !== null && phaseGrades.phase3 !== undefined ? phaseGrades.phase3.toFixed(2) : 'N/A'}
         Fase 4: ${phaseGrades.phase4 !== null && phaseGrades.phase4 !== undefined ? phaseGrades.phase4.toFixed(2) : 'N/A'}
         
-        ${!passed ? '\n⚠️ El estudiante no alcanzó la nota mínima requerida. El docente se comunicará para informar sobre el proceso de recuperación.' : '\n✅ El estudiante ha aprobado exitosamente el período académico.'}
+        ${!passed
+          ? '\nEl estudiante no alcanzó la nota mínima requerida. Sigue esforzándote para alcanzar los objetivos de aprendizaje; el docente te orientará sobre el proceso de mejoramiento.'
+          : `\nFelicitaciones por aprobar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.`}
         
         © ${new Date().getFullYear()} SEIO
       `
