@@ -13,6 +13,7 @@ import CompleteStudent from './components/CompleteStudent.js';
 import CompleteTeacher from './components/CompleteTeacher.js';
 import Dashboard from './pages/Dashboard.js';
 import SuperAdminDashboard from './pages/SuperAdminDashboard.js';
+import LegalConsentsPage from './pages/LegalConsentsPage.js';
 import CreateQuestionPage from './pages/CreateQuestionPage.js';
 import StudentDashboardPage from './pages/StudentDashboardPage.js';
 import TakeQuizPage from './pages/TakeQuizPage.js';
@@ -834,6 +835,7 @@ function AppContent() {
             <Route path="/admin/users/new" element={<UserForm />} />
             <Route path="/admin/users/:id/edit" element={<UserForm />} />
             <Route path="/admin/audit" element={<AuditLogsPage />} />
+            <Route path="/admin/legal-consents" element={<LegalConsentsPage />} />
             <Route path="/admin/licenses" element={<LicensesManagement />} />
             <Route path="/admin/payments" element={<div>Aquí irá tu componente de Pagos</div>} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />

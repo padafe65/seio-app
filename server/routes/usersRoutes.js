@@ -5,6 +5,8 @@ import { verifyToken, isAdmin, isSuperAdmin } from '../middleware/authMiddleware
 import bcrypt from 'bcrypt';
 import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 import uploadProfileImage from '../middleware/uploadProfileImage.js';
+import { isValidPassword, PASSWORD_REQUIREMENTS } from '../utils/passwordPolicy.js';
+import { notifyLegalConsent } from '../utils/legalConsentNotifications.js';
 
 const router = express.Router();
 
@@ -167,6 +169,54 @@ router.get('/users', isAdminOrSuperAdmin, async (req, res) => {
 });
 
 // Obtener un usuario por ID (administrador y super_administrador)
+router.get('/users/:id/legal-consents', isAdminOrSuperAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, subject_user_id, accepted_by_user_id, created_by_user_id, institution, subject_type,
+              consent_status, accepter_name, accepter_relationship, guardian_email, guardian_phone,
+              policy_version, policy_sha256, purposes, acceptance_method, accepted_at, revoked_at,
+              ip_address, user_agent, notes, created_at
+       FROM legal_consents WHERE subject_user_id = ? ORDER BY created_at DESC, id DESC`,
+      [req.params.id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error al consultar autorizaciones:', error);
+    res.status(500).json({ success: false, message: 'No se pudo consultar el historial de autorizaciones.' });
+  }
+});
+
+// Historial global, reservado al superadministrador.
+router.get('/legal-consents', isSuperAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT lc.*, su.name AS subject_name, su.email AS subject_email, su.role AS subject_role,
+              st.age AS student_age, st.contact_email AS student_contact_email,
+              accepter.name AS accepter_account_name, creator.name AS creator_name,
+              teacher_info.teacher_names, teacher_info.teacher_emails
+       FROM legal_consents lc
+       JOIN users su ON su.id = lc.subject_user_id
+       LEFT JOIN students st ON st.user_id = su.id
+       LEFT JOIN users accepter ON accepter.id = lc.accepted_by_user_id
+       LEFT JOIN users creator ON creator.id = lc.created_by_user_id
+       LEFT JOIN (
+         SELECT ts.student_id,
+                GROUP_CONCAT(DISTINCT tu.name ORDER BY tu.name SEPARATOR ', ') AS teacher_names,
+                GROUP_CONCAT(DISTINCT tu.email ORDER BY tu.email SEPARATOR ',') AS teacher_emails
+         FROM teacher_students ts
+         JOIN teachers t ON t.id = ts.teacher_id
+         JOIN users tu ON tu.id = t.user_id
+         GROUP BY ts.student_id
+       ) teacher_info ON teacher_info.student_id = st.id
+       ORDER BY lc.created_at DESC, lc.id DESC`
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Error al consultar historial global de autorizaciones:', error);
+    res.status(500).json({ success: false, message: 'No se pudo consultar el historial de autorizaciones.' });
+  }
+});
+
 router.get('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -233,7 +283,7 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
   try {
     // 1. Capturar el ID del que está creando (Admin/Docente)
     const creatorId = req.user ? req.user.id : null;
-    const { name, email, phone, password, role, institution, course_name, grade } = req.body;
+    const { name, email, phone, password, role, institution, course_name, grade, legalConsent, guardianApprovalConfirmed } = req.body;
     const userRole = req.user.role; // Rol del usuario que está creando
     
     // Validar campos requeridos
@@ -242,6 +292,16 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
         success: false,
         message: 'Faltan campos requeridos: name, email, password, role'
       });
+    }
+
+    if (!isValidPassword(password)) {
+      return res.status(400).json({ success: false, message: PASSWORD_REQUIREMENTS });
+    }
+    if (!legalConsent) {
+      return res.status(400).json({ success: false, message: 'Debes confirmar que la persona recibió la política de tratamiento de datos.' });
+    }
+    if (role === 'estudiante' && !guardianApprovalConfirmed) {
+      return res.status(400).json({ success: false, message: 'Antes de crear el estudiante, confirma que verificaste si es menor de edad y que cuentas con la autorización requerida de su representante legal.' });
     }
     
     // Validar que el rol sea válido
@@ -306,6 +366,34 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
     const [result] = await pool.query(insertQuery, insertValues);
     const newUserId = result.insertId;
 
+    const [consentInsert] = await pool.query(
+      `INSERT INTO legal_consents
+       (subject_user_id, accepted_by_user_id, created_by_user_id, institution, subject_type, consent_status,
+        accepter_name, accepter_relationship, policy_version, purposes, acceptance_method, accepted_at,
+        ip_address, user_agent, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '1.0', ?, 'institutional_attestation', NOW(), ?, ?, ?)`,
+      [newUserId, creatorId, creatorId, institution || null,
+        role === 'estudiante' ? 'student_unknown' : role === 'docente' ? 'teacher' : 'other',
+        'institution_confirmed',
+        req.user.name || null, role === 'estudiante' ? 'confirmación del usuario creador; no sustituye el soporte de autorización familiar' : 'creador institucional',
+        JSON.stringify(['gestión de cuenta', 'actividades y seguimiento académico', 'comunicaciones educativas']),
+        req.ip, req.get('user-agent') || null,
+        role === 'estudiante' ? 'El creador declara haber informado y verificado la autorización aplicable del representante legal. Conservar el soporte en la institución.' : 'El usuario creador confirma haber puesto la política a disposición del titular.']
+    );
+
+    const [creatorRows] = creatorId
+      ? await pool.query('SELECT name, email FROM users WHERE id = ?', [creatorId])
+      : [[]];
+    const emailNotification = await notifyLegalConsent(consentInsert.insertId, {
+      to: [email, creatorRows[0]?.email],
+      subjectName: name,
+      acceptedBy: creatorRows[0]?.name || 'Usuario institucional',
+      relationship: role === 'estudiante' ? 'usuario institucional que registró la verificación' : 'usuario que puso la política a disposición',
+      institution,
+      policyVersion: '1.0',
+      status: role === 'estudiante' ? 'Confirmación institucional; verificar soporte familiar' : 'Constancia institucional registrada'
+    });
+
     // --- 🛠️ MODIFICACIÓN: LÓGICA DE AUTOREGISTRO (Ahora con newUserId definido) ---
     if (!creatorId) {
       await pool.query(
@@ -368,6 +456,7 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Usuario creado exitosamente',
+      notificationStatus: emailNotification.status,
       data: newUser[0]
     });
   } catch (error) {
@@ -975,10 +1064,10 @@ router.put('/change-password', verifyToken, async (req, res) => {
     }
 
     // Validar longitud mínima de la nueva contraseña
-    if (newPassword.length < 8) {
+    if (!isValidPassword(newPassword)) {
       return res.status(400).json({
         success: false,
-        message: 'La contraseña debe tener al menos 8 caracteres'
+        message: PASSWORD_REQUIREMENTS
       });
     }
 

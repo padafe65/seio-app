@@ -27,7 +27,7 @@ const ImageUploader = ({ onImageUpload, currentImage = null, deferUpload = false
       Swal.fire({
         icon: 'error',
         title: 'Error',
-        text: 'Máximo 5MB',
+      text: 'La imagen no puede superar 5 MB.',
         confirmButtonColor: '#3085d6'
       });
       return;

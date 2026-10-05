@@ -689,6 +689,9 @@ const StudentForm = ({ isViewMode = false }) => {
                   required
                   disabled={isViewMode}
                 />
+                {!isViewMode && Number(formData.age) < 18 && <div className="alert alert-warning mt-2 mb-0">
+                  Este estudiante es menor de edad. Antes de guardar, la institución debe contar con la autorización de su padre, madre o representante legal y conservar el soporte. SEIO registrará esta autorización como pendiente hasta que la institución confirme y documente su verificación.
+                </div>}
               </div>
             </div>
             

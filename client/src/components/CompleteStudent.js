@@ -473,6 +473,9 @@ const CompletarEstudiante = () => {
                   className="form-control"
                   required
                 />
+                {Number(student.age) < 18 && (isAdminOrTeacher || createdByAdmin || isTeacherRegistration) && <div className="alert alert-warning mt-2">
+                  Este estudiante es menor de edad. Antes de completar el registro, verifica que la institución cuenta con la autorización de su padre, madre o representante legal y que conservará el soporte. SEIO registrará esta gestión para seguimiento.
+                </div>}
               </div>
               
               <div className="col-md-6">

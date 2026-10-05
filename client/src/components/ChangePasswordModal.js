@@ -38,8 +38,8 @@ const ChangePasswordModal = ({ show, onClose, authToken, onPasswordChanged }) =>
 
     if (!formData.newPassword) {
       newErrors.newPassword = 'La nueva contraseña es requerida';
-    } else if (formData.newPassword.length < 8) {
-      newErrors.newPassword = 'Mínimo 8 caracteres';
+    } else if (formData.newPassword.length < 8 || !/[^\p{L}\p{N}]/u.test(formData.newPassword)) {
+      newErrors.newPassword = 'Mínimo 8 caracteres e incluir un carácter especial';
     }
 
     if (!formData.confirmPassword) {
@@ -263,7 +263,8 @@ const ChangePasswordModal = ({ show, onClose, authToken, onPasswordChanged }) =>
               <div className="alert alert-info small">
                 <strong>Requisitos de contraseña:</strong>
                 <ul className="mb-0 mt-2">
-                  <li>Mínimo 8 caracteres</li>
+                  <li>Al menos 8 caracteres</li>
+                  <li>Al menos un carácter especial, por ejemplo !, @ o #</li>
                   <li>Diferente a la contraseña actual</li>
                 </ul>
               </div>

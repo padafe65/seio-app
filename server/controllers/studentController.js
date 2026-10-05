@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { syncTeacherStudentData } from '../utils/syncTeacherStudentData.js';
 import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
+import { notifyLegalConsent } from '../utils/legalConsentNotifications.js';
 
 // Asegurarse de que el directorio de subidas exista
 const uploadsDir = path.join(process.cwd(), 'uploads', 'students');
@@ -550,6 +551,20 @@ export const createStudent = async (req, res) => {
     );
 
     const userId = userResult.insertId;
+    const isMinor = Number(age) < 18;
+    const [consentInsert] = await connection.query(
+      `INSERT INTO legal_consents
+       (subject_user_id, accepted_by_user_id, created_by_user_id, institution, subject_type, consent_status,
+        accepter_relationship, policy_version, purposes, acceptance_method, ip_address, user_agent, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '1.0', ?, 'institutional_attestation', ?, ?, ?)`,
+      [userId, req.user.id, req.user.id, institution || null,
+        isMinor ? 'minor_student' : 'adult_student',
+        isMinor ? 'pending_guardian' : 'institution_confirmed',
+        'usuario institucional que creó el registro',
+        JSON.stringify(['gestión de cuenta', 'actividades y seguimiento académico', 'comunicaciones educativas']),
+        req.ip, req.get('user-agent') || null,
+        isMinor ? 'Pendiente: la institución debe conservar y asociar evidencia de autorización del representante legal.' : 'Creado por un usuario institucional; confirmar entrega de la política al titular.']
+    );
     let profileImage = null;
 
     // Manejar la imagen de perfil si se subió
@@ -583,6 +598,24 @@ export const createStudent = async (req, res) => {
     }
 
     await connection.commit();
+
+    let teacherEmail = null;
+    if (teacher_id) {
+      const [teacherRows] = await pool.query(
+        'SELECT u.email FROM teachers t JOIN users u ON u.id = t.user_id WHERE t.id = ?',
+        [teacher_id]
+      );
+      teacherEmail = teacherRows[0]?.email || null;
+    }
+    const emailNotification = await notifyLegalConsent(consentInsert.insertId, {
+      to: [email, isMinor ? contact_email : null, teacherEmail],
+      subjectName: name,
+      acceptedBy: req.user.email || 'Usuario institucional',
+      relationship: isMinor ? 'representante legal pendiente de confirmar; registro institucional' : 'titular adulto; registro institucional',
+      institution,
+      policyVersion: '1.0',
+      status: isMinor ? 'Pendiente de soporte de autorización del representante legal' : 'Constancia institucional registrada'
+    });
     
     // 📝 Registrar en auditoría
     await logCreate(
@@ -598,6 +631,7 @@ export const createStudent = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Estudiante creado exitosamente',
+      notificationStatus: emailNotification.status,
       studentId: studentResult.insertId,
       userId
     });

@@ -379,6 +379,10 @@ const handleAdminPrint = async () => {
               <Users size={18} className="me-2" />
               Gestionar Usuarios
             </Link>
+            {user?.role === 'super_administrador' && <Link to="/admin/legal-consents" className="btn btn-outline-dark">
+              <FileText size={18} className="me-2" />
+              Aceptaciones de privacidad
+            </Link>}
             <Link to="/cuestionarios/nuevo" className="btn btn-success">
               <PlusCircle size={18} className="me-2" />
               Nuevo Cuestionario

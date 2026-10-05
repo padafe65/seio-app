@@ -46,6 +46,45 @@ const createTransporter = () => {
   return null;
 };
 
+const escapeEmailHtml = (value = '') => String(value).replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[char]));
+
+/** Envía una constancia por separado a cada destinatario para no revelar sus correos entre sí. */
+export const sendLegalConsentNotification = async ({ to, subjectName, acceptedBy, relationship, institution, policyVersion, status }) => {
+  const recipients = [...new Set((to || []).map((email) => String(email || '').trim()).filter(Boolean))];
+  if (!recipients.length) return { status: 'failed', recipients: [], details: [], error: 'No hay destinatarios con correo.' };
+
+  const transporter = createTransporter();
+  if (!transporter) {
+    return { status: 'failed', recipients, details: recipients.map((email) => ({ email, sent: false, error: 'Servicio de correo no configurado' })) };
+  }
+
+  const acceptedAt = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+  const safeSubject = escapeEmailHtml(subjectName);
+  const safeAcceptedBy = escapeEmailHtml(acceptedBy || subjectName);
+  const safeRelationship = escapeEmailHtml(relationship || 'titular');
+  const safeInstitution = escapeEmailHtml(institution || 'No indicada');
+  const safeStatus = escapeEmailHtml(status || 'Aceptada');
+  const details = await Promise.all(recipients.map(async (email) => {
+    try {
+      const info = await transporter.sendMail({
+        from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@seio.com',
+        to: email,
+        subject: 'Constancia de tratamiento de datos personales — SEIO',
+        text: `SEIO registró la aceptación de la política de tratamiento de datos personales. Titular: ${subjectName}. Aceptación registrada por: ${acceptedBy || subjectName} (${relationship || 'titular'}). Institución: ${institution || 'No indicada'}. Estado: ${status || 'Aceptada'}. Versión: ${policyVersion || '1.0'}. Fecha: ${acceptedAt}.`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;color:#253044"><h2>Constancia de tratamiento de datos personales</h2><p>SEIO registró una aceptación o constancia relacionada con la Política de tratamiento de datos personales.</p><dl><dt><strong>Titular</strong></dt><dd>${safeSubject}</dd><dt><strong>Aceptación registrada por</strong></dt><dd>${safeAcceptedBy} (${safeRelationship})</dd><dt><strong>Institución</strong></dt><dd>${safeInstitution}</dd><dt><strong>Estado registrado</strong></dt><dd>${safeStatus}</dd><dt><strong>Versión de la política</strong></dt><dd>${escapeEmailHtml(policyVersion || '1.0')}</dd><dt><strong>Fecha y hora</strong></dt><dd>${escapeEmailHtml(acceptedAt)} (hora de Colombia)</dd></dl><p>Conserva este correo como constancia. Puedes consultar la política desde la plataforma SEIO.</p><hr><small>Mensaje automático de SEIO. Este correo informa el registro realizado; no certifica por sí mismo la identidad del representante legal ni reemplaza soportes institucionales.</small></div>`
+      });
+      return { email, sent: true, messageId: info.messageId };
+    } catch (error) {
+      console.error(`Error al enviar constancia de datos a ${email}:`, error.message);
+      return { email, sent: false, error: error.message };
+    }
+  }));
+  const sentCount = details.filter((item) => item.sent).length;
+  return { status: sentCount === details.length ? 'sent' : sentCount ? 'partial' : 'failed', recipients, details };
+};
+
 /**
  * Enviar correo de recuperación de contraseña
  * @param {string} toEmail - Correo del destinatario

@@ -11,6 +11,8 @@ const UserForm = () => {
   const { user, isAuthReady } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [guardianApprovalConfirmed, setGuardianApprovalConfirmed] = useState(false);
   const [creatorInfo, setCreatorInfo] = useState(null); // 🛠️ ADICIÓN: Estado para info del creador
   const [instituciones, setInstituciones] = useState([]);
 const [formData, setFormData] = useState({
@@ -184,20 +186,28 @@ const fetchUser = async () => {
       return;
     }
 
-    if (formData.password && formData.password.length < 6) {
+    if (formData.password && (formData.password.length < 8 || !/[^\p{L}\p{N}]/u.test(formData.password))) {
       Swal.fire({
         icon: 'warning',
         title: 'Contraseña inválida',
-        text: 'La contraseña debe tener al menos 6 caracteres',
+        text: 'Debe tener al menos 8 caracteres e incluir al menos un carácter especial.',
         confirmButtonText: 'OK'
       });
+      return;
+    }
+    if (!id && !legalAccepted) {
+      Swal.fire({ icon: 'warning', title: 'Política requerida', text: 'Debes leer la política e informar al titular antes de crear su cuenta.' });
+      return;
+    }
+    if (!id && formData.role === 'estudiante' && !guardianApprovalConfirmed) {
+      Swal.fire({ icon: 'warning', title: 'Autorización de estudiante', text: 'Verifica si el estudiante es menor y confirma que la institución cuenta con la autorización de su representante legal.' });
       return;
     }
 
     try {
       setSaving(true);
       
-      const dataToSend = { ...formData };
+      const dataToSend = { ...formData, legalConsent: legalAccepted, guardianApprovalConfirmed };
       // Si es edición y no se cambió la contraseña, no enviarla
       if (id && !dataToSend.password) {
         delete dataToSend.password;
@@ -377,6 +387,21 @@ const fetchUser = async () => {
               </div>
             </div>
 
+            {!id && <div className="alert alert-info">
+              <p>Lee la <a href="/politica-tratamiento-datos.html" target="_blank" rel="noreferrer">Política de tratamiento de datos personales</a> y asegúrate de informar a la persona antes de crear su cuenta.</p>
+              {formData.role === 'estudiante' && <>
+                <p className="mb-2"><strong>Estudiantes menores de edad:</strong> confirma con la institución que el representante legal otorgó la autorización requerida. El registro del docente o administrador en SEIO deja constancia de esta verificación, pero no reemplaza el soporte de la autorización familiar.</p>
+                <div className="form-check mb-2">
+                  <input id="guardianApprovalConfirmed" type="checkbox" className="form-check-input" checked={guardianApprovalConfirmed} onChange={(e) => setGuardianApprovalConfirmed(e.target.checked)} />
+                  <label htmlFor="guardianApprovalConfirmed" className="form-check-label">Confirmo que verifiqué la autorización aplicable del representante legal y que la institución conservará su soporte.</label>
+                </div>
+              </>}
+              <div className="form-check">
+                <input id="legalAccepted" type="checkbox" className="form-check-input" checked={legalAccepted} onChange={(e) => setLegalAccepted(e.target.checked)} />
+                <label htmlFor="legalAccepted" className="form-check-label">Confirmo que puse la política a disposición de la persona titular.</label>
+              </div>
+            </div>}
+
             {/* Mostrar datos de contacto del estudiante solo si es estudiante y se está editando */}
             {formData.role === 'estudiante' && id && (
               <div className="row mt-3">
@@ -512,8 +537,8 @@ const fetchUser = async () => {
                   value={formData.password}
                   onChange={handleChange}
                   required={!id}
-                  minLength={6}
-                  placeholder={id ? "Dejar vacío para mantener la contraseña actual" : "Mínimo 6 caracteres"}
+                  minLength={8}
+                  placeholder={id ? "Dejar vacío para mantener la contraseña actual" : "Mínimo 8 caracteres y un carácter especial"}
                 />
               </div>
 

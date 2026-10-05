@@ -34,6 +34,8 @@ import teachers from './routes/teachers.js';
 import teacherRoutes from './routes/teacherRoutes.js';
 import indicatorsRoutes from './routes/indicatorRoutes.js';
 import usersRoutes from './routes/usersRoutes.js';
+import { isValidPassword, PASSWORD_REQUIREMENTS } from './utils/passwordPolicy.js';
+import { notifyLegalConsent } from './utils/legalConsentNotifications.js';
 import auditRoutes from './routes/auditRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import attendanceRoutes from './routes/attendanceRoutes.js';
@@ -523,9 +525,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 // ⚠️ RUTA DE REGISTRO - También debe ir antes de rutas que requieren token
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
-    const { name, phone, email, password } = req.body;
-    if (!name?.trim() || !phone?.trim() || !email?.trim() || typeof password !== 'string' || password.length < 8) {
-      return res.status(400).json({ message: 'Nombre, teléfono, correo y contraseña (mínimo 8 caracteres) son obligatorios.' });
+    const { name, phone, email, password, legalConsent } = req.body;
+    if (!name?.trim() || !phone?.trim() || !email?.trim() || !isValidPassword(password)) {
+      return res.status(400).json({ message: `Nombre, teléfono y correo son obligatorios. ${PASSWORD_REQUIREMENTS}` });
+    }
+    if (!legalConsent?.accepted || !['adult_student', 'minor_student'].includes(legalConsent.subjectType)) {
+      return res.status(400).json({ message: 'Debes leer la política e indicar si el estudiante es mayor o menor de edad antes de registrarte.' });
+    }
+    if (legalConsent.subjectType === 'minor_student' && (!legalConsent.accepterName?.trim() || !legalConsent.accepterRelationship?.trim() || !legalConsent.guardianEmail?.trim())) {
+      return res.status(400).json({ message: 'Para registrar a un menor, el representante legal debe identificarse, indicar su relación y proporcionar su correo.' });
     }
 
     // El registro público solo crea cuentas de estudiante.
@@ -557,6 +565,29 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       [normalizedName, phone.trim(), normalizedEmail, hashedPassword, finalRole]
     );
 
+    const [consentInsert] = await db.query(
+      `INSERT INTO legal_consents
+       (subject_user_id, accepted_by_user_id, subject_type, consent_status, accepter_name, accepter_relationship,
+        guardian_email, policy_version, purposes, acceptance_method, accepted_at, ip_address, user_agent)
+       VALUES (?, ?, ?, 'accepted', ?, ?, ?, '1.0', ?, 'web_checkbox', NOW(), ?, ?)`,
+      [result.insertId, legalConsent.subjectType === 'adult_student' ? result.insertId : null, legalConsent.subjectType,
+        legalConsent.accepterName?.trim() || normalizedName,
+        legalConsent.accepterRelationship?.trim() || 'titular mayor de edad',
+        legalConsent.subjectType === 'minor_student' ? (legalConsent.guardianEmail?.trim() || null) : normalizedEmail,
+        JSON.stringify(['gestión de cuenta', 'actividades y seguimiento académico', 'comunicaciones educativas']),
+        req.ip, req.get('user-agent') || null]
+    );
+
+    const emailNotification = await notifyLegalConsent(consentInsert.insertId, {
+      to: [normalizedEmail, legalConsent.subjectType === 'minor_student' ? legalConsent.guardianEmail : null],
+      subjectName: normalizedName,
+      acceptedBy: legalConsent.accepterName?.trim() || normalizedName,
+      relationship: legalConsent.accepterRelationship?.trim() || 'titular mayor de edad',
+      institution: null,
+      policyVersion: '1.0',
+      status: 'Aceptada en el formulario de registro'
+    });
+
     console.log("✅ Usuario registrado", result);
 
     // Obtener el usuario recién insertado
@@ -569,7 +600,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     res.status(201).json({
       message: "Usuario registrado con éxito",
       user: newUser,
-      token
+      token,
+      notificationStatus: emailNotification.status
     });
 
   } catch (error) {
@@ -770,10 +802,10 @@ app.post('/api/auth/reset-password', async (req, res) => {
       });
     }
 
-    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    if (!isValidPassword(newPassword)) {
       return res.status(400).json({
         success: false,
-        error: "La contraseña debe tener al menos 8 caracteres"
+        error: PASSWORD_REQUIREMENTS
       });
     }
 
@@ -3190,6 +3222,34 @@ app.post('/api/teacher/assign-student', verifyToken, async (req, res) => {
       console.log(`✅ Sincronización automática completada para estudiante ${student_id}`);
     } catch (syncError) {
       console.error('⚠️ Error en sincronización automática (no crítico):', syncError.message);
+    }
+
+    try {
+      const [studentRows] = await pool.query(
+        `SELECT s.age, s.contact_email, u.id AS user_id, u.name, u.email
+         FROM students s JOIN users u ON u.id = s.user_id WHERE s.id = ?`,
+        [student_id]
+      );
+      const [teacherRows] = await pool.query(
+        'SELECT u.email FROM teachers t JOIN users u ON u.id = t.user_id WHERE t.id = ?',
+        [teacher_id]
+      );
+      const [consentRows] = studentRows.length ? await pool.query(
+        'SELECT id, consent_status, policy_version FROM legal_consents WHERE subject_user_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+        [studentRows[0].user_id]
+      ) : [[]];
+      if (studentRows.length && teacherRows.length && consentRows.length) {
+        await notifyLegalConsent(consentRows[0].id, {
+          to: [teacherRows[0].email],
+          subjectName: studentRows[0].name,
+          acceptedBy: 'Registro de aceptación en SEIO',
+          relationship: 'docente asociado al estudiante',
+          policyVersion: consentRows[0].policy_version,
+          status: consentRows[0].consent_status === 'pending_guardian' ? 'Pendiente de soporte familiar' : 'Aceptación registrada'
+        });
+      }
+    } catch (notificationError) {
+      console.error('No se pudo notificar al docente sobre la aceptación:', notificationError.message);
     }
 
     res.status(201).json({

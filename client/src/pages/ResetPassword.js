@@ -96,11 +96,11 @@ const ResetPassword = () => {
       return;
     }
 
-    if (newPassword.length < 6) {
+    if (newPassword.length < 8 || !/[^\p{L}\p{N}]/u.test(newPassword)) {
       notiMySwal.fire({
         icon: 'error',
         title: 'Error',
-        text: 'La contraseña debe tener al menos 6 caracteres.'
+        text: 'Debe tener al menos 8 caracteres e incluir al menos un carácter especial.'
       });
       return;
     }
@@ -201,11 +201,11 @@ const ResetPassword = () => {
                         type="password"
                         id="newPassword"
                         className="form-control"
-                        placeholder="Mínimo 6 caracteres"
+                        placeholder="Mínimo 8 caracteres y un carácter especial"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         required
-                        minLength={6}
+                        minLength={8}
                       />
                     </div>
                     <div className="mb-3">
@@ -218,9 +218,10 @@ const ResetPassword = () => {
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         required
-                        minLength={6}
+                        minLength={8}
                       />
                     </div>
+                    <small className="text-muted d-block mb-3">Usa al menos 8 caracteres e incluye un carácter especial, por ejemplo !, @ o #.</small>
                     <button 
                       type="submit" 
                       className="btn btn-primary w-100"

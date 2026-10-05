@@ -13,6 +13,9 @@ const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 const Registro = () => {
   const [user, setUser] = useState({ name: '', phone: '', email: '', password: '' });
   const [profileImage, setProfileImage] = useState(null);
+  const [subjectType, setSubjectType] = useState('adult_student');
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [guardian, setGuardian] = useState({ name: '', relationship: '', email: '' });
   const navigate = useNavigate();
   const { establishSession } = useAuth();
 
@@ -23,14 +26,30 @@ const Registro = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (user.password.length < 8 || !/[^\p{L}\p{N}]/u.test(user.password)) {
+      notiMySwal.fire({ icon: 'error', title: 'Contraseña inválida', text: 'Debe tener al menos 8 caracteres e incluir al menos un carácter especial.' });
+      return;
+    }
+    if (!legalAccepted || (subjectType === 'minor_student' && (!guardian.name.trim() || !guardian.relationship.trim()))) {
+      notiMySwal.fire({ icon: 'warning', title: 'Autorización requerida', text: 'Lee la política y completa la información del representante legal si el estudiante es menor de edad.' });
+      return;
+    }
     try {
       const response = await axios.post(`${API_URL}/api/auth/register`, {
         ...user,
+        legalConsent: {
+          accepted: legalAccepted,
+          subjectType,
+          accepterName: subjectType === 'minor_student' ? guardian.name : user.name,
+          accepterRelationship: subjectType === 'minor_student' ? guardian.relationship : 'titular mayor de edad',
+          guardianEmail: subjectType === 'minor_student' ? guardian.email : user.email
+        },
         role: 'estudiante'
       });
       
       const userId = response.data.user.id;
       const registeredUser = response.data.user;
+      const emailNotificationFailed = response.data.notificationStatus !== 'sent';
       establishSession(response.data.token, registeredUser);
       localStorage.setItem('user_id', userId);  // ✅ CORREGIDO: ahora guarda 'user_id' con guión bajo
 
@@ -51,9 +70,9 @@ const Registro = () => {
       }
 
       notiMySwal.fire({
-        icon: profileImageUploadFailed ? 'warning' : 'success',
-        title: profileImageUploadFailed ? 'Cuenta creada' : 'Atención',
-        html: `<i><strong> ${user.name} </strong>, su registro fue exitoso. Ya está habilitado en la plataforma SEIO.</i>${profileImageUploadFailed ? '<p class="mt-2">No se pudo guardar la foto. Puedes agregarla más tarde desde tu perfil.</p>' : ''}`,
+        icon: profileImageUploadFailed || emailNotificationFailed ? 'warning' : 'success',
+        title: profileImageUploadFailed || emailNotificationFailed ? 'Cuenta creada' : 'Atención',
+        html: `<i><strong> ${user.name} </strong>, su registro fue exitoso. Ya está habilitado en la plataforma SEIO.</i>${profileImageUploadFailed ? '<p class="mt-2">No se pudo guardar la foto. Puedes agregarla más tarde desde tu perfil.</p>' : ''}${emailNotificationFailed ? '<p class="mt-2">No se pudo confirmar el envío de todos los correos. El estado quedó registrado y el administrador puede revisarlo en el panel.</p>' : '<p class="mt-2">Enviamos la constancia a los correos correspondientes.</p>'}`,
         imageUrl: "img/ingreso.gif",
         imageWidth: 100,
         imageHeight: 100,
@@ -116,13 +135,33 @@ const Registro = () => {
         <input 
           type="password" 
           name="password" 
-          placeholder="Contraseña" 
+          placeholder="Mínimo 8 caracteres y un carácter especial"
           onChange={handleChange} 
           className="form-control mb-2" 
+          minLength={8}
           required 
         />
+        <small className="text-muted d-block mb-2">Usa al menos 8 caracteres e incluye un carácter especial, por ejemplo !, @ o #.</small>
 
         <p className="text-muted mb-3">El registro público crea cuentas de estudiante. Las cuentas docentes son creadas por el superadministrador.</p>
+
+        <div className="border rounded p-3 mb-3">
+          <label className="form-label fw-bold">¿El estudiante es mayor de 18 años?</label>
+          <select className="form-select mb-3" value={subjectType} onChange={(e) => setSubjectType(e.target.value)}>
+            <option value="adult_student">Sí, es mayor de edad</option>
+            <option value="minor_student">No, es menor de edad</option>
+          </select>
+          {subjectType === 'minor_student' && <>
+            <div className="alert alert-warning">El padre, madre o representante legal debe revisar y otorgar la autorización. Esta aceptación quedará registrada como realizada por la persona que completa este formulario.</div>
+            <input className="form-control mb-2" placeholder="Nombre del padre, madre o representante legal" value={guardian.name} onChange={(e) => setGuardian({ ...guardian, name: e.target.value })} required />
+            <input className="form-control mb-2" placeholder="Relación con el estudiante" value={guardian.relationship} onChange={(e) => setGuardian({ ...guardian, relationship: e.target.value })} required />
+            <input type="email" className="form-control mb-2" placeholder="Correo del representante legal" value={guardian.email} onChange={(e) => setGuardian({ ...guardian, email: e.target.value })} required />
+          </>}
+          <div className="form-check">
+            <input id="legalAccepted" type="checkbox" className="form-check-input" checked={legalAccepted} onChange={(e) => setLegalAccepted(e.target.checked)} />
+            <label htmlFor="legalAccepted" className="form-check-label">Declaro que leí la <a href="/politica-tratamiento-datos.html" target="_blank" rel="noreferrer">Política de tratamiento de datos personales</a> y autorizo el tratamiento para las finalidades descritas.</label>
+          </div>
+        </div>
 
         <ImageUploader 
           onImageUpload={setProfileImage}
