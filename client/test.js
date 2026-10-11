@@ -1,7 +1,7 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // REEMPLAZA ESTO con tu API Key real
-const API_KEY = "AIzaSyAtoWdBMWMY_n3baNvouaQOHK_9JGXkv64"; 
+const API_KEY = process.env.VITE_GEMINI_API_KEY || "";
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -12,7 +12,7 @@ async function testConnection() {
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
-    
+
     console.log("-----------------------------------------");
     console.log("✅ ¡Conexión exitosa!");
     console.log("Respuesta de la API:", text);
