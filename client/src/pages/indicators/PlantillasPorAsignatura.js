@@ -4,6 +4,13 @@ import { useAuth } from '../../context/AuthContext';
 import axiosClient from '../../api/axiosClient';
 import Swal from 'sweetalert2';
 
+const EDUCATION_LEVEL_LABELS = {
+  school: 'Escolar',
+  technical_professional: 'Técnico profesional',
+  technological: 'Tecnológico',
+  professional: 'Profesional universitario'
+};
+
 /**
  * Plantillas por asignatura (Micro-SaaS).
  * El docente elige una asignatura (y opcionalmente grado), ve los indicadores sugeridos
@@ -15,6 +22,8 @@ export default function PlantillasPorAsignatura() {
   const [courses, setCourses] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [courseId, setCourseId] = useState('');
+  const [templateScopes, setTemplateScopes] = useState([]);
+  const [packageId, setPackageId] = useState('');
   const [templateIndicators, setTemplateIndicators] = useState([]);
   const [teacherId, setTeacherId] = useState(null);
   const [teacherContextIds, setTeacherContextIds] = useState([]);
@@ -28,6 +37,16 @@ export default function PlantillasPorAsignatura() {
   const tid = user?.role === 'docente' ? teacherId : (isAdmin ? teacherId : null);
   const subjectCourses = courses.filter((course) => course.subject === selectedSubject);
   const selectedCourse = subjectCourses.find((course) => String(course.id) === String(courseId));
+  const selectedPackage = templateScopes.find((scope) => String(scope.id) === String(packageId));
+  const courseLevelMissing = Boolean(selectedCourse && !selectedCourse.education_level);
+  const courseScopeMismatch = Boolean(selectedCourse && selectedPackage && (
+    String(selectedCourse.education_level) !== String(selectedPackage.education_level) ||
+    (selectedPackage.grade_label !== 'general' &&
+      String(selectedCourse.grade || '').trim() !== String(selectedPackage.grade_label))
+  ));
+  const templateSources = [...new Map(
+    templateIndicators.flatMap((indicator) => indicator.sources || []).map((source) => [source.key, source])
+  ).values()];
 
   const fetchApplied = React.useCallback(async () => {
     if (!tid) {
@@ -106,6 +125,7 @@ export default function PlantillasPorAsignatura() {
               id,
               name: course.course_name || course.name || `Curso ${id}`,
               grade: course.grade || '',
+              education_level: course.education_level || '',
               institution: course.institution || relatedProfiles.find((profile) => Number(profile.id) === profileId)?.institution || '',
               teacher_id: profileId,
               subject: subjectsByTeacher.get(profileId) || selectedProfile.subject || ''
@@ -119,6 +139,7 @@ export default function PlantillasPorAsignatura() {
             id: course.id,
             name: course.name || `Curso ${course.id}`,
             grade: course.grade || '',
+            education_level: course.education_level || '',
             institution: course.institution || relatedProfiles.find((profile) => Number(profile.id) === profileId)?.institution || '',
             teacher_id: profileId,
             subject: subjectsByTeacher.get(profileId) || selectedProfile.subject || ''
@@ -156,17 +177,36 @@ export default function PlantillasPorAsignatura() {
 
   useEffect(() => {
     if (!selectedSubject) {
+      setTemplateScopes([]);
+      setPackageId('');
       setTemplateIndicators([]);
       return;
     }
     let cancelled = false;
-    axiosClient.get(`/indicators/templates/${encodeURIComponent(selectedSubject)}?grade=${encodeURIComponent(selectedCourse?.grade || '')}`)
+    setTemplateScopes([]);
+    setPackageId('');
+    setTemplateIndicators([]);
+    axiosClient.get(`/indicators/templates/${encodeURIComponent(selectedSubject)}/scopes`)
       .then((r) => {
-        if (!cancelled) setTemplateIndicators(r.data?.data || r.data || []);
+        if (!cancelled) setTemplateScopes(r.data?.data || []);
+      })
+      .catch(() => { if (!cancelled) setTemplateScopes([]); });
+    return () => { cancelled = true; };
+  }, [selectedSubject]);
+
+  useEffect(() => {
+    if (!selectedSubject || !packageId) {
+      setTemplateIndicators([]);
+      return;
+    }
+    let cancelled = false;
+    axiosClient.get(`/indicators/templates/${encodeURIComponent(selectedSubject)}?package_id=${encodeURIComponent(packageId)}`)
+      .then((r) => {
+        if (!cancelled) setTemplateIndicators(r.data?.data?.indicators || []);
       })
       .catch(() => { if (!cancelled) setTemplateIndicators([]); });
     return () => { cancelled = true; };
-  }, [selectedSubject, courseId]);
+  }, [selectedSubject, packageId]);
 
   const handleApply = async () => {
     if (!selectedSubject) return;
@@ -190,7 +230,7 @@ export default function PlantillasPorAsignatura() {
     if (!confirmation.isConfirmed) return;
     setApplying(true);
     try {
-      const payload = { subject: selectedSubject, course_id: courseId || null, teacher_id: tid };
+      const payload = { subject: selectedSubject, package_id: Number(packageId), course_id: courseId || null, teacher_id: tid };
       console.info('[Plantillas] Enviando aplicación de plantilla', payload);
       const response = await axiosClient.post('/indicators/apply-template', payload);
       const created = response.data?.count || 0;
@@ -208,6 +248,7 @@ export default function PlantillasPorAsignatura() {
       });
       setSelectedSubject('');
       setCourseId('');
+      setPackageId('');
       setTemplateIndicators([]);
       fetchApplied();
     } catch (e) {
@@ -282,6 +323,7 @@ export default function PlantillasPorAsignatura() {
                   <thead className="table-light">
                     <tr>
                       <th>Asignatura</th>
+                        <th>Paquete de origen</th>
                       <th>Institución / curso</th>
                       <th>Grado / nivel</th>
                       <th>Descripción</th>
@@ -294,8 +336,9 @@ export default function PlantillasPorAsignatura() {
                     {appliedIndicators.map((i) => (
                       <tr key={i.id}>
                         <td>{i.subject || '—'}</td>
+                        <td>{i.template_title || 'Catálogo legado'}</td>
                         <td>{[i.institution, i.course_name].filter(Boolean).join(' / ') || 'Banco general'}</td>
-                        <td>{i.grade ?? '—'}</td>
+                        <td>{(i.grade_label || i.grade) ?? '—'}</td>
                         <td>{i.description || '—'}</td>
                         <td>{i.category || '—'}</td>
                         <td>{i.phase ?? '—'}</td>
@@ -344,7 +387,7 @@ export default function PlantillasPorAsignatura() {
               </div>
             )}
             <div className="row g-3 mb-4">
-              <div className="col-md-5">
+              <div className="col-md-4">
                 <label className="form-label">Asignatura</label>
                 <select
                   className="form-select"
@@ -352,6 +395,7 @@ export default function PlantillasPorAsignatura() {
                   onChange={(e) => {
                     setSelectedSubject(e.target.value);
                     setCourseId('');
+                    setPackageId('');
                     setTemplateIndicators([]);
                   }}
                 >
@@ -362,17 +406,37 @@ export default function PlantillasPorAsignatura() {
                 </select>
               </div>
               <div className="col-md-4">
-                <label className="form-label">Curso / grado (opcional)</label>
+                <label className="form-label">Nivel y alcance de la plantilla</label>
+                <select
+                  className="form-select"
+                  value={packageId}
+                  onChange={(e) => {
+                    setPackageId(e.target.value);
+                    setTemplateIndicators([]);
+                  }}
+                  disabled={!selectedSubject || templateScopes.length === 0}
+                >
+                  <option value="">Seleccionar nivel / grado...</option>
+                  {templateScopes.map((scope) => (
+                    <option key={scope.id} value={scope.id}>
+                      {EDUCATION_LEVEL_LABELS[scope.education_level] || scope.education_level} — {scope.grade_label === 'general' ? 'Plantilla general' : `${scope.education_level === 'school' ? 'Grado' : 'Semestre'} ${scope.grade_label}`}
+                      {scope.assessment_framework !== 'none' ? ` — ${scope.assessment_framework.replaceAll('_', ' ')}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="col-md-4">
+                <label className="form-label">Curso destino (opcional)</label>
                   <select
                     className="form-select"
                     value={courseId}
                     onChange={(e) => setCourseId(e.target.value)}
-                    disabled={!selectedSubject || subjectCourses.length === 0}
+                  disabled={!selectedSubject || !selectedPackage || subjectCourses.length === 0}
                   >
                     <option value="">Banco general, sin curso</option>
-                    {subjectCourses.map((course) => (
+                {subjectCourses.map((course) => (
                       <option key={course.id} value={course.id}>
-                        {course.institution} — {course.name} (grado/nivel {course.grade})
+                    {course.institution} — {course.name} ({EDUCATION_LEVEL_LABELS[course.education_level] || 'nivel sin clasificar'}, {course.education_level === 'school' ? 'grado' : 'semestre'} {course.grade})
                       </option>
                     ))}
                   </select>
@@ -381,7 +445,7 @@ export default function PlantillasPorAsignatura() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={!selectedSubject || !templateIndicators.length || applying || !tid}
+                  disabled={!selectedSubject || !selectedPackage || !templateIndicators.length || courseScopeMismatch || courseLevelMissing || applying || !tid}
                   onClick={handleApply}
                 >
                   {applying ? 'Aplicando…' : 'Aplicar plantilla'}
@@ -390,15 +454,50 @@ export default function PlantillasPorAsignatura() {
             </div>
             {contextError && <div className="alert alert-warning py-2 mb-0" role="alert">{contextError}</div>}
 
-            {selectedSubject && templateIndicators.length === 0 && (
+            {selectedSubject && templateScopes.length === 0 && (
               <div className="alert alert-info py-2">
                 Esta asignatura pertenece al docente, pero todavía no tiene un paquete de plantilla configurado.
+              </div>
+            )}
+
+            {selectedSubject && templateScopes.length > 0 && !packageId && (
+              <div className="alert alert-info py-2">
+                Selecciona un nivel y alcance para ver la propuesta. Las plantillas generales se distinguen de las específicas por grado o semestre.
+              </div>
+            )}
+
+            {courseScopeMismatch && (
+              <div className="alert alert-warning py-2">
+                El curso elegido no corresponde al grado o semestre de esta plantilla. Selecciona un paquete compatible o cambia el curso destino.
+              </div>
+            )}
+
+            {courseLevelMissing && (
+              <div className="alert alert-warning py-2">
+                Este curso todavía no tiene nivel educativo clasificado. Un administrador debe editarlo antes de aplicar una plantilla para evitar mezclar niveles.
               </div>
             )}
 
             {selectedSubject && templateIndicators.length > 0 && (
               <>
                 <h6 className="mb-2">Vista previa — {selectedSubject}</h6>
+                <div className="alert alert-secondary small py-2">
+                  <strong>{selectedPackage?.authorship_label || 'Propuesta SEIO'}</strong>
+                  {selectedPackage?.editorial_note && <div>{selectedPackage.editorial_note}</div>}
+                  <div>Aplicar copia los indicadores al banco del docente. La asignación a estudiantes se hace después.</div>
+                  {templateSources.length > 0 && (
+                    <div className="mt-1">
+                      <strong>Procedencia:</strong>{' '}
+                      {templateSources.map((source, index) => (
+                        <React.Fragment key={source.key}>
+                          {index > 0 ? ' · ' : ''}
+                          {source.source_url ? <a href={source.source_url} target="_blank" rel="noreferrer">{source.organization}: {source.title}</a> : `${source.organization}: ${source.title}`}
+                          {source.reuse_status ? ` (${source.reuse_status})` : ''}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <div className="table-responsive">
                   <table className="table table-sm table-hover">
                     <thead className="table-light">

@@ -15,6 +15,7 @@ const QuestionnairesList = () => {
   const [filterTeacher, setFilterTeacher] = useState('');  // ✨ AGREGADO: filtro por docente
   const [filterInstitution, setFilterInstitution] = useState('');  // ✨ AGREGADO: filtro por institución
   const [error, setError] = useState(null);
+  const [missingIndicatorReminders, setMissingIndicatorReminders] = useState([]);
   
   useEffect(() => {
     const fetchQuestionnaires = async () => {
@@ -58,6 +59,14 @@ const QuestionnairesList = () => {
         }
         
         setQuestionnaires(questionnairesData);
+        if (user.role === 'docente') {
+          try {
+            const reminderResponse = await axios.post('/questionnaires/missing-indicator-reminders/ensure');
+            setMissingIndicatorReminders(reminderResponse.data?.data || []);
+          } catch (reminderError) {
+            console.error('No se pudieron cargar los avisos de indicadores pendientes:', reminderError);
+          }
+        }
         console.log(`✅ Se cargaron ${questionnairesData.length} cuestionarios ${user.role === 'super_administrador' ? '(todos)' : '(del profesor)'}`);
         setLoading(false);
       } catch (error) {
@@ -126,6 +135,38 @@ const QuestionnairesList = () => {
           <div>
             <strong>Mi banco de ítems — Privado.</strong> Solo tú puedes ver y usar estos cuestionarios y preguntas. Crea y edita tus ítems desde aquí o desde <Link to="/crear-pregunta" className="alert-link">Crear pregunta</Link>.
           </div>
+        </div>
+      )}
+
+      {missingIndicatorReminders.length > 0 && (
+        <div className="alert alert-warning mb-3" role="status">
+          <strong>Asocia indicadores a estos cuestionarios</strong>
+          <p className="mb-2">Sin indicadores asociados, SEIO no puede determinar los logros alcanzados ni generar correctamente su seguimiento.</p>
+          {missingIndicatorReminders.map((reminder) => (
+            <div key={reminder.id} className="d-flex flex-wrap justify-content-between align-items-center border-top py-2 gap-2">
+              <span>
+                <strong>{reminder.title}</strong> — {reminder.subject}{reminder.grade ? `, grado ${reminder.grade}` : ''}
+                {reminder.is_prueba_saber ? ' (Prueba Saber, seguimiento independiente de la definitiva)' : ''}
+              </span>
+              <span className="d-flex gap-2">
+                <Link className="btn btn-sm btn-primary" to={`/cuestionarios/${reminder.id}/editar`}>Asociar indicadores</Link>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={async () => {
+                    try {
+                      await axios.post(`/questionnaires/missing-indicator-reminders/${reminder.id}/dismiss`);
+                      setMissingIndicatorReminders(current => current.filter(item => item.id !== reminder.id));
+                    } catch (dismissError) {
+                      console.error('No se pudo cerrar el aviso:', dismissError);
+                    }
+                  }}
+                >
+                  Cerrar aviso
+                </button>
+              </span>
+            </div>
+          ))}
         </div>
       )}
       

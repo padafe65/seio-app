@@ -4,6 +4,29 @@ import { verifyToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
+const normalizeComparableText = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/gi, ' ')
+  .trim()
+  .toLowerCase();
+
+const normalizeComparableGrade = (value) => {
+  const normalized = normalizeComparableText(value);
+  if (!normalized || /^(general|todos|todas|sin grado|universal)\b/.test(normalized)) return '';
+  const words = {
+    primero: '1', primera: '1', segundo: '2', segunda: '2', tercero: '3', tercera: '3',
+    cuarto: '4', cuarta: '4', quinto: '5', quinta: '5', sexto: '6', sexta: '6',
+    septimo: '7', septima: '7', octavo: '8', octava: '8', noveno: '9', novena: '9',
+    decimo: '10', decima: '10', undecimo: '11', undecima: '11',
+    primer: '1', segundosemestre: '2', tercer: '3', tercersemestre: '3', once: '11'
+  };
+  const number = normalized.match(/\d+/)?.[0];
+  if (number) return String(Number(number));
+  const word = normalized.split(' ').find(part => words[part]);
+  return word ? words[word] : normalized.replace(/\s+/g, ' ');
+};
+
 // Obtener indicadores asociados a un cuestionario
 router.get('/questionnaire/:questionnaireId/indicators', verifyToken, async (req, res) => {
   try {
@@ -17,6 +40,7 @@ router.get('/questionnaire/:questionnaireId/indicators', verifyToken, async (req
         i.subject,
         i.category,
         i.grade,
+        i.grade_label,
         i.phase,
         qi.passing_score,
         qi.weight,
@@ -49,7 +73,7 @@ router.post('/questionnaire/:questionnaireId/indicators', verifyToken, async (re
     
     // Verificar que el cuestionario existe
     const [questionnaire] = await pool.query(
-      'SELECT id FROM questionnaires WHERE id = ?',
+      'SELECT id, created_by, subject, grade, phase FROM questionnaires WHERE id = ?',
       [questionnaireId]
     );
     
@@ -62,7 +86,7 @@ router.post('/questionnaire/:questionnaireId/indicators', verifyToken, async (re
     
     // Verificar que el indicador existe
     const [indicator] = await pool.query(
-      'SELECT id FROM indicators WHERE id = ?',
+      'SELECT id, teacher_id, subject, grade, grade_label, phase FROM indicators WHERE id = ?',
       [indicator_id]
     );
     
@@ -70,6 +94,49 @@ router.post('/questionnaire/:questionnaireId/indicators', verifyToken, async (re
       return res.status(404).json({
         success: false,
         message: 'Indicador no encontrado'
+      });
+    }
+
+    const selectedQuestionnaire = questionnaire[0];
+    const selectedIndicator = indicator[0];
+    if (req.user?.role === 'docente') {
+      const ownedTeacherIds = (req.user.teacher_ids || [req.user.teacher_id])
+        .map(Number)
+        .filter(Number.isInteger);
+      if (!ownedTeacherIds.includes(Number(selectedQuestionnaire.created_by))
+          || !ownedTeacherIds.includes(Number(selectedIndicator.teacher_id))) {
+        return res.status(403).json({
+          success: false,
+          message: 'Solo puedes asociar indicadores propios a cuestionarios de tus perfiles docentes.'
+        });
+      }
+    }
+
+    const questionnaireSubject = normalizeComparableText(selectedQuestionnaire.subject);
+    const indicatorSubject = normalizeComparableText(selectedIndicator.subject);
+    if (questionnaireSubject && indicatorSubject && questionnaireSubject !== indicatorSubject) {
+      return res.status(422).json({
+        success: false,
+        message: `La materia del indicador (${selectedIndicator.subject}) no coincide con la del cuestionario (${selectedQuestionnaire.subject}).`
+      });
+    }
+
+    const questionnaireGrade = normalizeComparableGrade(selectedQuestionnaire.grade);
+    const indicatorGrade = normalizeComparableGrade(selectedIndicator.grade || selectedIndicator.grade_label);
+    if (questionnaireGrade && indicatorGrade && questionnaireGrade !== indicatorGrade) {
+      return res.status(422).json({
+        success: false,
+        message: `El indicador corresponde al grado ${selectedIndicator.grade || selectedIndicator.grade_label} y el cuestionario al grado ${selectedQuestionnaire.grade}. Puedes usar indicadores generales o del mismo grado.`
+      });
+    }
+
+    const questionnairePhase = Number(selectedQuestionnaire.phase);
+    const indicatorPhase = Number(selectedIndicator.phase);
+    if (Number.isFinite(questionnairePhase) && Number.isFinite(indicatorPhase)
+        && questionnairePhase !== indicatorPhase) {
+      return res.status(422).json({
+        success: false,
+        message: `El indicador corresponde a la fase ${selectedIndicator.phase} y el cuestionario a la fase ${selectedQuestionnaire.phase}.`
       });
     }
     
@@ -81,6 +148,12 @@ router.post('/questionnaire/:questionnaireId/indicators', verifyToken, async (re
         passing_score = VALUES(passing_score),
         weight = VALUES(weight)
     `, [questionnaireId, indicator_id, passing_score, weight]);
+
+    await pool.query(`
+      UPDATE questionnaire_indicator_reminders
+      SET dismissed_at = COALESCE(dismissed_at, CURRENT_TIMESTAMP)
+      WHERE questionnaire_id = ?
+    `, [questionnaireId]);
     
     res.json({
       success: true,

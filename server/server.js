@@ -909,6 +909,7 @@ app.get('/api/courses', async (req, res) => {
     // Verificar si los campos institution y teacher_id existen en la tabla
     let hasInstitution = false;
     let hasTeacherId = false;
+    let hasEducationLevel = false;
 
     try {
       const [institutionCols] = await pool.query(`
@@ -928,6 +929,13 @@ app.get('/api/courses', async (req, res) => {
         AND COLUMN_NAME = 'teacher_id'
       `);
       hasTeacherId = teacherIdCols.length > 0;
+
+      const [educationLevelCols] = await pool.query(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'courses'
+          AND COLUMN_NAME = 'education_level'
+      `);
+      hasEducationLevel = educationLevelCols.length > 0;
     } catch (error) {
       // Ignorar error
     }
@@ -940,6 +948,7 @@ app.get('/api/courses', async (req, res) => {
     if (hasTeacherId) {
       selectFields += ', c.teacher_id, u.name as teacher_name';
     }
+    if (hasEducationLevel) selectFields += ', c.education_level';
 
     let query = `SELECT ${selectFields} FROM courses c`;
     if (hasTeacherId) {
@@ -961,7 +970,7 @@ app.get('/api/courses', async (req, res) => {
 // POST - Crear nuevo curso
 app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
   try {
-    const { name, grade, institution, teacher_id } = req.body;
+    const { name, grade, institution, teacher_id, education_level } = req.body;
 
     if (!name || !grade) {
       return res.status(400).json({
@@ -969,10 +978,14 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
         message: 'El nombre y el grado son obligatorios'
       });
     }
+    if (education_level && !['school', 'technical_professional', 'technological', 'professional'].includes(education_level)) {
+      return res.status(400).json({ success: false, message: 'Nivel educativo no válido' });
+    }
 
     // Verificar si el campo institution existe
     let hasInstitution = false;
     let hasTeacherId = false;
+    let hasEducationLevel = false;
 
     try {
       const [institutionCols] = await pool.query(`
@@ -992,6 +1005,12 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
         AND COLUMN_NAME = 'teacher_id'
       `);
       hasTeacherId = teacherIdCols.length > 0;
+      const [educationLevelCols] = await pool.query(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'courses'
+          AND COLUMN_NAME = 'education_level'
+      `);
+      hasEducationLevel = educationLevelCols.length > 0;
     } catch (error) {
       // Ignorar error
     }
@@ -1000,6 +1019,12 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
     let fields = 'name, grade';
     let values = '?, ?';
     let params = [name, grade];
+
+    if (hasEducationLevel) {
+      fields += ', education_level';
+      values += ', ?';
+      params.push(education_level || null);
+    }
 
     if (hasInstitution && institution) {
       fields += ', institution';
@@ -1093,6 +1118,7 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
         id: courseId,
         name,
         grade,
+        education_level: hasEducationLevel ? education_level || null : null,
         institution: hasInstitution ? institution : null,
         teacher_id: hasTeacherId ? teacher_id : null
       }
@@ -1111,7 +1137,10 @@ app.post('/api/courses', verifyToken, isAdmin, async (req, res) => {
 app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, grade, institution, teacher_id } = req.body;
+    const { name, grade, institution, teacher_id, education_level } = req.body;
+    if (education_level && !['school', 'technical_professional', 'technological', 'professional'].includes(education_level)) {
+      return res.status(400).json({ success: false, message: 'Nivel educativo no válido' });
+    }
 
     // Verificar que el curso existe
     const [existingRows] = await pool.query('SELECT * FROM courses WHERE id = ?', [id]);
@@ -1125,6 +1154,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
     // Verificar si los campos existen
     let hasInstitution = false;
     let hasTeacherId = false;
+    let hasEducationLevel = false;
 
     try {
       const [institutionCols] = await pool.query(`
@@ -1144,6 +1174,12 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
         AND COLUMN_NAME = 'teacher_id'
       `);
       hasTeacherId = teacherIdCols.length > 0;
+      const [educationLevelCols] = await pool.query(`
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'courses'
+          AND COLUMN_NAME = 'education_level'
+      `);
+      hasEducationLevel = educationLevelCols.length > 0;
     } catch (error) {
       // Ignorar error
     }
@@ -1160,6 +1196,11 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
     if (grade !== undefined) {
       updates.push('grade = ?');
       params.push(grade);
+    }
+
+    if (hasEducationLevel && education_level !== undefined) {
+      updates.push('education_level = ?');
+      params.push(education_level || null);
     }
 
     if (hasInstitution && institution !== undefined) {
@@ -1196,6 +1237,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       name: existingRows[0].name,
       grade: existingRows[0].grade,
       institution: existingRows[0].institution,
+      education_level: existingRows[0].education_level || null,
       teacher_id: existingRows[0].teacher_id
     };
 
@@ -1217,7 +1259,7 @@ app.put('/api/courses/:id', verifyToken, isAdmin, async (req, res) => {
       req.user.role,
       req.user.name || 'Usuario',
       oldValues,
-      { name, grade, institution, teacher_id },
+      { name, grade, institution, education_level, teacher_id },
       req
     );
 

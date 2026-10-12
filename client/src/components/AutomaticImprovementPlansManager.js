@@ -117,8 +117,8 @@ const AutomaticImprovementPlansManager = () => {
       
       Swal.fire({
         icon: 'success',
-        title: 'Procedimiento Ejecutado',
-        text: response.data.data[0]?.result || 'Procedimiento ejecutado correctamente',
+        title: 'Reconciliación Completada',
+        text: response.data.data[0]?.result || 'Resultados y planes sincronizados.',
         confirmButtonText: 'Entendido'
       });
 
@@ -265,8 +265,8 @@ const AutomaticImprovementPlansManager = () => {
                               </>
                             ) : (
                               <>
-                                <i className="fas fa-database mr-2"></i>
-                                Ejecutar Procedimiento
+                                <i className="fas fa-sync-alt mr-2"></i>
+                                Reconciliar Resultados
                               </>
                             )}
                           </button>
@@ -371,7 +371,7 @@ const AutomaticImprovementPlansManager = () => {
                                 <i className="fas fa-plus-circle"></i>
                               </span>
                               <div className="info-box-content">
-                                <span className="info-box-text">Planes Creados</span>
+                            <span className="info-box-text">Planes Sincronizados</span>
                                 <span className="info-box-number">{processingResults.improvement_plans_created}</span>
                               </div>
                             </div>

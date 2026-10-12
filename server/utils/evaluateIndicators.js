@@ -4,20 +4,19 @@ import pool from '../config/db.js';
  * Evalúa si un estudiante aprueba los indicadores de un cuestionario
  * basándose en su mejor puntaje en evaluation_results
  */
-export const evaluateStudentIndicators = async (studentId, questionnaireId) => {
+export const evaluateStudentIndicators = async (studentId, questionnaireId, academicYear = new Date().getFullYear()) => {
   try {
     console.log(`🔍 Evaluando indicadores para estudiante ${studentId} en cuestionario ${questionnaireId}`);
     
     // 1. Obtener el mejor puntaje del estudiante para este cuestionario
     const [evaluationData] = await pool.query(`
-      SELECT best_score 
-      FROM evaluation_results 
+      SELECT MAX(best_score) AS best_score
+      FROM evaluation_results
       WHERE student_id = ? AND questionnaire_id = ?
-      ORDER BY best_score DESC 
-      LIMIT 1
-    `, [studentId, questionnaireId]);
+        AND (academic_year = ? OR (academic_year IS NULL AND YEAR(recorded_at) = ?))
+    `, [studentId, questionnaireId, academicYear, academicYear]);
     
-    if (evaluationData.length === 0) {
+    if (evaluationData.length === 0 || evaluationData[0].best_score == null) {
       console.log(`⚠️ No se encontró evaluación para estudiante ${studentId} en cuestionario ${questionnaireId}`);
       return { success: false, message: 'No se encontró evaluación para este estudiante y cuestionario' };
     }

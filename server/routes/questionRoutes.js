@@ -351,7 +351,8 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
       WHERE q.id = ?
     `, [existingQuestion[0].questionnaire_id]);
     
-    if (questionnaireCheck.length === 0 || questionnaireCheck[0].user_id !== requestingUserId) {
+    const isAdministrator = ['admin', 'administrador', 'super_administrador'].includes(req.user.role);
+    if (!isAdministrator && (questionnaireCheck.length === 0 || Number(questionnaireCheck[0].user_id) !== Number(requestingUserId))) {
       return res.status(403).json({ 
         success: false, 
         message: 'No tienes permisos para editar esta pregunta' 
@@ -380,7 +381,7 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
         WHERE q.id = ?
       `, [questionnaire_id]);
       
-      if (newQuestionnaireCheck.length === 0 || newQuestionnaireCheck[0].user_id !== requestingUserId) {
+      if (!isAdministrator && (newQuestionnaireCheck.length === 0 || Number(newQuestionnaireCheck[0].user_id) !== Number(requestingUserId))) {
         return res.status(403).json({ 
           success: false, 
           message: 'No tienes permisos para asignar esta pregunta al cuestionario seleccionado' 

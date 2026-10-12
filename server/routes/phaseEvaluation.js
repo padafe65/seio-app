@@ -30,6 +30,56 @@ const getAuthorizedCourseIds = async (teacherId, requestedIds) => {
   return rows.map(row => Number(row.id));
 };
 
+router.get('/plan-template/:phase', verifyToken, requireTeacher, async (req, res) => {
+  try {
+    const phase = Number(req.params.phase);
+    if (!Number.isInteger(phase) || phase < 1 || phase > 4) return res.status(400).json({ message: 'Fase inválida.' });
+    const requestedIds = normalizeCourseIds(req.query.courseIds);
+    const courseIds = await getAuthorizedCourseIds(req.user.teacher_id, requestedIds);
+    if (!courseIds.length || courseIds.length !== requestedIds.length) return res.status(400).json({ message: 'Selecciona cursos asignados al docente.' });
+    const [rows] = await pool.query(`
+      SELECT course_id, phase, title, subject, description, activities, deadline_days, enabled
+      FROM phase_improvement_plan_templates
+      WHERE teacher_id = ? AND phase = ? AND academic_year = ? AND course_id IN (?)
+    `, [req.user.teacher_id, phase, new Date().getFullYear(), courseIds]);
+    res.json(rows);
+  } catch (error) {
+    console.error('Error cargando plantilla de recuperación:', error);
+    res.status(500).json({ message: 'No se pudo cargar la plantilla. Verifica que la migración de planes por fase esté aplicada.' });
+  }
+});
+
+router.put('/plan-template/:phase', verifyToken, requireTeacher, async (req, res) => {
+  try {
+    const phase = Number(req.params.phase);
+    const { title, subject, description, activities, deadlineDays = 14, enabled = true } = req.body || {};
+    const requestedIds = normalizeCourseIds(req.body?.courseIds);
+    const courseIds = await getAuthorizedCourseIds(req.user.teacher_id, requestedIds);
+    if (!Number.isInteger(phase) || phase < 1 || phase > 4) return res.status(400).json({ message: 'Fase inválida.' });
+    if (!courseIds.length || courseIds.length !== requestedIds.length) return res.status(400).json({ message: 'Selecciona cursos asignados al docente.' });
+    if (!String(title || '').trim() || !String(subject || '').trim() || !String(activities || '').trim()) {
+      return res.status(400).json({ message: 'Título, materia y actividades son obligatorios.' });
+    }
+    const days = Math.min(90, Math.max(1, Number.parseInt(deadlineDays, 10) || 14));
+    const year = new Date().getFullYear();
+    for (const courseId of courseIds) {
+      await pool.query(`
+        INSERT INTO phase_improvement_plan_templates
+          (teacher_id, course_id, phase, academic_year, title, subject, description, activities, deadline_days, enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE title = VALUES(title), subject = VALUES(subject),
+          description = VALUES(description), activities = VALUES(activities),
+          deadline_days = VALUES(deadline_days), enabled = VALUES(enabled), updated_at = CURRENT_TIMESTAMP
+      `, [req.user.teacher_id, courseId, phase, year, String(title).trim(), String(subject).trim(),
+        String(description || '').trim(), String(activities).trim(), days, enabled ? 1 : 0]);
+    }
+    res.json({ success: true, savedCourses: courseIds.length, message: `Plantilla guardada para ${courseIds.length} curso(s) en la fase ${phase}.` });
+  } catch (error) {
+    console.error('Error guardando plantilla de recuperación:', error);
+    res.status(500).json({ message: 'No se pudo guardar la plantilla. Verifica que la migración de planes por fase esté aplicada.' });
+  }
+});
+
 router.get('/courses', verifyToken, requireTeacher, async (req, res) => {
   try {
     const [courses] = await pool.query(`

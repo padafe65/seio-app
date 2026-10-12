@@ -278,31 +278,24 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
     const statusColor = passed ? '#28a745' : '#dc3545';
     const statusIcon = passed ? '✅' : '❌';
 
-    // Mostrar los indicadores que corresponden al resultado de la fase.
-    const resultIndicators = passed ? achievedIndicators : failedIndicators;
-    const indicatorsHeading = passed ? 'Indicadores Alcanzados:' : 'Indicadores No Alcanzados:';
-    let indicatorsHtml = '';
-    if (resultIndicators.length > 0) {
-      indicatorsHtml = `
-        <div class="section">
-          <h3>📋 ${indicatorsHeading}</h3>
-          <ul>
-            ${resultIndicators.map(ind => `<li>${ind.description || ind}</li>`).join('')}
-          </ul>
-        </div>
-      `;
-    } else {
-      indicatorsHtml = `
-        <div class="section">
-          <h3>Indicadores ${passed ? 'Alcanzados' : 'No Alcanzados'}:</h3>
-          <p>No hay indicadores registrados para esta fase.</p>
-        </div>
-      `;
-    }
+    // Reportar ambos grupos: una fase puede tener logros aprobados y otros
+    // pendientes, incluso cuando la nota global de la fase se pierde.
+    const renderIndicators = (items, heading, color, emptyText) => `
+      <div class="section" style="border-left-color:${color}">
+        <h3>${heading}</h3>
+        ${items.length
+          ? `<ul>${items.map(ind => `<li>${ind.description || ind}${ind.student_score != null ? ` (nota: ${ind.student_score}; mínima: ${ind.passing_score})` : ''}</li>`).join('')}</ul>`
+          : `<p>${emptyText}</p>`}
+      </div>
+    `;
+    const indicatorsHtml = [
+      renderIndicators(achievedIndicators, '✅ Indicadores Alcanzados', '#28a745', 'No hay indicadores alcanzados registrados para esta fase.'),
+      renderIndicators(failedIndicators, '📌 Indicadores No Alcanzados', '#dc3545', 'No hay indicadores pendientes registrados para esta fase.')
+    ].join('');
 
     // Construir sección de plan de mejoramiento
     let planHtml = '';
-    if (improvementPlan && !passed) {
+    if (improvementPlan && phaseScore < 3.5) {
       planHtml = `
         <div class="section plan-section">
           <h3>📚 Plan de Mejoramiento Disponible</h3>
@@ -315,12 +308,12 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
           </div>
         </div>
       `;
-    } else if (!passed) {
+    } else if (phaseScore < 3.5) {
       planHtml = `
         <div class="section info-section">
           <h3>ℹ️ Información Importante</h3>
-          <p>El docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días.</p>
-          <p>Por favor, estar atento a las comunicaciones del docente.</p>
+          <p>El docente aún no ha asignado un plan de mejoramiento para esta fase.</p>
+          <p>Comunícate con tu docente para acordar cómo recuperar o habilitar la nota de la fase.</p>
         </div>
       `;
     } else {
@@ -475,13 +468,14 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
         ${hasFinalOutcome ? 'Nota Definitiva' : `Nota Fase ${phase}`}: ${displayedScore.toFixed(2)}
         Estado: ${statusText}
         
-        ${resultIndicators.length > 0 ? `\n${indicatorsHeading}\n${resultIndicators.map(ind => `- ${ind.description || ind}`).join('\n')}` : '\nNo hay indicadores registrados para esta fase.'}
+        Indicadores alcanzados:\n${achievedIndicators.length > 0 ? achievedIndicators.map(ind => `- ${ind.description || ind}${ind.student_score != null ? ` (nota: ${ind.student_score}; mínima: ${ind.passing_score})` : ''}`).join('\n') : '- No hay indicadores alcanzados registrados.'}
+        \nIndicadores no alcanzados:\n${failedIndicators.length > 0 ? failedIndicators.map(ind => `- ${ind.description || ind}${ind.student_score != null ? ` (nota: ${ind.student_score}; mínima: ${ind.passing_score})` : ''}`).join('\n') : '- No hay indicadores pendientes registrados.'}
         
-        ${passed
+        ${phaseScore >= 3.5
           ? `\nFelicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}. Sigue adelante con ese esfuerzo.`
           : improvementPlan
             ? `\nPlan de Mejoramiento:\n${improvementPlan.title || 'Plan de Recuperación'}\nMateria: ${improvementPlan.subject || 'N/A'}\nFecha límite: ${improvementPlan.deadline || 'Por definir'}`
-            : '\nEl docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días. Por favor, estar atento a las comunicaciones del docente.'}
+            : '\nAún no tienes un plan de mejoramiento asignado para esta fase. Comunícate con tu docente para acordar cómo recuperar o habilitar la nota.'}
         
         © ${new Date().getFullYear()} SEIO
       `
@@ -744,6 +738,7 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
  */
 export const sendImprovementPlanEmail = async (studentData, improvementPlan) => {
   try {
+    const recipientPhrase = studentData.contact_email ? 'y acudiente' : '';
     const transporter = createTransporter();
 
     if (!transporter) {
@@ -827,7 +822,7 @@ export const sendImprovementPlanEmail = async (studentData, improvementPlan) => 
               <h1>📚 Plan de Mejoramiento Académico</h1>
             </div>
             <div class="content">
-              <p>Estimado(a) <strong>${studentData.name}</strong> y acudiente,</p>
+              <p>Estimado(a) <strong>${studentData.name}</strong>${recipientPhrase ? ` ${recipientPhrase}` : ''},</p>
               <p>Se ha generado un plan de mejoramiento académico para el estudiante:</p>
               
               <div class="section">
@@ -876,7 +871,7 @@ export const sendImprovementPlanEmail = async (studentData, improvementPlan) => 
       text: `
         Plan de Mejoramiento Académico - SEIO
         
-        Estimado(a) ${studentData.name} y acudiente,
+        Estimado(a) ${studentData.name}${recipientPhrase ? ` ${recipientPhrase}` : ''},
         
         Se ha generado un plan de mejoramiento académico:
         

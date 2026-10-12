@@ -3,6 +3,8 @@ import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken } from '../middleware/authMiddleware.js';
 import * as quizController from '../controllers/quiz.controller.js';
+import { evaluateStudentIndicators } from '../utils/evaluateIndicators.js';
+import { processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
 const router = express.Router();
 // Nueva API: finalizar evaluación
 router.post('/finish', quizController.finishQuiz);
@@ -242,6 +244,18 @@ router.post('/submit', verifyToken, async (req, res) => {
       }
     }
 
+    // Sincronizar los logros con la mejor nota del año, tanto en el primer
+    // intento como cuando se actualiza el resultado.
+    try {
+      const indicatorResult = await evaluateStudentIndicators(realStudentId, questionnaire_id);
+      if (indicatorResult.success) {
+        await processStudentImprovementPlan(realStudentId, questionnaire_id);
+      }
+    } catch (indicatorError) {
+      // La nota del estudiante debe conservarse aunque falle el seguimiento.
+      console.error('No se pudieron sincronizar logros/plan tras calificar el cuestionario:', indicatorError);
+    }
+
     // MODIFICACIÓN PRINCIPAL: Calcular el promedio de todas las mejores notas de la fase
     // EXCLUIR cuestionarios tipo Prueba Saber del cálculo de promedios
     // Obtener todas las mejores notas de evaluaciones en esta fase (filtradas por academic_year)
@@ -383,7 +397,7 @@ router.post('/submit', verifyToken, async (req, res) => {
         `, [realStudentId]);
         
         if (studentData.length > 0) {
-          await generateImprovementPlan(studentData[0], phaseNumber);
+          await generateImprovementPlan(studentData[0], phaseNumber, teacherId);
         }
       }
     }

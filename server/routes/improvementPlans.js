@@ -5,6 +5,7 @@ import pool from '../config/db.js';
 import { verifyToken, isAdmin, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { processQuestionnaireResults, processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
 import { logRequestAudit } from '../utils/auditLogger.js';
+import { sendImprovementPlanEmail } from '../utils/emailService.js';
 
 const router = express.Router();
 // El router se monta bajo /api; proteger solo sus propios endpoints para no
@@ -45,6 +46,7 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
     
     // Verificar si el campo institution existe en users
     let hasInstitution = false;
+    let hasSubmissionTracking = false;
     try {
       const [columns] = await pool.query(`
         SELECT COLUMN_NAME 
@@ -56,6 +58,17 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
       hasInstitution = columns.length > 0;
     } catch (error) {
       // Ignorar error
+    }
+    try {
+      const [columns] = await pool.query(`
+        SELECT COUNT(DISTINCT COLUMN_NAME) AS found
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'improvement_plans'
+          AND COLUMN_NAME IN ('submission_status', 'submitted_at', 'submission_feedback')
+      `);
+      hasSubmissionTracking = Number(columns[0]?.found) === 3;
+    } catch (error) {
+      // Mantener compatible la lista durante el despliegue de la migración.
     }
     
     // Construir la consulta base usando DISTINCT para evitar duplicados
@@ -74,6 +87,10 @@ router.get('/improvement-plans', verifyToken, async (req, res) => {
              s.grade,
              s.course_id
     `;
+
+    query += hasSubmissionTracking
+      ? ', ip.submission_status, ip.submitted_at, ip.submission_feedback'
+      : ", 'pending' AS submission_status, NULL AS submitted_at, NULL AS submission_feedback";
     
     // Agregar institution si existe el campo
     if (hasInstitution) {
@@ -406,8 +423,24 @@ router.get('/improvement-plans/auto-view', verifyToken, isTeacherOrAdmin, async 
       JOIN users us ON s.user_id = us.id
       JOIN teachers t ON ip.teacher_id = t.id
       JOIN users ut ON t.user_id = ut.id
-      LEFT JOIN questionnaires q ON ip.title LIKE CONCAT('%', q.title, '%')
-      LEFT JOIN evaluation_results er ON er.student_id = s.id AND er.questionnaire_id = q.id
+      LEFT JOIN questionnaires q ON (
+        ip.teacher_notes LIKE CONCAT('%ORIGEN_CUESTIONARIO:', q.id, '%')
+        OR ip.teacher_notes LIKE CONCAT('%', q.title, '%')
+        OR ip.title LIKE CONCAT('%', q.title, '%')
+      )
+      LEFT JOIN (
+        SELECT student_id, questionnaire_id,
+               COALESCE(academic_year, YEAR(recorded_at)) AS academic_year,
+               MAX(best_score) AS best_score
+        FROM evaluation_results
+        GROUP BY student_id, questionnaire_id, COALESCE(academic_year, YEAR(recorded_at))
+      ) er ON er.student_id = s.id AND er.questionnaire_id = q.id
+        AND er.academic_year = COALESCE(ip.academic_year, (
+          SELECT MAX(COALESCE(er2.academic_year, YEAR(er2.recorded_at)))
+          FROM evaluation_results er2
+          WHERE er2.student_id = s.id AND er2.questionnaire_id = q.id
+            AND er2.recorded_at <= ip.created_at
+        ))
       WHERE ip.teacher_notes LIKE '%generado automáticamente%'
       ORDER BY ip.created_at DESC
     `);
@@ -428,39 +461,17 @@ router.get('/improvement-plans/auto-view', verifyToken, isTeacherOrAdmin, async 
   }
 });
 
-// Ejecutar procedimiento almacenado para procesar cuestionario
+// Compatibilidad con el botón antiguo: usar el mismo procesamiento actual,
+// sin ejecutar el procedimiento SQL legado que no reconcilia los logros.
 router.post('/improvement-plans/execute-procedure/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { questionnaireId } = req.params;
-    
-    console.log(`⚙️ Ejecutando procedimiento almacenado para cuestionario ${questionnaireId}`);
-    
-    // Verificar si el procedimiento existe antes de ejecutarlo
-    try {
-      const [result] = await pool.query('CALL sp_process_questionnaire_improvement_plans(?)', [questionnaireId]);
-      
-      res.json({
-        success: true,
-        message: 'Procedimiento ejecutado correctamente',
-        data: result[0] || result
-      });
-    } catch (procedureError) {
-      // Si el procedimiento no existe, usar la función alternativa
-      if (procedureError.code === 'ER_SP_DOES_NOT_EXIST' || procedureError.message.includes('does not exist') || procedureError.message.includes('no existe')) {
-        console.log('⚠️ Procedimiento almacenado no existe, usando función alternativa...');
-        
-        // Usar la función processQuestionnaireResults como alternativa
-        const result = await processQuestionnaireResults(parseInt(questionnaireId));
-        
-        res.json({
-          success: true,
-          message: 'Procesamiento completado usando método alternativo',
-          data: result
-        });
-      } else {
-        throw procedureError;
-      }
-    }
+    const result = await processQuestionnaireResults(parseInt(questionnaireId, 10));
+    res.json({
+      success: true,
+      message: 'Resultados y planes del cuestionario sincronizados.',
+      data: [{ result: `${result.students_processed} estudiantes revisados; ${result.improvement_plans_created} planes creados, actualizados o cerrados.` }]
+    });
     
   } catch (error) {
     console.error('❌ Error ejecutando procedimiento:', error);
@@ -497,8 +508,16 @@ router.get('/improvement-plans/:id', async (req, res) => {
     if (plans.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
+
+    const plan = plans[0];
+    if (req.user?.role === 'estudiante' && Number(plan.student_user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'No tienes acceso a este plan.' });
+    }
+    if (req.user?.role === 'docente' && Number(plan.teacher_user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'No tienes acceso a este plan.' });
+    }
     
-    res.json(plans[0]);
+    res.json(plan);
   } catch (error) {
     console.error('Error al obtener plan de mejoramiento:', error);
     res.status(500).json({ message: 'Error al obtener plan de mejoramiento' });
@@ -613,6 +632,117 @@ router.post('/improvement-plans', isTeacherOrAdmin, async (req, res) => {
   }
 });
 
+router.post('/improvement-plans/:id/send-email', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ip.*, s.contact_email, us.name AS student_name, us.email AS student_email,
+             COALESCE(c.institution, us.institution) AS institution,
+             t.user_id AS plan_teacher_user_id
+      FROM improvement_plans ip
+      JOIN students s ON s.id = ip.student_id
+      JOIN users us ON us.id = s.user_id
+      JOIN teachers t ON t.id = ip.teacher_id
+      LEFT JOIN courses c ON c.id = s.course_id
+      WHERE ip.id = ?
+    `, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Plan no encontrado.' });
+
+    const plan = rows[0];
+    if (req.user.role === 'docente' && Number(plan.plan_teacher_user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'No tienes permiso para enviar este plan.' });
+    }
+    if (plan.email_sent) {
+      return res.status(409).json({ success: false, message: 'Este plan ya fue enviado por correo.' });
+    }
+
+    const isUniversity = /universidad|university/i.test(String(plan.institution || ''));
+    const result = await sendImprovementPlanEmail({
+      name: plan.student_name,
+      email: plan.student_email,
+      contact_email: isUniversity ? null : plan.contact_email
+    }, plan);
+    if (!result.success) {
+      return res.status(503).json({ success: false, message: result.message || 'No se pudo enviar el correo.' });
+    }
+
+    await pool.query('UPDATE improvement_plans SET email_sent = 1 WHERE id = ?', [plan.id]);
+    res.json({ success: true, message: 'El plan se envió por correo.', messageId: result.messageId });
+  } catch (error) {
+    console.error('Error enviando plan por correo:', error);
+    res.status(500).json({ success: false, message: 'No se pudo enviar el plan por correo.' });
+  }
+});
+
+router.post('/improvement-plans/:id/submission', verifyToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'estudiante') return res.status(403).json({ success: false, message: 'Solo el estudiante asignado puede entregar este plan.' });
+    const { submission_text = '', submission_url = '' } = req.body || {};
+    if (String(submission_text).length > 20000 || String(submission_url).length > 2048) {
+      return res.status(413).json({ success: false, message: 'La respuesta o el enlace exceden el tamaño permitido.' });
+    }
+    if (!String(submission_text).trim() && !String(submission_url).trim()) {
+      return res.status(400).json({ success: false, message: 'Escribe tu respuesta o agrega un enlace de entrega.' });
+    }
+    const normalizedSubmissionUrl = String(submission_url).trim();
+    if (normalizedSubmissionUrl) {
+      try {
+        const parsedUrl = new URL(normalizedSubmissionUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('Protocolo inválido');
+      } catch {
+        return res.status(400).json({ success: false, message: 'El enlace debe ser una URL válida que comience con http o https.' });
+      }
+    }
+    const [plans] = await pool.query(`
+      SELECT ip.id, ip.submission_status
+      FROM improvement_plans ip
+      JOIN students s ON s.id = ip.student_id
+      WHERE ip.id = ? AND s.user_id = ?
+    `, [req.params.id, req.user.id]);
+    if (!plans.length) return res.status(404).json({ success: false, message: 'No se encontró un plan asignado a tu usuario.' });
+    if (plans[0].submission_status === 'approved') return res.status(409).json({ success: false, message: 'Este plan ya fue aprobado.' });
+    await pool.query(`
+      UPDATE improvement_plans
+      SET submission_text = ?, submission_url = ?, submitted_at = NOW(),
+          submission_status = 'submitted', activity_status = 'in_progress', completed = 0,
+          completion_date = NULL, last_activity_date = NOW(), attempts_count = COALESCE(attempts_count, 0) + 1
+      WHERE id = ?
+    `, [String(submission_text).trim(), normalizedSubmissionUrl, req.params.id]);
+    res.json({ success: true, message: 'Entrega registrada. Tu docente revisará el trabajo.' });
+  } catch (error) {
+    console.error('Error registrando entrega del plan:', error);
+    res.status(500).json({ success: false, message: 'No se pudo registrar la entrega. Verifica la migración de entregas de planes.' });
+  }
+});
+
+router.put('/improvement-plans/:id/submission-review', verifyToken, isTeacherOrAdmin, async (req, res) => {
+  try {
+    const { status, feedback = '' } = req.body || {};
+    const allowedStatuses = new Set(['under_review', 'needs_correction', 'approved']);
+    if (!allowedStatuses.has(status)) return res.status(400).json({ success: false, message: 'Estado de revisión inválido.' });
+    const [plans] = await pool.query(`
+      SELECT ip.id, ip.teacher_id, t.user_id AS teacher_user_id
+      FROM improvement_plans ip JOIN teachers t ON t.id = ip.teacher_id
+      WHERE ip.id = ?
+    `, [req.params.id]);
+    if (!plans.length) return res.status(404).json({ success: false, message: 'Plan no encontrado.' });
+    if (req.user.role === 'docente' && Number(plans[0].teacher_user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'No puedes revisar un plan de otro docente.' });
+    }
+    await pool.query(`
+      UPDATE improvement_plans
+      SET submission_status = ?, submission_feedback = ?, reviewed_at = NOW(),
+          activity_status = CASE WHEN ? = 'approved' THEN 'completed' WHEN ? = 'needs_correction' THEN 'in_progress' ELSE activity_status END,
+          completed = CASE WHEN ? = 'approved' THEN 1 ELSE 0 END,
+          completion_date = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END
+      WHERE id = ?
+    `, [status, String(feedback).trim(), status, status, status, status, req.params.id]);
+    res.json({ success: true, message: 'Revisión del plan actualizada.' });
+  } catch (error) {
+    console.error('Error actualizando revisión de entrega:', error);
+    res.status(500).json({ success: false, message: 'No se pudo actualizar la revisión. Verifica la migración de entregas de planes.' });
+  }
+});
+
 // Actualizar un plan de mejoramiento
 router.put('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
   try {
@@ -643,6 +773,10 @@ router.put('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
+
+    // Guardar una edición convierte el plan automático en un plan bajo control
+    // docente para que futuras evaluaciones no reemplacen sus ajustes.
+    const notesForManualPlan = String(teacher_notes || '').replace(/^AUTO_PHASE:[^|]+\|\s*/i, '');
     
     // Actualizar el plan
     await pool.query(
@@ -655,7 +789,7 @@ router.put('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
        WHERE id = ?`,
       [title, subject, description, activities, deadline, file_url, 
        failed_achievements, passed_achievements, video_urls, resource_links,
-       activity_status, completion_date, teacher_notes, student_feedback, 
+       activity_status, completion_date, notesForManualPlan, student_feedback,
        attempts_count, last_activity_date, completed, email_sent, id]
     );
     await logRequestAudit(req, {
@@ -1208,7 +1342,7 @@ router.post('/improvement-plans/process-student/:studentId/:questionnaireId', is
 });
 
 // Procesar todos los estudiantes de un cuestionario
-router.post('/improvement-plans/process-questionnaire/:questionnaireId', verifyToken, async (req, res) => {
+router.post('/improvement-plans/process-questionnaire/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { questionnaireId } = req.params;
     

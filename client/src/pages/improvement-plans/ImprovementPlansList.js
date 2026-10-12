@@ -6,6 +6,33 @@ import axios from '../../api/axiosClient';
 import { useAuth } from '../../context/AuthContext';
 import Swal from 'sweetalert2';
 
+const hideRepeatedAutomaticPlans = (plans) => {
+  const uniquePlans = new Map();
+  for (const plan of plans) {
+    const notes = String(plan.teacher_notes || '');
+    let questionnaireTitleInPlan = String(plan.title || '').match(/Cuestionario\s+\d+:\s*(.+)$/i)?.[1];
+    const studentSuffix = ` - ${String(plan.student_name || '')}`;
+    if (questionnaireTitleInPlan?.endsWith(studentSuffix)) {
+      questionnaireTitleInPlan = questionnaireTitleInPlan.slice(0, -studentSuffix.length);
+    }
+    const questionnaireOrigin = notes.match(/cuestionario\s+"(.+?)"/i)?.[1] || questionnaireTitleInPlan;
+    const questionnaireId = notes.match(/ORIGEN_CUESTIONARIO:(\d+)/i)?.[1]
+      || String(plan.title || '').match(/Cuestionario\s+(\d+):/i)?.[1];
+    const phaseOrigin = String(plan.title || '').match(/fase\s+(\d+)/i)?.[1];
+    const isAutomatic = /autom.ticamente|ORIGEN_CUESTIONARIO:/i.test(notes);
+    let origin = null;
+    if (questionnaireOrigin) origin = `questionnaire:${questionnaireOrigin.toLowerCase()}`;
+    else if (questionnaireId) origin = `questionnaire-id:${questionnaireId}`;
+    else if (phaseOrigin) origin = `phase:${phaseOrigin}:${plan.subject || ''}`;
+    const key = isAutomatic && origin
+      ? `${plan.student_id}:${plan.teacher_id}:${origin}`
+      : `record:${plan.id}`;
+    const existing = uniquePlans.get(key);
+    if (!existing || Number(plan.id) > Number(existing.id)) uniquePlans.set(key, plan);
+  }
+  return [...uniquePlans.values()];
+};
+
 const ImprovementPlansList = () => {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +90,7 @@ const ImprovementPlansList = () => {
         }
         
         const response = await axios.get(url);
-        setPlans(Array.isArray(response.data) ? response.data : []);
+        setPlans(hideRepeatedAutomaticPlans(Array.isArray(response.data) ? response.data : []));
         setLoading(false);
       } catch (error) {
         console.error('Error al cargar planes de mejoramiento:', error);
@@ -196,6 +223,12 @@ const ImprovementPlansList = () => {
     ) : (
       <span className="badge bg-warning">Pendiente</span>
     );
+  };
+
+  const getSubmissionBadge = (status) => {
+    const labels = { pending: ['Sin entregar', 'bg-secondary'], submitted: ['Entregado', 'bg-info'], under_review: ['En revisión', 'bg-primary'], needs_correction: ['Corregir', 'bg-warning text-dark'], approved: ['Aprobado', 'bg-success'] };
+    const [label, color] = labels[status] || labels.pending;
+    return <span className={`badge ${color}`}>{label}</span>;
   };
   
   const showAdvancedFilters = user.role === 'super_administrador' || user.role === 'administrador';
@@ -392,6 +425,7 @@ const ImprovementPlansList = () => {
                     )}
                     <th>Fecha Límite</th>
                     <th>Estado</th>
+                    <th>Entrega</th>
                     <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
@@ -412,6 +446,7 @@ const ImprovementPlansList = () => {
                         )}
                         <td>{formatDate(plan.deadline)}</td>
                         <td>{getStatusBadge(plan)}</td>
+                        <td>{getSubmissionBadge(plan.submission_status)}</td>
                         <td className="text-end">
                           <div className="btn-group">
                             <Link 
@@ -442,7 +477,7 @@ const ImprovementPlansList = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={user.role === 'estudiante' ? 5 : (showCourseContext ? 9 : 6)} className="text-center py-3">
+                      <td colSpan={user.role === 'estudiante' ? 6 : (showCourseContext ? 10 : 7)} className="text-center py-3">
                         No se encontraron planes de mejoramiento
                       </td>
                     </tr>

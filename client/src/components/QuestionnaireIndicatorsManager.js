@@ -4,7 +4,40 @@ import Swal from 'sweetalert2';
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
-const QuestionnaireIndicatorsManager = ({ questionnaireId, questionnaireTitle }) => {
+const normalizeText = (value) => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim()
+  .toLowerCase();
+
+const normalizeGrade = (value) => {
+  const grade = normalizeText(value).replace(/[º°]/g, '').trim();
+  if (!grade || /^(general|todos|todas|sin grado|universal)\b/.test(grade)) return '';
+  const number = grade.match(/\d+/)?.[0];
+  if (number) return String(Number(number));
+  const gradeWords = {
+    primero: '1', primera: '1', segundo: '2', segunda: '2', tercero: '3', tercera: '3',
+    cuarto: '4', cuarta: '4', quinto: '5', quinta: '5', sexto: '6', sexta: '6',
+    septimo: '7', septima: '7', octavo: '8', octava: '8', noveno: '9', novena: '9',
+    decimo: '10', decima: '10', undecimo: '11', undecima: '11',
+    primer: '1', primersemestre: '1', segundosemestre: '2', tercer: '3', tercersemestre: '3', cuartosemestre: '4', once: '11'
+  };
+  const word = grade.split(/\s+/).find(part => gradeWords[part]);
+  return gradeWords[grade] || gradeWords[word] || grade.replace(/[^a-z0-9]/g, '');
+};
+
+const formatGrade = (value) => {
+  const normalized = normalizeGrade(value);
+  return /^\d+$/.test(normalized) ? `${normalized}°` : String(value || '').trim();
+};
+
+const QuestionnaireIndicatorsManager = ({
+  questionnaireId,
+  questionnaireTitle,
+  questionnaireSubject,
+  questionnaireGrade,
+  questionnairePhase
+}) => {
   const [indicators, setIndicators] = useState([]);
   const [availableIndicators, setAvailableIndicators] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,6 +47,22 @@ const QuestionnaireIndicatorsManager = ({ questionnaireId, questionnaireTitle })
     passing_score: 3.50,
     weight: 1.00
   });
+
+  const linkedIndicatorIds = new Set(indicators.map(indicator => String(indicator.indicator_id)));
+  const compatibleIndicators = availableIndicators
+    .filter(indicator => !linkedIndicatorIds.has(String(indicator.id)))
+    .filter(indicator => !questionnaireSubject || normalizeText(indicator.subject) === normalizeText(questionnaireSubject))
+    .filter(indicator => {
+      const indicatorGrade = indicator.grade ?? indicator.grade_label;
+      return !normalizeGrade(indicatorGrade)
+        || normalizeGrade(indicatorGrade) === normalizeGrade(questionnaireGrade);
+    })
+    .filter(indicator => !indicator.phase || !questionnairePhase || Number(indicator.phase) === Number(questionnairePhase))
+    .sort((a, b) => {
+      const aSpecific = normalizeGrade(a.grade ?? a.grade_label) ? 0 : 1;
+      const bSpecific = normalizeGrade(b.grade ?? b.grade_label) ? 0 : 1;
+      return aSpecific - bSpecific || String(a.description || '').localeCompare(String(b.description || ''), 'es');
+    });
 
   const getAuthConfig = () => {
     const token = localStorage.getItem('authToken');
@@ -76,7 +125,7 @@ const QuestionnaireIndicatorsManager = ({ questionnaireId, questionnaireTitle })
       
     } catch (error) {
       console.error('Error al asociar indicador:', error);
-      Swal.fire('Error', 'No se pudo asociar el indicador al cuestionario', 'error');
+      Swal.fire('Error', error.response?.data?.message || 'No se pudo asociar el indicador al cuestionario', 'error');
     }
   };
 
@@ -163,14 +212,26 @@ const QuestionnaireIndicatorsManager = ({ questionnaireId, questionnaireTitle })
                     required
                   >
                     <option value="">Seleccionar indicador...</option>
-                    {availableIndicators
-                      .filter(ind => !indicators.some(qi => qi.indicator_id === ind.id))
-                      .map(indicator => (
+                    {compatibleIndicators.map(indicator => {
+                      const indicatorGrade = indicator.grade ?? indicator.grade_label;
+                      const gradeLabel = normalizeGrade(indicatorGrade)
+                        ? formatGrade(indicatorGrade)
+                        : `General; se aplicará a ${formatGrade(questionnaireGrade) || 'este grado'}`;
+                      return (
                         <option key={indicator.id} value={indicator.id}>
-                          {indicator.description}
+                          {indicator.description} — {indicator.subject || questionnaireSubject || 'Sin materia'} — {gradeLabel} — Fase {indicator.phase || questionnairePhase || 'general'}
                         </option>
-                      ))}
+                      );
+                    })}
                   </select>
+                  <small className="form-text text-muted">
+                    Se muestran indicadores de {questionnaireSubject || 'la materia del cuestionario'} compatibles con {formatGrade(questionnaireGrade) || 'el grado'}; los generales se pueden reutilizar.
+                  </small>
+                  {compatibleIndicators.length === 0 && (
+                    <small className="d-block mt-1 text-warning">
+                      No hay indicadores compatibles disponibles. Revisa la materia y el grado de tus indicadores o crea uno para este nivel.
+                    </small>
+                  )}
                 </div>
                 <div className="col-md-3 mb-3">
                   <label className="form-label">Nota Mínima</label>
@@ -229,7 +290,7 @@ const QuestionnaireIndicatorsManager = ({ questionnaireId, questionnaireTitle })
                   <th>Descripción</th>
                   <th>Materia</th>
                   <th>Categoría</th>
-                  <th>Grado</th>
+                  <th title="Si el indicador es general, se muestra el grado al que se aplica en este cuestionario">Grado</th>
                   <th>Fase</th>
                   <th>Nota Mínima</th>
                   <th>Peso</th>
@@ -250,7 +311,13 @@ const QuestionnaireIndicatorsManager = ({ questionnaireId, questionnaireTitle })
                     </td>
                     <td>{indicator.subject}</td>
                     <td>{indicator.category || 'N/A'}</td>
-                    <td>{indicator.grade}</td>
+                    <td>
+                      {normalizeGrade(indicator.grade || indicator.grade_label)
+                        ? formatGrade(indicator.grade || indicator.grade_label)
+                        : questionnaireGrade
+                          ? <><span>{formatGrade(questionnaireGrade)}</span><small className="d-block text-muted">Contexto del cuestionario</small></>
+                          : <span className="text-muted">General</span>}
+                    </td>
                     <td>{indicator.phase}</td>
                     <td>
                       <input

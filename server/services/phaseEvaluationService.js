@@ -16,6 +16,45 @@ const getResultEmailRecipients = (student) => {
   return [...new Set(addresses.map(email => String(email || '').trim()).filter(Boolean))];
 };
 
+const getQuestionnaireIndicatorResults = async ({ studentId, grade, courseId, phase, teacherId }) => {
+  const [rows] = await pool.query(`
+    SELECT DISTINCT i.id, i.description, i.subject, i.category,
+           qi.passing_score, er.best_score, er.best_score AS student_score,
+           q.title AS questionnaire_title
+    FROM questionnaires q
+    JOIN (
+      SELECT student_id, questionnaire_id, MAX(best_score) AS best_score
+      FROM evaluation_results
+      WHERE academic_year = ? OR (academic_year IS NULL AND YEAR(recorded_at) = ?)
+      GROUP BY student_id, questionnaire_id
+    ) er ON er.questionnaire_id = q.id AND er.student_id = ?
+    JOIN questionnaire_indicators qi ON qi.questionnaire_id = q.id
+    JOIN indicators i ON i.id = qi.indicator_id
+    WHERE q.phase = ? AND q.created_by = ?
+      AND (q.is_prueba_saber = FALSE OR q.is_prueba_saber IS NULL)
+      AND (q.grade = ? OR q.grade IS NULL)
+      AND (q.course_id = ? OR q.course_id IS NULL)
+      AND (i.grade = ? OR i.grade IS NULL)
+  `, [new Date().getFullYear(), new Date().getFullYear(), studentId, phase, teacherId, grade, courseId, grade]);
+
+  const statusByIndicator = new Map();
+  for (const row of rows) {
+    const achieved = Number(row.best_score) >= Number(row.passing_score);
+    const current = statusByIndicator.get(row.id) || { ...row, achieved: false };
+    if (achieved && !current.achieved) {
+      Object.assign(current, row, { achieved: true });
+    } else if (!achieved && !current.achieved && Number(row.best_score) > Number(current.best_score)) {
+      Object.assign(current, row, { achieved: false });
+    }
+    statusByIndicator.set(row.id, current);
+  }
+  const indicators = [...statusByIndicator.values()];
+  return {
+    failed: indicators.filter(indicator => !indicator.achieved),
+    passed: indicators.filter(indicator => indicator.achieved)
+  };
+};
+
 // Función principal para evaluar estudiantes al final de una fase
 export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => {
   try {
@@ -88,10 +127,36 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
     `, [teacherId, selectedCourseIds, teacherId, teacherId]);
     
     console.log(`Encontrados ${students.length} estudiantes con calificaciones para la fase ${phase}`);
+
+    const [questionnairesWithoutIndicators] = await pool.query(`
+      SELECT COUNT(DISTINCT q.id) AS total
+      FROM questionnaires q
+      JOIN students s ON s.course_id IN (?)
+        AND (q.grade IS NULL OR q.grade = s.grade)
+        AND (q.course_id IS NULL OR q.course_id = s.course_id)
+      WHERE q.created_by = ? AND q.phase = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM questionnaire_indicators qi WHERE qi.questionnaire_id = q.id
+        )
+    `, [selectedCourseIds, teacherId, phase]);
+    const questionnairesMissingIndicators = Number(questionnairesWithoutIndicators[0]?.total || 0);
+    let phasePlanTemplates = new Map();
+    try {
+      const [templates] = await pool.query(`
+        SELECT course_id, title, subject, description, activities, deadline_days
+        FROM phase_improvement_plan_templates
+        WHERE teacher_id = ? AND phase = ? AND academic_year = ? AND enabled = 1 AND course_id IN (?)
+      `, [teacherId, phase, currentYear, selectedCourseIds]);
+      phasePlanTemplates = new Map(templates.map(template => [Number(template.course_id), template]));
+    } catch (templateError) {
+      if (templateError.code !== 'ER_NO_SUCH_TABLE') throw templateError;
+      console.warn('Plantillas por fase no disponibles; se usará el plan automático estándar hasta aplicar la migración.');
+    }
     
     // 2. Para cada estudiante, procesar resultados y enviar emails
     let plansCreated = 0;
     let plansUpdated = 0;
+    let studentsNeedingPlanNotice = 0;
     let studentsProcessed = 0;
     let emailsSent = 0;
     let emailsFailed = 0;
@@ -103,41 +168,21 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
       
       // Obtener indicadores no alcanzados para esta fase
       // Buscar indicadores del estudiante que no alcanzó en esta fase
-      const [failedIndicators] = await pool.query(`
-        SELECT DISTINCT
-          i.id,
-          i.description,
-          i.subject,
-          i.category
-        FROM student_indicators si
-        JOIN indicators i ON si.indicator_id = i.id
-        WHERE si.student_id = ? 
-        AND si.achieved = 0
-        AND i.phase = ?
-        AND (i.grade = ? OR i.grade IS NULL)
-        ORDER BY i.subject, i.category
-      `, [student.student_id, phase, student.grade]);
-
-      const [achievedIndicators] = await pool.query(`
-        SELECT DISTINCT
-          i.id,
-          i.description,
-          i.subject,
-          i.category
-        FROM student_indicators si
-        JOIN indicators i ON si.indicator_id = i.id
-        WHERE si.student_id = ?
-        AND si.achieved = 1
-        AND i.phase = ?
-        AND (i.grade = ? OR i.grade IS NULL)
-        ORDER BY i.subject, i.category
-      `, [student.student_id, phase, student.grade]);
+      const indicatorResults = await getQuestionnaireIndicatorResults({
+        studentId: student.student_id,
+        grade: student.grade,
+        courseId: student.course_id,
+        phase,
+        teacherId
+      });
+      const failedIndicators = indicatorResults.failed;
+      const achievedIndicators = indicatorResults.passed;
       
       let improvementPlan = null;
       
       // Si nota < 3.5, generar o actualizar plan de mejoramiento
       if (student.phase_score < 3.5) {
-        const result = await generateImprovementPlan(student, phase);
+        const result = await generateImprovementPlan(student, phase, teacherId, phasePlanTemplates.get(Number(student.course_id)) || null);
         if (result.created) plansCreated++;
         if (result.updated) plansUpdated++;
         
@@ -147,11 +192,15 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
           SELECT ip.* 
           FROM improvement_plans ip
           WHERE ip.student_id = ? 
+          AND ip.teacher_id = ?
+          AND (ip.academic_year = ? OR ip.academic_year IS NULL)
           AND (ip.title LIKE ? OR ip.title LIKE ? OR ip.title LIKE ?)
           ORDER BY ip.created_at DESC
           LIMIT 1
         `, [
           student.student_id, 
+          teacherId,
+          currentYear,
           `%Fase ${phase}%`,
           `%fase ${phase}%`,
           `%FASE ${phase}%`
@@ -160,18 +209,23 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
         if (plans.length > 0) {
           improvementPlan = plans[0];
         }
+        if (!improvementPlan) studentsNeedingPlanNotice++;
       } else {
         // Si aprobó, buscar si hay planes anteriores para informar
         const [existingPlans] = await pool.query(`
           SELECT ip.* 
           FROM improvement_plans ip
           WHERE ip.student_id = ? 
+          AND ip.teacher_id = ?
+          AND (ip.academic_year = ? OR ip.academic_year IS NULL)
           AND (ip.title LIKE ? OR ip.title LIKE ? OR ip.title LIKE ?)
           AND ip.completed = 0
           ORDER BY ip.created_at DESC
           LIMIT 1
         `, [
           student.student_id, 
+          teacherId,
+          currentYear,
           `%Fase ${phase}%`,
           `%fase ${phase}%`,
           `%FASE ${phase}%`
@@ -179,6 +233,19 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
         
         if (existingPlans.length > 0) {
           improvementPlan = existingPlans[0];
+          await pool.query(`
+            UPDATE improvement_plans
+            SET failed_achievements = '', passed_achievements = ?, completed = true,
+                activity_status = 'completed', completion_date = COALESCE(completion_date, NOW())
+            WHERE id = ?
+          `, [achievedIndicators.map(indicator => `• ${indicator.description} (${indicator.subject})`).join('\n'), improvementPlan.id]);
+          improvementPlan = {
+            ...improvementPlan,
+            failed_achievements: '',
+            passed_achievements: achievedIndicators.map(indicator => `• ${indicator.description} (${indicator.subject})`).join('\n'),
+            completed: true,
+            activity_status: 'completed'
+          };
         }
       }
       
@@ -324,10 +391,12 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
     
     return { 
       success: true, 
-      message: `Evaluación de fase ${phase} completada. ${studentsProcessed} estudiantes procesados. ${plansCreated} planes creados, ${plansUpdated} planes actualizados. ${emailsSent} emails enviados exitosamente, ${emailsFailed} fallos.`,
+      message: `Evaluación de fase ${phase} completada. ${studentsProcessed} estudiantes procesados. ${plansCreated} planes creados, ${plansUpdated} planes actualizados. ${emailsSent} emails enviados exitosamente, ${emailsFailed} fallos.${studentsNeedingPlanNotice ? ` Atención docente: ${studentsNeedingPlanNotice} estudiante(s) perdieron la fase y no tienen un plan asociado; deben acordar la recuperación.` : ''}${questionnairesMissingIndicators ? ` Atención docente: ${questionnairesMissingIndicators} cuestionario(s) de esta fase no tienen indicadores asociados.` : ''}`,
       studentsProcessed,
       plansCreated,
       plansUpdated,
+      studentsNeedingPlanNotice,
+      questionnairesMissingIndicators,
       emailsSent,
       emailsFailed
     };
@@ -338,16 +407,19 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
 };
 
 // Función para generar un plan de mejoramiento para un estudiante
-export const generateImprovementPlan = async (student, phase) => {
+export const generateImprovementPlan = async (student, phase, preferredTeacherId = null, planTemplate = null) => {
   try {
     // 1. Obtener el profesor asignado al estudiante
     const [teacherRelation] = await pool.query(`
       SELECT t.id as teacher_id, t.subject, u.name as teacher_name
-      FROM teacher_students ts
-      JOIN teachers t ON ts.teacher_id = t.id
+      FROM teachers t
       JOIN users u ON t.user_id = u.id
-      WHERE ts.student_id = ?
-    `, [student.student_id]);
+      WHERE (? IS NOT NULL AND t.id = ?)
+        OR (? IS NULL AND EXISTS (
+          SELECT 1 FROM teacher_students ts WHERE ts.teacher_id = t.id AND ts.student_id = ?
+        ))
+      ORDER BY CASE WHEN t.id = ? THEN 0 ELSE 1 END
+    `, [preferredTeacherId, preferredTeacherId, preferredTeacherId, student.student_id, preferredTeacherId]);
     
     if (teacherRelation.length === 0) {
       console.log(`Estudiante ${student.student_name} no tiene profesor asignado`);
@@ -357,31 +429,14 @@ export const generateImprovementPlan = async (student, phase) => {
     const teacher = teacherRelation[0];
     
     // 2. Obtener indicadores no alcanzados para esta fase
-    const [failedIndicators] = await pool.query(`
-      SELECT DISTINCT i.*, si.id AS student_indicator_id,
-        COALESCE(si.achieved, 0) AS achieved
-      FROM indicators i
-      JOIN teacher_students ts
-        ON ts.teacher_id = i.teacher_id AND ts.student_id = ?
-      LEFT JOIN student_indicators si
-        ON si.indicator_id = i.id AND si.student_id = ?
-      WHERE i.phase = ?
-        AND i.teacher_id = ?
-        AND i.grade = ?
-        AND COALESCE(si.achieved, 0) = 0
-    `, [student.student_id, student.student_id, phase, teacher.teacher_id, student.grade]);
-
-    // El estado de logro vive en student_indicators. Asignar los indicadores
-    // generales que todavía no tienen una relación para este estudiante.
-    for (const indicator of failedIndicators) {
-      if (!indicator.student_indicator_id) {
-        await pool.query(`
-          INSERT INTO student_indicators
-            (student_id, indicator_id, achieved, questionnaire_id, assigned_at)
-          VALUES (?, ?, 0, ?, NOW())
-        `, [student.student_id, indicator.id, indicator.questionnaire_id || null]);
-      }
-    }
+    const phaseIndicatorResults = await getQuestionnaireIndicatorResults({
+      studentId: student.student_id,
+      grade: student.grade,
+      courseId: student.course_id,
+      phase,
+      teacherId: teacher.teacher_id
+    });
+    const failedIndicators = phaseIndicatorResults.failed;
     
     // 3. Obtener cuestionarios no aprobados para esta fase
     const [failedQuizzes] = await pool.query(`
@@ -391,41 +446,32 @@ export const generateImprovementPlan = async (student, phase) => {
       WHERE er.student_id = ? 
       AND q.phase = ? 
       AND er.best_score < 3.5
-    `, [student.student_id, phase]);
+      AND (q.is_prueba_saber = FALSE OR q.is_prueba_saber IS NULL)
+      AND (er.academic_year = ? OR (er.academic_year IS NULL AND YEAR(er.recorded_at) = ?))
+    `, [student.student_id, phase, new Date().getFullYear(), new Date().getFullYear()]);
     
     // 4. Formatear los logros no alcanzados
     const failedAchievements = failedIndicators.map(i => 
-      `• ${i.description} (${i.subject})`
+      `• ${i.description} (${i.subject}; nota: ${i.best_score}; mínima: ${i.passing_score})`
     ).join('\n');
     
     // 5. Obtener indicadores alcanzados para esta fase (si existen)
-    const [passedIndicators] = await pool.query(`
-      SELECT DISTINCT i.*, COALESCE(si.achieved, 0) AS achieved
-      FROM indicators i
-      JOIN teacher_students ts
-        ON ts.teacher_id = i.teacher_id AND ts.student_id = ?
-      JOIN student_indicators si
-        ON si.indicator_id = i.id AND si.student_id = ?
-      WHERE i.phase = ?
-        AND i.teacher_id = ?
-        AND i.grade = ?
-        AND si.achieved = 1
-    `, [student.student_id, student.student_id, phase, teacher.teacher_id, student.grade]);
-    
+    const passedIndicators = phaseIndicatorResults.passed;
     const passedAchievements = passedIndicators.map(i => 
-      `• ${i.description} (${i.subject})`
+      `• ${i.description} (${i.subject}; nota: ${i.best_score}; mínima: ${i.passing_score})`
     ).join('\n');
     
     // 6. Crear el plan de mejoramiento
-    const title = `Plan de Mejoramiento - Fase ${phase} - ${teacher.subject}`;
-    const description = `
+    const baseTitle = planTemplate?.title?.trim() || `Plan de Mejoramiento - Fase ${phase} - ${teacher.subject}`;
+    const title = /fase\s+[1-4]/i.test(baseTitle) ? baseTitle : `${baseTitle} - Fase ${phase}`;
+    const generatedDescription = `
 El estudiante ${student.student_name} no ha alcanzado la nota mínima aprobatoria (3.5) en la fase ${phase} de ${teacher.subject}.
 Este plan de mejoramiento tiene como objetivo que el estudiante alcance los logros pendientes y mejore su desempeño académico.
 
 Nota obtenida en la fase ${phase}: ${student.phase_score}
 `;
 
-    const activities = `
+    const generatedActivities = `
 Para superar las dificultades identificadas, el estudiante deberá:
 
 1. Revisar los temas vistos en clase correspondientes a la fase ${phase}.
@@ -437,36 +483,56 @@ Cuestionarios a recuperar:
 ${failedQuizzes.map(q => `• ${q.title} (Nota: ${q.best_score})`).join('\n')}
 `;
 
+    const description = [String(planTemplate?.description || '').trim(), generatedDescription.trim()].filter(Boolean).join('\n\n');
+    const activities = [String(planTemplate?.activities || '').trim(), generatedActivities.trim()].filter(Boolean).join('\n\n');
     const deadline = new Date();
-    deadline.setDate(deadline.getDate() + 14); // 2 semanas para completar el plan
+    deadline.setDate(deadline.getDate() + (Number(planTemplate?.deadline_days) || 14));
     
     // 7. Verificar si ya existe un plan de mejoramiento para esta fase
     const [existingPlans] = await pool.query(`
-      SELECT id FROM improvement_plans 
+      SELECT id, title, teacher_notes FROM improvement_plans
       WHERE student_id = ? 
       AND teacher_id = ? 
       AND title LIKE ?
-      AND completed = false
+      AND (academic_year = ? OR academic_year IS NULL)
+      ORDER BY id DESC
+      LIMIT 1
     `, [
       student.student_id,
       teacher.teacher_id,
-      `%Fase ${phase}%`
+      `%Fase ${phase}%`,
+      new Date().getFullYear()
     ]);
     
     if (existingPlans.length > 0) {
-      // Actualizar el plan existente
+      // No reemplazar planes que el docente creó o editó manualmente.
+      const isMarkedAutomatic = String(existingPlans[0].teacher_notes || '').includes(`AUTO_PHASE:${phase}:${new Date().getFullYear()}`);
+      const isLegacyAutomatic = existingPlans[0].title === `Plan de Mejoramiento - Fase ${phase} - ${teacher.subject}`;
+      if (!isMarkedAutomatic && !isLegacyAutomatic) {
+        return { created: false, updated: false, preservedManualPlan: true };
+      }
       await pool.query(`
         UPDATE improvement_plans 
         SET description = ?, 
-            activities = ?, 
+            activities = ?,
+            deadline = ?,
             failed_achievements = ?,
-            passed_achievements = ?
+            passed_achievements = ?,
+            completed = false,
+            completion_date = NULL,
+            activity_status = 'pending',
+            academic_year = ?, title = ?, subject = ?, teacher_notes = ?
         WHERE id = ?
       `, [
         description.trim(),
         activities.trim(),
+        deadline.toISOString().split('T')[0],
         failedAchievements,
         passedAchievements,
+        new Date().getFullYear(),
+        title,
+        planTemplate?.subject?.trim() || teacher.subject,
+        `AUTO_PHASE:${phase}:${new Date().getFullYear()} | Plantilla ${planTemplate ? 'de curso' : 'estándar'}; nota definitiva: ${student.phase_score}`,
         existingPlans[0].id
       ]);
       
@@ -480,19 +546,20 @@ ${failedQuizzes.map(q => `• ${q.title} (Nota: ${q.best_score})`).join('\n')}
       await pool.query(`
         INSERT INTO improvement_plans 
         (student_id, teacher_id, title, subject, description, activities, deadline, 
-         failed_achievements, passed_achievements, completed, email_sent, created_at, academic_year)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW(), ?)
+         failed_achievements, passed_achievements, completed, email_sent, created_at, academic_year, teacher_notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW(), ?, ?)
       `, [
         student.student_id, 
         teacher.teacher_id, 
         title, 
-        teacher.subject, 
+        planTemplate?.subject?.trim() || teacher.subject,
         description.trim(), 
         activities.trim(), 
         deadline.toISOString().split('T')[0],
         failedAchievements,
         passedAchievements,
-        currentAcademicYear
+        currentAcademicYear,
+        `AUTO_PHASE:${phase}:${currentAcademicYear} | Plantilla ${planTemplate ? 'de curso' : 'estándar'}; nota definitiva: ${student.phase_score}`
       ]);
       
       console.log(`Plan de mejoramiento generado para ${student.student_name} en fase ${phase}`);

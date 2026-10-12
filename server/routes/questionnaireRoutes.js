@@ -7,6 +7,64 @@ import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
+// Genera una sola notificación persistente para cada cuestionario del docente
+// que aún no tenga indicadores asociados.
+router.post('/missing-indicator-reminders/ensure', verifyToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'docente') {
+      return res.status(403).json({ success: false, message: 'Esta notificación es exclusiva del panel docente.' });
+    }
+
+    const [teachers] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [req.user.id]);
+    if (!teachers.length) return res.json({ success: true, data: [] });
+    const teacherId = teachers[0].id;
+
+    await pool.query(`
+      INSERT IGNORE INTO questionnaire_indicator_reminders (questionnaire_id, teacher_id)
+      SELECT q.id, q.created_by
+      FROM questionnaires q
+      WHERE q.created_by = ?
+        AND NOT EXISTS (
+          SELECT 1 FROM questionnaire_indicators qi WHERE qi.questionnaire_id = q.id
+        )
+    `, [teacherId]);
+
+    const [reminders] = await pool.query(`
+      SELECT r.questionnaire_id AS id, q.title, q.subject, q.grade, q.is_prueba_saber
+      FROM questionnaire_indicator_reminders r
+      JOIN questionnaires q ON q.id = r.questionnaire_id
+      WHERE r.teacher_id = ? AND r.dismissed_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM questionnaire_indicators qi WHERE qi.questionnaire_id = q.id
+        )
+      ORDER BY q.created_at DESC
+    `, [teacherId]);
+
+    res.json({ success: true, data: reminders });
+  } catch (error) {
+    console.error('Error preparando recordatorios de indicadores:', error);
+    res.status(500).json({ success: false, message: 'No se pudieron cargar los recordatorios.' });
+  }
+});
+
+router.post('/missing-indicator-reminders/:questionnaireId/dismiss', verifyToken, async (req, res) => {
+  try {
+    if (req.user?.role !== 'docente') {
+      return res.status(403).json({ success: false, message: 'Esta acción es exclusiva del panel docente.' });
+    }
+    await pool.query(`
+      UPDATE questionnaire_indicator_reminders r
+      JOIN teachers t ON t.id = r.teacher_id
+      SET r.dismissed_at = CURRENT_TIMESTAMP
+      WHERE r.questionnaire_id = ? AND t.user_id = ?
+    `, [req.params.questionnaireId, req.user.id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error descartando recordatorio de indicadores:', error);
+    res.status(500).json({ success: false, message: 'No se pudo descartar el recordatorio.' });
+  }
+});
+
 // Obtener todos los cuestionarios
 // Si el usuario es super_administrador: devuelve todos
 // Si el usuario es docente: devuelve solo los que creó

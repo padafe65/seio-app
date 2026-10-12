@@ -53,7 +53,7 @@ router.get('/teacher/:teacherId', async (req, res) => {
     
     const [rows] = await pool.query(`
       SELECT tc.id, tc.assigned_date, tc.teacher_id, 
-             c.id as course_id, c.name as course_name, c.grade${institutionField}${roleField}
+             c.id as course_id, c.name as course_name, c.grade, c.education_level${institutionField}${roleField}
       FROM teacher_courses tc
       JOIN courses c ON tc.course_id = c.id
       WHERE tc.teacher_id = ?

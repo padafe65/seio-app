@@ -16,6 +16,7 @@ const CourseForm = () => {
   const [formData, setFormData] = useState({
     name: '',
     grade: '',
+    education_level: '',
     institution: '',
     teacher_id: ''
   });
@@ -65,6 +66,7 @@ const CourseForm = () => {
       setFormData({
         name: course.name || '',
         grade: course.grade?.toString() || '',
+        education_level: course.education_level || '',
         institution: course.institution || '',
         teacher_id: course.teacher_id ? course.teacher_id.toString() : ''
       });
@@ -116,6 +118,7 @@ const CourseForm = () => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
+      ...(name === 'education_level' ? { grade: '' } : {}),
       [name]: value
     }));
   };
@@ -205,6 +208,7 @@ const CourseForm = () => {
       const courseData = {
         name: formData.name.trim(),
         grade: parseInt(formData.grade),
+        education_level: formData.education_level || null,
         institution: formData.institution || null,
         teacher_id: formData.teacher_id ? parseInt(formData.teacher_id) : null
       };
@@ -300,7 +304,7 @@ const CourseForm = () => {
         <div className="card-body">
           <form onSubmit={handleSubmit}>
             <div className="row mb-3">
-              <div className="col-md-6">
+              <div className="col-md-4">
                 <label htmlFor="name" className="form-label">
                   Nombre del Curso <span className="text-danger">*</span>
                 </label>
@@ -316,10 +320,29 @@ const CourseForm = () => {
                 />
               </div>
               
-              <div className="col-md-6">
+              <div className="col-md-4">
+                <label htmlFor="education_level" className="form-label">Nivel educativo <span className="text-danger">*</span></label>
+                <select
+                  className="form-select"
+                  id="education_level"
+                  name="education_level"
+                  value={formData.education_level}
+                  onChange={handleChange}
+                  required
+                >
+                  <option value="">Seleccionar nivel</option>
+                  <option value="school">Escolar</option>
+                  <option value="technical_professional">Técnico profesional</option>
+                  <option value="technological">Tecnológico</option>
+                  <option value="professional">Profesional universitario</option>
+                </select>
+              </div>
+
+              <div className="col-md-4">
                 <label htmlFor="grade" className="form-label">
-                  Grado <span className="text-danger">*</span>
+                  {formData.education_level === 'school' ? 'Grado' : 'Semestre / nivel'} <span className="text-danger">*</span>
                 </label>
+                {formData.education_level === 'school' ? (
                 <select
                   className="form-select"
                   id="grade"
@@ -329,12 +352,34 @@ const CourseForm = () => {
                   required
                 >
                   <option value="">Seleccionar grado</option>
+                  <option value="1">1°</option>
+                  <option value="2">2°</option>
+                  <option value="3">3°</option>
+                  <option value="4">4°</option>
+                  <option value="5">5°</option>
+                  <option value="6">6°</option>
                   <option value="7">7°</option>
                   <option value="8">8°</option>
                   <option value="9">9°</option>
                   <option value="10">10°</option>
                   <option value="11">11°</option>
                 </select>
+                ) : (
+                  <select
+                    className="form-select"
+                    id="grade"
+                    name="grade"
+                    value={formData.grade}
+                    onChange={handleChange}
+                    required
+                    disabled={!formData.education_level}
+                  >
+                    <option value="">Seleccionar semestre</option>
+                    {Array.from({ length: 12 }, (_, index) => index + 1).map((value) => (
+                      <option key={value} value={value}>Semestre {value}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
             

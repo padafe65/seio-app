@@ -610,6 +610,11 @@ const QuestionnaireForm = () => {
               type="button"
               className="btn btn-light btn-sm me-2"
               onClick={() => {
+                if (isEditing) {
+                  navigate(`/cuestionarios/${id}/preguntas`);
+                  return;
+                }
+
                 // Pre-seleccionar la materia del docente cuando se abre el modal
                 setNewQuestionnaireData(prev => ({
                   ...prev,
@@ -620,7 +625,7 @@ const QuestionnaireForm = () => {
                 setShowModal(true);
               }}
             >
-              Crear y Añadir Preguntas
+              {isEditing ? 'Añadir preguntas' : 'Crear y añadir preguntas'}
             </button>
             <button
               type="button"
@@ -1361,6 +1366,9 @@ const QuestionnaireForm = () => {
             <QuestionnaireIndicatorsManager 
               questionnaireId={id}
               questionnaireTitle={formData.title}
+              questionnaireSubject={formData.subject}
+              questionnaireGrade={formData.grade}
+              questionnairePhase={formData.phase}
             />
             
             <div className="mt-4">

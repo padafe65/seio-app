@@ -2,7 +2,6 @@
 import express from 'express';
 import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
-import { getTemplateSubjects, getTemplateIndicators } from '../data/subjectTemplates.js';
 import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
@@ -82,10 +81,14 @@ router.get('/', verifyToken, async (req, res) => {
         i.category,
         i.phase,
         i.grade,
+        i.grade_label,
+        i.education_level,
         i.course_id,
         i.institution,
         c.name as course_name,
         i.from_template,
+        tp.title as template_title,
+        tp.version as template_version,
         i.created_at,
         i.teacher_id,
         i.questionnaire_id,
@@ -103,6 +106,8 @@ router.get('/', verifyToken, async (req, res) => {
       LEFT JOIN students s ON si.student_id = s.id
       LEFT JOIN questionnaires q ON i.questionnaire_id = q.id
       LEFT JOIN courses c ON i.course_id = c.id
+      LEFT JOIN teacher_indicator_template_copies tc ON tc.indicator_id = i.id
+      LEFT JOIN indicator_template_packages tp ON tp.id = tc.package_id
       WHERE 1=1
     `;
     
@@ -228,10 +233,13 @@ router.get('/', verifyToken, async (req, res) => {
 });
 
 // Plantillas por asignatura (Micro-SaaS): listar asignaturas disponibles
-router.get('/templates/subjects', verifyToken, (req, res) => {
+router.get('/templates/subjects', verifyToken, async (req, res) => {
   try {
-    const subjects = getTemplateSubjects();
-    res.json({ success: true, data: subjects });
+    const [subjects] = await pool.query(
+      `SELECT DISTINCT subject FROM indicator_template_packages
+       WHERE status = 'published' ORDER BY subject`
+    );
+    res.json({ success: true, data: subjects.map((row) => row.subject) });
   } catch (e) {
     console.error('Error listing template subjects:', e);
     res.status(500).json({ success: false, message: 'Error al listar plantillas' });
@@ -262,7 +270,7 @@ router.get('/templates/teacher-context/:teacherId', verifyToken, async (req, res
     );
     const teacherIds = teacherRows.map((row) => Number(row.id));
     const [courses] = await pool.query(`
-      SELECT DISTINCT c.id, c.name, c.grade, c.institution,
+      SELECT DISTINCT c.id, c.name, c.grade, c.institution, c.education_level,
              COALESCE(tc.teacher_id, c.teacher_id) AS teacher_id,
              t.subject
       FROM courses c
@@ -296,12 +304,83 @@ router.get('/templates/teacher-context/:teacherId', verifyToken, async (req, res
   }
 });
 
-// Obtener indicadores de una plantilla por asignatura
-router.get('/templates/:subject', verifyToken, (req, res) => {
+// Alcances de plantilla disponibles para no mezclar etapas o grados.
+router.get('/templates/:subject/scopes', verifyToken, async (req, res) => {
   try {
-    const { subject } = req.params;
-    const indicators = getTemplateIndicators(decodeURIComponent(subject), req.query.grade);
-    res.json({ success: true, data: indicators });
+    const [packages] = await pool.query(
+      `SELECT id, package_key, title, subject, education_level, assessment_framework,
+              grade_label, program_area, version, authorship_label, editorial_note
+       FROM indicator_template_packages
+       WHERE subject = ? AND status = 'published'
+       ORDER BY education_level, assessment_framework, grade_label, title`,
+      [req.params.subject]
+    );
+    res.json({ success: true, data: packages });
+  } catch (e) {
+    console.error('Error listing template scopes:', e);
+    res.status(500).json({ success: false, message: 'Error al listar los alcances de plantilla' });
+  }
+});
+
+// Obtener los indicadores y sus referencias para un paquete publicado.
+router.get('/templates/:subject', verifyToken, async (req, res) => {
+  try {
+    const { package_id: packageId } = req.query;
+    const [packages] = await pool.query(
+      `SELECT id, package_key, title, subject, education_level, assessment_framework,
+              grade_label, program_area, version, authorship_label, editorial_note
+       FROM indicator_template_packages
+       WHERE subject = ? AND status = 'published' AND id = ?
+       LIMIT 1`,
+      [req.params.subject, packageId || 0]
+    );
+    if (!packages.length) return res.json({ success: true, data: { package: null, indicators: [] } });
+
+    const templatePackage = packages[0];
+    const [rows] = await pool.query(
+      `SELECT i.id, i.description, i.category, i.phase, i.competency,
+              s.source_key, s.organization, s.title AS source_title, s.url AS source_url,
+              s.document_version, s.license_name, s.license_url, s.reuse_status,
+              s.notes AS source_notes, x.relationship_type, x.locator
+       FROM indicator_template_items i
+       LEFT JOIN indicator_template_item_sources x ON x.template_item_id = i.id
+       LEFT JOIN indicator_template_sources s ON s.id = x.source_id
+       WHERE i.package_id = ? AND i.status = 'published'
+       ORDER BY i.phase, i.id`,
+      [templatePackage.id]
+    );
+    const indicatorsById = new Map();
+    for (const row of rows) {
+      if (!indicatorsById.has(row.id)) {
+        indicatorsById.set(row.id, {
+          id: row.id,
+          description: row.description,
+          category: row.category,
+          phase: row.phase,
+          competency: row.competency,
+          sources: []
+        });
+      }
+      if (row.source_key) {
+        indicatorsById.get(row.id).sources.push({
+          key: row.source_key,
+          organization: row.organization,
+          title: row.source_title,
+          url: row.source_url,
+          version: row.document_version,
+          license: row.license_name,
+          license_url: row.license_url,
+          reuse_status: row.reuse_status,
+          relationship: row.relationship_type,
+          locator: row.locator,
+          notes: row.source_notes
+        });
+      }
+    }
+    res.json({
+      success: true,
+      data: { package: templatePackage, indicators: [...indicatorsById.values()] }
+    });
   } catch (e) {
     console.error('Error fetching template:', e);
     res.status(500).json({ success: false, message: 'Error al obtener plantilla' });
@@ -317,6 +396,7 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
     userId: req.user?.id,
     teacherId: req.body?.teacher_id,
     subject: req.body?.subject,
+    packageId: req.body?.package_id || null,
     courseId: req.body?.course_id || null,
     grade: req.body?.grade || null
   });
@@ -324,7 +404,7 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
     if (!['docente', 'super_administrador'].includes(req.user.role)) {
       return res.status(403).json({ success: false, message: 'Solo un docente o superadministrador puede aplicar plantillas' });
     }
-    const { teacher_id, subject, grade, course_id } = req.body;
+    const { teacher_id, subject, grade, course_id, package_id: packageId } = req.body;
     let tid = teacher_id;
     let accountTeacherIds = [];
     let teacherRows = [];
@@ -344,7 +424,29 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
     }
     if (!tid) return res.status(400).json({ success: false, message: 'Selecciona un docente' });
     const sub = (subject || '').trim();
-    const parsedGrade = (grade || '').toString().trim();
+    if (!packageId) return res.status(400).json({ success: false, message: 'Selecciona un paquete de plantilla' });
+    const [packageRows] = await pool.query(
+      `SELECT id, subject, education_level, assessment_framework, grade_label,
+              program_area, version, title
+       FROM indicator_template_packages
+       WHERE id = ? AND subject = ? AND status = 'published'
+       LIMIT 1`,
+      [packageId, sub]
+    );
+    if (!packageRows.length) return res.status(404).json({ success: false, message: 'La plantilla ya no está disponible' });
+    const templatePackage = packageRows[0];
+    const [templateItems] = await pool.query(
+      `SELECT id, description, category, phase, competency
+       FROM indicator_template_items
+       WHERE package_id = ? AND status = 'published'
+       ORDER BY phase, id`,
+      [templatePackage.id]
+    );
+    if (!templateItems.length) return res.status(400).json({ success: false, message: 'La plantilla no tiene indicadores publicados' });
+    let gradeLabel = templatePackage.grade_label === 'general' ? null : templatePackage.grade_label;
+    const parsedGrade = templatePackage.education_level === 'school' && templatePackage.grade_label !== 'general'
+      ? String(templatePackage.grade_label).trim()
+      : '';
     let g = parsedGrade ? Number.parseInt(parsedGrade, 10) : null;
     if (parsedGrade && (!Number.isInteger(g) || g < 0)) {
       return res.status(400).json({ success: false, message: 'El grado debe ser un número válido' });
@@ -352,7 +454,7 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
     let selectedCourse = null;
     if (course_id) {
       const [courseRows] = await pool.query(`
-        SELECT c.id, c.grade, c.institution,
+        SELECT c.id, c.grade, c.institution, c.education_level,
                COALESCE(tc.teacher_id, c.teacher_id) AS teacher_id,
                t.subject
         FROM courses c
@@ -368,12 +470,24 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
       }
       tid = selectedCourse.teacher_id;
       const courseGrade = String(selectedCourse.grade || '').trim();
-      g = courseGrade && Number.isInteger(Number(courseGrade)) ? Number.parseInt(courseGrade, 10) : null;
+      if (!selectedCourse.education_level) {
+        return res.status(400).json({ success: false, message: 'El curso todavía no tiene un nivel educativo clasificado. Pide a un administrador que lo actualice.' });
+      }
+      if (String(selectedCourse.education_level) !== String(templatePackage.education_level)) {
+        return res.status(400).json({ success: false, message: 'El nivel educativo de la plantilla no corresponde al curso seleccionado' });
+      }
+      if (templatePackage.grade_label !== 'general' && courseGrade !== String(templatePackage.grade_label)) {
+        return res.status(400).json({ success: false, message: 'El grado o semestre del paquete no coincide con el curso seleccionado' });
+      }
+      gradeLabel = courseGrade || gradeLabel;
+      g = templatePackage.education_level === 'school' && /^\d+$/.test(courseGrade)
+        ? Number.parseInt(courseGrade, 10)
+        : g;
     } else {
       const matchingTeacher = teacherRows.find((row) => row.subject === sub);
       if (matchingTeacher) tid = Number(matchingTeacher.id);
     }
-    const indicators = getTemplateIndicators(sub, g);
+    const indicators = templateItems;
     if (!indicators.length) return res.status(400).json({ success: false, message: 'Aún no hay una plantilla definida para esta asignatura' });
 
     connection = await pool.getConnection();
@@ -391,24 +505,35 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
 
     const inserted = [];
     const skipped = [];
-    for (const t of indicators) {
+    for (const t of templateItems) {
       const ownerIds = accountTeacherIds;
       const [existing] = await connection.query(
         `SELECT id FROM indicators
          WHERE teacher_id IN (?) AND subject = ? AND description = ?
            AND category <=> ? AND phase = ? AND grade <=> ?
            AND course_id <=> ? AND institution <=> ?
+           AND education_level <=> ? AND grade_label <=> ?
          LIMIT 1`,
-        [ownerIds, sub, t.description, t.category || null, t.phase, g, course_id || null, selectedCourse?.institution || null]
+        [ownerIds, sub, t.description, t.category || null, t.phase, g,
+          course_id || null, selectedCourse?.institution || null, templatePackage.education_level, gradeLabel]
       );
       if (existing.length > 0) {
         skipped.push({ id: existing[0].id, ...t });
         continue;
       }
       const [r] = await connection.query(
-        `INSERT INTO indicators (teacher_id, description, subject, category, phase, grade, course_id, institution, questionnaire_id, from_template)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)`,
-        [tid, t.description, sub, t.category || null, t.phase, g, course_id || null, selectedCourse?.institution || null]
+        `INSERT INTO indicators
+          (teacher_id, description, subject, category, phase, grade, course_id, institution,
+           questionnaire_id, from_template, education_level, grade_label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 1, ?, ?)`,
+        [tid, t.description, sub, t.category || null, t.phase, g, course_id || null,
+          selectedCourse?.institution || null, templatePackage.education_level, gradeLabel]
+      );
+      await connection.query(
+        `INSERT INTO teacher_indicator_template_copies
+          (indicator_id, template_item_id, package_id, package_version, applied_by_user_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [r.insertId, t.id, templatePackage.id, templatePackage.version, req.user.id]
       );
       inserted.push({ id: r.insertId, ...t });
     }
@@ -417,7 +542,7 @@ router.post('/apply-template', verifyToken, isTeacherOrAdmin, async (req, res) =
       subject: sub,
       teacherId: tid,
       courseId: course_id || null,
-      templateCount: indicators.length,
+      templateCount: templateItems.length,
       inserted: inserted.length,
       skipped: skipped.length,
       insertedIds: inserted.map((indicator) => indicator.id),
