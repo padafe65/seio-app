@@ -231,14 +231,15 @@ const ImprovementPlansList = () => {
     return <span className={`badge ${color}`}>{label}</span>;
   };
   
-  const showAdvancedFilters = user.role === 'super_administrador' || user.role === 'administrador';
+  const showAdvancedFilters = ['admin', 'administrador', 'super_administrador'].includes(user.role);
   const showCourseContext = showAdvancedFilters || user.role === 'docente';
+  const canManagePlans = ['docente', 'admin', 'administrador', 'super_administrador'].includes(user.role);
   
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h4 className="mb-0">Planes de Mejoramiento</h4>
-        {user.role === 'docente' && (
+        {canManagePlans && (
           <Link to="/planes-mejoramiento/nuevo" className="btn btn-primary d-flex align-items-center">
             <PlusCircle size={18} className="me-2" /> Nuevo Plan
           </Link>
@@ -426,6 +427,7 @@ const ImprovementPlansList = () => {
                     <th>Fecha Límite</th>
                     <th>Estado</th>
                     <th>Entrega</th>
+                    <th>PDF del plan</th>
                     <th className="text-end">Acciones</th>
                   </tr>
                 </thead>
@@ -447,6 +449,7 @@ const ImprovementPlansList = () => {
                         <td>{formatDate(plan.deadline)}</td>
                         <td>{getStatusBadge(plan)}</td>
                         <td>{getSubmissionBadge(plan.submission_status)}</td>
+                        <td><span className={`badge ${plan.plan_pdf_path ? 'bg-success' : 'bg-warning text-dark'}`}>{plan.plan_pdf_path ? 'Publicado' : 'Pendiente'}</span></td>
                         <td className="text-end">
                           <div className="btn-group">
                             <Link 
@@ -455,7 +458,7 @@ const ImprovementPlansList = () => {
                             >
                               <Eye size={16} className="me-1" /> Ver
                             </Link>
-                            {user.role === 'docente' && (
+                            {canManagePlans && (
                               <>
                                 <Link 
                                   to={`/planes-mejoramiento/${plan.id}/editar`} 
@@ -477,7 +480,7 @@ const ImprovementPlansList = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={user.role === 'estudiante' ? 6 : (showCourseContext ? 10 : 7)} className="text-center py-3">
+                      <td colSpan={user.role === 'estudiante' ? 7 : (showCourseContext ? 12 : 8)} className="text-center py-3">
                         No se encontraron planes de mejoramiento
                       </td>
                     </tr>

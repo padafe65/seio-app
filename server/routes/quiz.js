@@ -5,19 +5,23 @@ import { verifyToken } from '../middleware/authMiddleware.js';
 import * as quizController from '../controllers/quiz.controller.js';
 import { evaluateStudentIndicators } from '../utils/evaluateIndicators.js';
 import { processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
+import { requireQuestionnaireAccess, hasQuestionnaireAccess } from '../utils/questionnaireAccess.js';
 const router = express.Router();
 // Nueva API: finalizar evaluación
-router.post('/finish', quizController.finishQuiz);
+router.post('/finish', verifyToken, requireQuestionnaireAccess, quizController.finishQuiz);
 // Nueva API: iniciar o reanudar sesión
-router.post('/start', quizController.startOrResumeSession);
+router.post('/start', verifyToken, requireQuestionnaireAccess, quizController.startOrResumeSession);
 
 // Nueva API: guardar progreso
-router.post('/save-progress', quizController.saveProgress);
+router.post('/save-progress', verifyToken, requireQuestionnaireAccess, quizController.saveProgress);
 
 router.post('/submit', verifyToken, async (req, res) => {
   const { student_id, questionnaire_id, answers, session_id } = req.body;
 
   try {
+    if (!await hasQuestionnaireAccess(questionnaire_id, req.user)) {
+      return res.status(403).json({ success: false, code: 'QUESTIONNAIRE_ACCESS_REQUIRED', message: 'Este material es privado. Solicita autorización al superadministrador.' });
+    }
     // Usar el usuario autenticado para evitar suplantación
     const authenticatedUserId = req.user?.id;
     const userIdForStudentLookup = authenticatedUserId || student_id;
@@ -526,7 +530,7 @@ router.get('/attempts/:student_id/:questionnaire_id', async (req, res) => {
 
 // Obtener preguntas por ID de cuestionario con información del cuestionario
 // Para estudiantes: crea/retorna sesión con preguntas fijas y expires_at
-router.get('/questions/:id', verifyToken, async (req, res) => {
+router.get('/questions/:id', verifyToken, requireQuestionnaireAccess, async (req, res) => {
   const questionnaireId = req.params.id;
 
   try {
@@ -603,21 +607,32 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
     const realStudentId = studentRows[0].id;
     const currentAcademicYear = new Date().getFullYear();
 
-    // Contar intentos usados: enviados + sesiones expiradas (para no “resetear” el tiempo con recargas)
+    // Contar intentos registrados y sesiones terminales sin intento asociado.
+    // Las sesiones enviadas/expiradas heredadas también consumen su número de intento,
+    // aunque no tengan una fila correspondiente en quiz_attempts.
     const [attemptRows] = await pool.query(
       `SELECT COUNT(*) AS count FROM quiz_attempts 
        WHERE student_id = ? AND questionnaire_id = ? AND (academic_year = ? OR academic_year IS NULL)`,
       [realStudentId, questionnaireId, currentAcademicYear]
     );
-    const completedCount = attemptRows?.[0]?.count || 0;
+    const completedCount = Number(attemptRows?.[0]?.count) || 0;
 
-    const [expiredRows] = await pool.query(
-      `SELECT COUNT(*) AS count FROM quiz_sessions
-       WHERE student_id = ? AND questionnaire_id = ? AND academic_year = ? AND status = 'expired'`,
+    const [unrecordedSessionRows] = await pool.query(
+      `SELECT COUNT(*) AS count
+       FROM quiz_sessions qs
+       WHERE qs.student_id = ? AND qs.questionnaire_id = ? AND qs.academic_year = ?
+         AND qs.status IN ('expired', 'submitted', 'finished')
+         AND NOT EXISTS (
+           SELECT 1 FROM quiz_attempts qa
+           WHERE qa.student_id = qs.student_id
+             AND qa.questionnaire_id = qs.questionnaire_id
+             AND qa.attempt_number = qs.attempt_number
+             AND (qa.academic_year = qs.academic_year OR qa.academic_year IS NULL)
+         )`,
       [realStudentId, questionnaireId, currentAcademicYear]
     );
-    const expiredCount = expiredRows?.[0]?.count || 0;
-    const usedCount = completedCount + expiredCount;
+    const unrecordedSessionCount = Number(unrecordedSessionRows?.[0]?.count) || 0;
+    const usedCount = completedCount + unrecordedSessionCount;
 
     if (usedCount >= 2) {
       return res.status(400).json({ error: 'Ya alcanzaste el límite de 2 intentos para esta evaluación.' });
@@ -670,14 +685,22 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
       // Usar DATE_ADD de MySQL para calcular expires_at sin problemas de zona horaria
       const timeLimit = questionnaire.time_limit_minutes ? parseInt(questionnaire.time_limit_minutes, 10) : null;
 
-      const [insertResult] = await pool.query(
-        `INSERT INTO quiz_sessions (student_id, questionnaire_id, attempt_number, academic_year, status, started_at, expires_at, question_ids_json)
-         VALUES (?, ?, ?, ?, 'in_progress', NOW(), 
-         ${timeLimit ? 'DATE_ADD(NOW(), INTERVAL ? MINUTE)' : 'NULL'}, ?)`,
-        timeLimit 
-          ? [realStudentId, questionnaireId, attemptNumber, currentAcademicYear, timeLimit, JSON.stringify(selectedIds)]
-          : [realStudentId, questionnaireId, attemptNumber, currentAcademicYear, JSON.stringify(selectedIds)]
-      );
+      let insertedSessionId = null;
+      try {
+        const [insertResult] = await pool.query(
+          `INSERT INTO quiz_sessions (student_id, questionnaire_id, attempt_number, academic_year, status, started_at, expires_at, question_ids_json)
+           VALUES (?, ?, ?, ?, 'in_progress', NOW(),
+           ${timeLimit ? 'DATE_ADD(NOW(), INTERVAL ? MINUTE)' : 'NULL'}, ?)`,
+          timeLimit
+            ? [realStudentId, questionnaireId, attemptNumber, currentAcademicYear, timeLimit, JSON.stringify(selectedIds)]
+            : [realStudentId, questionnaireId, attemptNumber, currentAcademicYear, JSON.stringify(selectedIds)]
+        );
+        insertedSessionId = insertResult.insertId;
+      } catch (insertError) {
+        // Dos recargas simultáneas pueden intentar crear la misma sesión. Reutilizar
+        // la que ganó la carrera si todavía está activa para este intento.
+        if (insertError.code !== 'ER_DUP_ENTRY') throw insertError;
+      }
 
       // Recuperar la sesión con remaining_seconds calculado en MySQL
       const [newSessionRows] = await pool.query(
@@ -686,10 +709,18 @@ router.get('/questions/:id', verifyToken, async (req, res) => {
            WHEN expires_at IS NOT NULL THEN TIMESTAMPDIFF(SECOND, NOW(), expires_at)
            ELSE NULL
          END as remaining_seconds
-         FROM quiz_sessions WHERE id = ?`,
-        [insertResult.insertId]
+         FROM quiz_sessions
+         WHERE ${insertedSessionId ? 'id = ?' : 'student_id = ? AND questionnaire_id = ? AND academic_year = ? AND attempt_number = ? AND status = \'in_progress\''}
+         ORDER BY started_at DESC
+         LIMIT 1`,
+        insertedSessionId
+          ? [insertedSessionId]
+          : [realStudentId, questionnaireId, currentAcademicYear, attemptNumber]
       );
       session = newSessionRows[0];
+      if (!session) {
+        return res.status(409).json({ error: 'No se pudo recuperar la sesión de esta evaluación. Actualiza la página o contacta al docente.' });
+      }
     }
 
     // Cargar preguntas en el orden de la sesión

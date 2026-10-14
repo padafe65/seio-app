@@ -16,6 +16,33 @@ const getResultEmailRecipients = (student) => {
   return [...new Set(addresses.map(email => String(email || '').trim()).filter(Boolean))];
 };
 
+const claimEmailNotification = async ({ studentId, teacherId, phase, academicYear, type, recipients }) => {
+  await pool.query(`
+    INSERT INTO improvement_email_notifications
+      (student_id, teacher_id, phase, academic_year, notification_type, status, recipients)
+    VALUES (?, ?, ?, ?, ?, 'queued', ?)
+    ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+  `, [studentId, teacherId, phase, academicYear, type, JSON.stringify(recipients)]);
+  const [claim] = await pool.query(`
+    UPDATE improvement_email_notifications
+    SET status = 'sending', attempts = attempts + 1, recipients = ?, last_error = NULL
+    WHERE student_id = ? AND teacher_id = ? AND phase = ? AND academic_year = ?
+      AND notification_type = ? AND status IN ('queued', 'failed')
+  `, [JSON.stringify(recipients), studentId, teacherId, phase, academicYear, type]);
+  return claim.affectedRows === 1;
+};
+
+const finishEmailNotification = async ({ studentId, teacherId, phase, academicYear, type, result }) => {
+  await pool.query(`
+    UPDATE improvement_email_notifications
+    SET status = ?, sent_at = ?, last_error = ?
+    WHERE student_id = ? AND teacher_id = ? AND phase = ? AND academic_year = ?
+      AND notification_type = ? AND status = 'sending'
+  `, [result.success ? 'sent' : 'failed', result.success ? new Date() : null,
+    result.success ? null : String(result.error || result.message || 'Error desconocido').slice(0, 4000),
+    studentId, teacherId, phase, academicYear, type]);
+};
+
 const getQuestionnaireIndicatorResults = async ({ studentId, grade, courseId, phase, teacherId }) => {
   const [rows] = await pool.query(`
     SELECT DISTINCT i.id, i.description, i.subject, i.category,
@@ -262,6 +289,7 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
         name: student.student_name,
         email: student.student_email,
         contact_email: student.contact_email,
+        teacher_name: student.teacher_name,
         grade: student.grade,
         course_name: student.course_name,
         subject: student.teacher_subject,
@@ -305,7 +333,9 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
       // Enviar email con resultados de fase (incluyendo PDF si se generó)
       try {
         if (resultRecipients.length > 0) {
-          const emailResult = await sendPhaseResultsEmail(
+          const notificationKey = { studentId: student.student_id, teacherId, phase, academicYear: currentYear, type: 'phase_result', recipients: resultRecipients };
+          const notificationClaimed = await claimEmailNotification(notificationKey);
+          const emailResult = notificationClaimed ? await sendPhaseResultsEmail(
             studentData,
             phase,
             student.phase_score,
@@ -313,14 +343,15 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
             failedIndicators,
             pdfBuffer,
             { recipients: resultRecipients, achievedIndicators, isFinalPass: finalPromotionPassed }
-          );
+          ) : { success: true, skipped: true };
+          if (notificationClaimed) await finishEmailNotification({ ...notificationKey, result: emailResult });
           
           if (emailResult.success) {
-            emailsSent++;
+            if (!emailResult.skipped) emailsSent++;
             console.log(`✅ Email enviado a ${student.student_name} (fase ${phase})`);
             
             // Si hay plan, marcar como enviado
-            if (improvementPlan && student.phase_score < 3.5 && finalPromotionPassed !== true) {
+            if (!emailResult.skipped && improvementPlan && student.phase_score < 3.5 && finalPromotionPassed !== true) {
               await pool.query(
                 'UPDATE improvement_plans SET email_sent = 1 WHERE id = ?',
                 [improvementPlan.id]
@@ -370,13 +401,16 @@ export const evaluatePhaseResults = async (phase, teacherId, courseIds = []) => 
             console.error(`❌ Error al generar PDF de nota final para ${student.student_name}:`, pdfError);
           }
           
-          const finalEmailResult = await sendFinalGradeEmail(
+          const finalNotificationKey = { studentId: student.student_id, teacherId, phase, academicYear: currentYear, type: 'final_grade', recipients: resultRecipients };
+          const finalNotificationClaimed = await claimEmailNotification(finalNotificationKey);
+          const finalEmailResult = finalNotificationClaimed ? await sendFinalGradeEmail(
             studentData,
             student.overall_average || 0,
             phaseGrades,
             finalPdfBuffer,
             resultRecipients
-          );
+          ) : { success: true, skipped: true };
+          if (finalNotificationClaimed) await finishEmailNotification({ ...finalNotificationKey, result: finalEmailResult });
           
           if (finalEmailResult.success) {
             console.log(`✅ Email de nota final enviado a ${student.student_name}`);
@@ -475,7 +509,7 @@ Nota obtenida en la fase ${phase}: ${student.phase_score}
 Para superar las dificultades identificadas, el estudiante deberá:
 
 1. Revisar los temas vistos en clase correspondientes a la fase ${phase}.
-2. Completar los ejercicios adicionales que se adjuntan a este plan.
+2. Completar los ejercicios del PDF que publicará el docente en la plataforma.
 3. Presentar nuevamente las evaluaciones no aprobadas.
 4. Entregar un trabajo escrito sobre los temas principales de la fase.
 

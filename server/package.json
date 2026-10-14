@@ -16,6 +16,7 @@
     "migrate:dedupe-indicators": "node scripts/run-migration-dedupe-indicators.js",
     "migrate:indicator-template-catalog": "node scripts/run-migration-indicator-template-catalog.js",
     "migrate:phase-improvement-plan-templates": "node scripts/run-migration-phase-improvement-plan-templates.js",
+    "migrate:improvement-plan-files": "node scripts/run-migration-improvement-plan-files.js",
     "seed:indicator-template-catalog": "node scripts/seed-indicator-template-catalog.js",
     "reconcile:indicator-results": "node scripts/reconcile-indicator-results.js",
     "test": "jest --detectOpenHandles --forceExit",

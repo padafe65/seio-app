@@ -5,6 +5,7 @@ import path from 'path';
 import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { logRequestAudit } from '../utils/auditLogger.js';
+import { hasQuestionnaireAccess, canManageQuestionnaire } from '../utils/questionnaireAccess.js';
 
 const router = express.Router();
 
@@ -27,6 +28,9 @@ const upload = multer({
 router.get('/questions/:questionnaireId', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { questionnaireId } = req.params;
+    if (!await hasQuestionnaireAccess(questionnaireId, req.user)) {
+      return res.status(403).json({ success: false, code: 'QUESTIONNAIRE_ACCESS_REQUIRED', message: 'Este material es privado.' });
+    }
     
     const [questions] = await pool.query(
       'SELECT * FROM questions WHERE questionnaire_id = ?',
@@ -53,6 +57,9 @@ router.get('/question/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
     if (questions.length === 0) {
       return res.status(404).json({ success: false, message: 'Pregunta no encontrada' });
     }
+    if (!await hasQuestionnaireAccess(questions[0].questionnaire_id, req.user)) {
+      return res.status(403).json({ success: false, code: 'QUESTIONNAIRE_ACCESS_REQUIRED', message: 'Este material es privado.' });
+    }
     
     res.json({ success: true, data: questions[0] });
   } catch (error) {
@@ -76,6 +83,10 @@ router.post('/question', verifyToken, isTeacherOrAdmin, upload.single('image'), 
       is_prueba_saber,
       prueba_saber_level
     } = req.body;
+
+    if (!questionnaire_id || !await canManageQuestionnaire(questionnaire_id, req.user)) {
+      return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede agregar preguntas a este cuestionario privado.' });
+    }
 
     // Si no se proporciona una categoría, obtenerla del cuestionario
     let finalCategory = category;
@@ -159,7 +170,11 @@ router.post('/question', verifyToken, isTeacherOrAdmin, upload.single('image'), 
 // Obtener todas las preguntas
 router.get('/questions', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM questions');
+    const [rows] = await pool.query(`SELECT q.* FROM questions q
+          WHERE NOT EXISTS (SELECT 1 FROM restricted_questionnaires r WHERE r.questionnaire_id = q.questionnaire_id)
+             OR EXISTS (SELECT 1 FROM restricted_questionnaires r WHERE r.questionnaire_id = q.questionnaire_id AND r.owner_user_id = ?)
+             OR EXISTS (SELECT 1 FROM questionnaire_access_grants g WHERE g.questionnaire_id = q.questionnaire_id AND g.user_id = ? AND g.status = 'active')`,
+        [req.user.id, req.user.id]);
     res.json({ success: true, data: rows });
   } catch (error) {
     console.error('Error al obtener preguntas:', error);
@@ -210,6 +225,13 @@ router.get('/prueba-saber', verifyToken, async (req, res) => {
       
       query += ` AND qn.created_by = ?`;
       params.push(teachers[0].id);
+    }
+
+    {
+      query += ` AND (NOT EXISTS (SELECT 1 FROM restricted_questionnaires r WHERE r.questionnaire_id = qn.id)
+        OR EXISTS (SELECT 1 FROM restricted_questionnaires r WHERE r.questionnaire_id = qn.id AND r.owner_user_id = ?)
+        OR EXISTS (SELECT 1 FROM questionnaire_access_grants g WHERE g.questionnaire_id = qn.id AND g.user_id = ? AND g.status = 'active'))`;
+      params.push(req.user.id, req.user.id);
     }
     
     // Filtrar por nivel si se especifica
@@ -271,6 +293,9 @@ router.delete('/questions/:id', verifyToken, isTeacherOrAdmin, async (req, res) 
     if (existingQuestion.length === 0) {
       return res.status(404).json({ success: false, message: 'Pregunta no encontrada' });
     }
+    if (!await canManageQuestionnaire(existingQuestion[0].questionnaire_id, req.user)) {
+      return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede eliminar preguntas de este cuestionario privado.' });
+    }
 
     await pool.query('DELETE FROM questions WHERE id = ?', [id]);
     await logRequestAudit(req, {
@@ -293,7 +318,7 @@ router.delete('/questions/:id', verifyToken, isTeacherOrAdmin, async (req, res) 
 });
 
 // Obtener una pregunta específica por ID
-router.get('/questions/:id', async (req, res) => {
+router.get('/questions/:id', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Intentando obtener pregunta con ID: ${id}`);
@@ -306,6 +331,9 @@ router.get('/questions/:id', async (req, res) => {
     
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Pregunta no encontrada' });
+    }
+    if (!await hasQuestionnaireAccess(rows[0].questionnaire_id, req.user)) {
+      return res.status(403).json({ success: false, code: 'QUESTIONNAIRE_ACCESS_REQUIRED', message: 'Este material es privado.' });
     }
     
     // Si la pregunta tiene un questionnaire_id, obtener el título del cuestionario
@@ -342,6 +370,9 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
         message: 'Pregunta no encontrada' 
       });
     }
+    if (!await canManageQuestionnaire(existingQuestion[0].questionnaire_id, req.user)) {
+      return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede editar preguntas de este cuestionario privado.' });
+    }
 
     // Verificar que el cuestionario de la pregunta pertenece al docente autenticado
     const [questionnaireCheck] = await pool.query(`
@@ -374,6 +405,9 @@ router.put('/:id', verifyToken, isTeacherOrAdmin, upload.single('image'), async 
 
     // Verificar que el nuevo cuestionario también pertenece al docente
     if (questionnaire_id && questionnaire_id !== existingQuestion[0].questionnaire_id) {
+      if (!await canManageQuestionnaire(questionnaire_id, req.user)) {
+        return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede mover preguntas a este cuestionario privado.' });
+      }
       const [newQuestionnaireCheck] = await pool.query(`
         SELECT q.created_by, t.user_id 
         FROM questionnaires q 

@@ -6,6 +6,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import 'katex/dist/katex.min.css';
 import { InlineMath, BlockMath } from 'react-katex';
+import QuestionFigureSet from '../../components/QuestionFigureSet';
 import { GraduationCap, Clock, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const TakePruebaSaberPage = () => {
@@ -378,15 +379,7 @@ const TakePruebaSaberPage = () => {
 
             {currentQuestion.image_url && (
               <div className="mb-4 text-center">
-                <img 
-                  src={currentQuestion.image_url.startsWith('http') 
-                    ? currentQuestion.image_url 
-                    : `${process.env.REACT_APP_API_URL || 'http://localhost:5000'}${currentQuestion.image_url}`
-                  }
-                  alt="Pregunta"
-                  className="img-fluid rounded shadow-sm"
-                  style={{ maxWidth: '500px', maxHeight: '400px' }}
-                />
+                <QuestionFigureSet questionId={currentQuestion.id} fallbackSrc={currentQuestion.image_url} alt="Pregunta" className="img-fluid rounded shadow-sm" style={{ maxWidth: '500px', maxHeight: '400px' }} />
               </div>
             )}
 

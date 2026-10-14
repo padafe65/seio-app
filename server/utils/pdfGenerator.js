@@ -209,7 +209,7 @@ export const generatePhaseResultsPDF = async (data) => {
       const passed = hasFinalOutcome ? Boolean(data.isFinalPass) : phaseScore >= 3.5;
       const displayedScore = hasFinalOutcome ? Number(data.finalGrade) : phaseScore;
       const statusText = hasFinalOutcome
-        ? (passed ? 'PROMOVIDO' : 'NO PROMOVIDO')
+        ? (passed ? (displayedScore < 3.5 ? 'PROMOVIDO - REQUIERE REFUERZO' : 'PROMOVIDO') : 'NO PROMOVIDO')
         : (passed ? 'APROBÓ' : 'NO APROBÓ');
       const statusColor = passed ? '#28a745' : '#dc3545';
       const phaseIndicators = passed
@@ -244,6 +244,14 @@ export const generatePhaseResultsPDF = async (data) => {
          .text(hasFinalOutcome ? 'Nota mínima para promoción: 3.0' : 'Nota mínima para aprobar fase: 3.5', 50, yPosition, { width: 500 });
 
       yPosition += 20;
+
+      if (hasFinalOutcome && passed && displayedScore < 3.5) {
+        doc.fontSize(10)
+          .font('Helvetica')
+          .fillColor('#666666')
+          .text('Has sido promovido. Refuerza los temas vistos durante el período académico y repasa los indicadores no alcanzados.', 50, yPosition, { width: 500 });
+        yPosition += 28;
+      }
 
       // ============================================
       // INDICADORES NO ALCANZADOS
@@ -420,7 +428,7 @@ export const generatePhaseResultsPDF = async (data) => {
         doc.fontSize(10)
            .font('Helvetica')
            .fillColor('#666666')
-           .text('El docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días.', 70, yPosition, {
+           .text('Consulta la sección Plan de Mejora en SEIO. Si el PDF aún no aparece publicado, comunícate con tu docente para solicitarlo.', 70, yPosition, {
              width: 480,
              align: 'justify'
            });
@@ -583,6 +591,7 @@ export const generateFinalGradePDF = async (data) => {
       // Nota final destacada
       const finalGrade = parseFloat(data.finalGrade) || 0;
       const passed = finalGrade >= 3.0;
+      const needsReinforcement = passed && finalGrade < 3.5;
       const statusColor = passed ? '#28a745' : '#dc3545';
 
       doc.fontSize(18)
@@ -598,14 +607,16 @@ export const generateFinalGradePDF = async (data) => {
       doc.fontSize(16)
          .font('Helvetica-Bold')
          .fillColor(statusColor)
-         .text(passed ? 'APROBÓ' : 'NO PROMOVIDO', 300, yPosition + 5);
+         .text(passed ? (needsReinforcement ? 'PROMOVIDO - REQUIERE REFUERZO' : 'PROMOVIDO') : 'NO PROMOVIDO', 300, yPosition + 5, { width: 250 });
 
       yPosition += 30;
       doc.fontSize(10)
          .font('Helvetica')
          .fillColor(statusColor)
          .text(passed
-           ? `Felicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${data.teacherSubject || 'la materia'}. Sigue adelante con ese esfuerzo.`
+           ? needsReinforcement
+             ? `Has sido promovido en ${data.teacherSubject || 'la materia'}. Refuerza los temas vistos durante el período académico y repasa los indicadores no alcanzados.`
+             : `Felicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${data.teacherSubject || 'la materia'}. Sigue adelante con ese esfuerzo.`
            : 'Sigue esforzándote para alcanzar los objetivos de aprendizaje. El docente te orientará sobre el proceso de mejoramiento.', 50, yPosition, { width: 500 });
       yPosition += 35;
 

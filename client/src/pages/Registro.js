@@ -46,7 +46,7 @@ const Registro = () => {
         },
         role: 'estudiante'
       });
-      
+
       const userId = response.data.user.id;
       const registeredUser = response.data.user;
       const emailNotificationFailed = response.data.notificationStatus !== 'sent';
@@ -105,43 +105,43 @@ const Registro = () => {
     <div className="container mt-5">
       <h2>Registro de Usuario</h2>
       <form onSubmit={handleSubmit}>
-        <input 
-          type="text" 
-          name="name" 
-          placeholder="Nombre completo" 
-          onChange={handleChange} 
-          className="form-control mb-2" 
-          required 
+        <input
+          type="text"
+          name="name"
+          placeholder="Nombre completo"
+          onChange={handleChange}
+          className="form-control mb-2"
+          required
         />
 
-        <input 
-          type="text" 
-          name="phone" 
-          placeholder="Teléfono fijo o celular" 
-          onChange={handleChange} 
-          className="form-control mb-2" 
-          required 
+        <input
+          type="text"
+          name="phone"
+          placeholder="Teléfono fijo o celular"
+          onChange={handleChange}
+          className="form-control mb-2"
+          required
         />
 
-        <input 
-          type="email" 
-          name="email" 
-          placeholder="Correo Electrónico" 
-          onChange={handleChange} 
-          className="form-control mb-2" 
-          required 
+        <input
+          type="email"
+          name="email"
+          placeholder="Correo Electrónico"
+          onChange={handleChange}
+          className="form-control mb-2"
+          required
         />
 
-        <input 
-          type="password" 
-          name="password" 
-          placeholder="Mínimo 8 caracteres y un carácter especial"
-          onChange={handleChange} 
-          className="form-control mb-2" 
+        <input
+          type="password"
+          name="password"
+          placeholder="Digita tu password aquí"
+          onChange={handleChange}
+          className="form-control mb-2"
           minLength={8}
-          required 
+          required
         />
-        <small className="text-muted d-block mb-2">Usa al menos 8 caracteres e incluye un carácter especial, por ejemplo !, @ o #.</small>
+        <small className="text-muted d-block mb-2">Usa al menos 8 caracteres para el password que incluya almenos una letra mayuscula y almenos un carácter especial, por ejemplo !, @ o #.</small>
 
         <p className="text-muted mb-3">El registro público crea cuentas de estudiante. Las cuentas docentes son creadas por el superadministrador.</p>
 
@@ -163,7 +163,7 @@ const Registro = () => {
           </div>
         </div>
 
-        <ImageUploader 
+        <ImageUploader
           onImageUpload={setProfileImage}
           currentImage={profileImage}
           deferUpload

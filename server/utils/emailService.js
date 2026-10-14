@@ -272,9 +272,12 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
     const hasFinalOutcome = options.isFinalPass !== null && options.isFinalPass !== undefined;
     const passed = hasFinalOutcome ? Boolean(options.isFinalPass) : phaseScore >= 3.5;
     const statusText = hasFinalOutcome
-      ? (passed ? 'PROMOVIDO' : 'NO PROMOVIDO')
+      ? (passed ? (Number(studentData.final_grade) < 3.5 ? 'PROMOVIDO - REQUIERE REFUERZO' : 'PROMOVIDO') : 'NO PROMOVIDO')
       : (passed ? 'APROBÓ' : 'NO APROBÓ');
     const displayedScore = hasFinalOutcome ? Number(studentData.final_grade) : phaseScore;
+    const reinforcementNoticeHtml = hasFinalOutcome && passed && displayedScore < 3.5
+      ? '<div class="section info-section"><h3>Promoción y refuerzo académico</h3><p>Has sido promovido en la materia. Como tu definitiva está entre 3,0 y menos de 3,5, refuerza los temas vistos durante el período académico y repasa los indicadores no alcanzados.</p></div>'
+      : '';
     const statusColor = passed ? '#28a745' : '#dc3545';
     const statusIcon = passed ? '✅' : '❌';
 
@@ -298,13 +301,16 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
     if (improvementPlan && phaseScore < 3.5) {
       planHtml = `
         <div class="section plan-section">
-          <h3>📚 Plan de Mejoramiento Disponible</h3>
+          <h3>📚 ${improvementPlan.plan_pdf_path ? 'Plan de Mejoramiento Disponible' : 'Plan asignado; PDF pendiente de publicación'}</h3>
           <div class="plan-details">
             <p><strong>Título:</strong> ${improvementPlan.title || 'Plan de Recuperación'}</p>
             <p><strong>Materia:</strong> ${improvementPlan.subject || 'N/A'}</p>
             <p><strong>Fecha límite:</strong> ${improvementPlan.deadline || 'Por definir'}</p>
             ${improvementPlan.description ? `<p><strong>Descripción:</strong></p><p>${improvementPlan.description.replace(/\n/g, '<br>')}</p>` : ''}
             ${improvementPlan.activities ? `<p><strong>Actividades:</strong></p><p>${improvementPlan.activities.replace(/\n/g, '<br>')}</p>` : ''}
+            ${improvementPlan.plan_pdf_path
+              ? '<p>Descarga el PDF y entrega tu solución desde la sección Plan de Mejora de la plataforma.</p>'
+              : `<p>El PDF aún no está publicado. Comunícate con ${studentData.teacher_name || 'tu docente'} para solicitarlo.</p>`}
           </div>
         </div>
       `;
@@ -313,7 +319,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
         <div class="section info-section">
           <h3>ℹ️ Información Importante</h3>
           <p>El docente aún no ha asignado un plan de mejoramiento para esta fase.</p>
-          <p>Comunícate con tu docente para acordar cómo recuperar o habilitar la nota de la fase.</p>
+          <p>Comunícate con ${studentData.teacher_name || 'tu docente'} para solicitar el plan y acordar cómo recuperar la fase.</p>
         </div>
       `;
     } else {
@@ -449,6 +455,7 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
               ${indicatorsHtml}
 
               ${planHtml}
+              ${reinforcementNoticeHtml}
             </div>
             <div class="footer">
               <p>Este es un correo automático del sistema SEIO.</p>
@@ -475,7 +482,8 @@ export const sendPhaseResultsEmail = async (studentData, phase, phaseScore, impr
           ? `\nFelicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}. Sigue adelante con ese esfuerzo.`
           : improvementPlan
             ? `\nPlan de Mejoramiento:\n${improvementPlan.title || 'Plan de Recuperación'}\nMateria: ${improvementPlan.subject || 'N/A'}\nFecha límite: ${improvementPlan.deadline || 'Por definir'}`
-            : '\nAún no tienes un plan de mejoramiento asignado para esta fase. Comunícate con tu docente para acordar cómo recuperar o habilitar la nota.'}
+            : `\nAún no tienes un plan de mejoramiento asignado para esta fase. Comunícate con ${studentData.teacher_name || 'tu docente'} para solicitarlo.`}
+        ${hasFinalOutcome && passed && displayedScore < 3.5 ? '\nHas sido promovido en la materia. Refuerza los temas vistos durante el período académico y repasa los indicadores no alcanzados.' : ''}
         
         © ${new Date().getFullYear()} SEIO
       `
@@ -526,7 +534,8 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
     }
 
     const passed = finalGrade >= 3.0;
-    const statusText = passed ? 'APROBÓ' : 'REPROBÓ';
+    const needsReinforcement = passed && finalGrade < 3.5;
+    const statusText = passed ? (needsReinforcement ? 'PROMOVIDO - REQUIERE REFUERZO' : 'PROMOVIDO') : 'NO PROMOVIDO';
     const statusColor = passed ? '#28a745' : '#dc3545';
     const statusIcon = passed ? '✅' : '❌';
     const minScore = 3.0;
@@ -668,7 +677,9 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
               </div>
 
               <p>${passed
-                ? `Felicitaciones por tu esfuerzo y por aprobar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.`
+                ? needsReinforcement
+                  ? `Has sido promovido en ${studentData.subject || 'la materia'}. Refuerza los temas vistos durante el período académico y repasa los indicadores no alcanzados.`
+                  : `Felicitaciones por tu esfuerzo y por alcanzar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.`
                 : 'Sigue esforzándote para alcanzar los objetivos de aprendizaje. El docente se comunicará contigo sobre el proceso de mejoramiento.'}</p>
 
               <h3 style="color: #007bff; margin-top: 30px;">Desglose por Fases:</h3>
@@ -683,7 +694,9 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
               ` : `
                 <div style="background-color: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 20px 0; border-radius: 5px;">
                   <p><strong>✅ Felicitaciones:</strong></p>
-                  <p>El estudiante ha aprobado exitosamente el período académico.</p>
+                  <p>${needsReinforcement
+                    ? 'El estudiante fue promovido. Se recomienda reforzar los temas vistos durante el período académico.'
+                    : 'El estudiante ha aprobado exitosamente el período académico.'}</p>
                 </div>
               `}
             </div>
@@ -714,7 +727,9 @@ export const sendFinalGradeEmail = async (studentData, finalGrade, phaseGrades =
         
         ${!passed
           ? '\nEl estudiante no alcanzó la nota mínima requerida. Sigue esforzándote para alcanzar los objetivos de aprendizaje; el docente te orientará sobre el proceso de mejoramiento.'
-          : `\nFelicitaciones por aprobar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.`}
+          : needsReinforcement
+            ? `\nHas sido promovido en ${studentData.subject || 'la materia'}. Refuerza los temas vistos durante el período académico y repasa los indicadores no alcanzados.`
+            : `\nFelicitaciones por alcanzar los objetivos de aprendizaje propuestos para ${studentData.subject || 'la materia'}.`}
         
         © ${new Date().getFullYear()} SEIO
       `
@@ -823,7 +838,9 @@ export const sendImprovementPlanEmail = async (studentData, improvementPlan) => 
             </div>
             <div class="content">
               <p>Estimado(a) <strong>${studentData.name}</strong>${recipientPhrase ? ` ${recipientPhrase}` : ''},</p>
-              <p>Se ha generado un plan de mejoramiento académico para el estudiante:</p>
+              <p>${improvementPlan.plan_pdf_path
+                ? 'El docente publicó el PDF del plan. Ingresa a SEIO, abre Plan de Mejora, descárgalo y sube allí tu solución.'
+                : 'Se ha asignado un plan de mejoramiento. Ingresa a SEIO y consulta Plan de Mejora; si aún no ves el PDF, comunícate con tu docente para solicitarlo.'}</p>
               
               <div class="section">
                 <h3>📋 Información del Plan</h3>
@@ -874,6 +891,9 @@ export const sendImprovementPlanEmail = async (studentData, improvementPlan) => 
         Estimado(a) ${studentData.name}${recipientPhrase ? ` ${recipientPhrase}` : ''},
         
         Se ha generado un plan de mejoramiento académico:
+        ${improvementPlan.plan_pdf_path
+          ? 'El PDF está publicado en tu dashboard de SEIO, en Plan de Mejora. Descárgalo y sube allí tu solución.'
+          : 'Consulta el plan asignado en tu dashboard de SEIO, en Plan de Mejora. Si no ves el PDF, comunícate con tu docente para solicitarlo.'}
         
         Título: ${improvementPlan.title || 'Plan de Recuperación'}
         Materia: ${improvementPlan.subject || 'N/A'}

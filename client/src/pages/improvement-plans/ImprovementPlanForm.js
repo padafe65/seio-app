@@ -17,9 +17,12 @@ const ImprovementPlanForm = () => {
   const [initialLoading, setInitialLoading] = useState(isEditing);
   const [error, setError] = useState(null);
   const [students, setStudents] = useState([]);
+  const [teacherOptions, setTeacherOptions] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [failedIndicators, setFailedIndicators] = useState([]);
   const [passedIndicators, setPassedIndicators] = useState([]);
+  const [planPdf, setPlanPdf] = useState(null);
+  const [hasPublishedPdf, setHasPublishedPdf] = useState(false);
   
   const [formData, setFormData] = useState({
     student_id: '',
@@ -39,7 +42,8 @@ const ImprovementPlanForm = () => {
     student_feedback: '',
     attempts_count: 0,
     completed: false,
-    email_sent: false
+    email_sent: false,
+    physical_delivery_required: false
   });
   
   useEffect(() => {
@@ -58,6 +62,20 @@ const ImprovementPlanForm = () => {
       } catch (error) {
         console.error('Error al obtener datos del profesor:', error);
         setError('Error al obtener datos del profesor.');
+      }
+    };
+
+    const fetchAdministratorData = async () => {
+      try {
+        const [studentsResponse, teachersResponse] = await Promise.all([
+          axiosClient.get('/students'),
+          axiosClient.get('/teachers')
+        ]);
+        setStudents(Array.isArray(studentsResponse.data) ? studentsResponse.data : studentsResponse.data?.students || []);
+        setTeacherOptions(Array.isArray(teachersResponse.data) ? teachersResponse.data : []);
+      } catch (loadError) {
+        console.error('Error al cargar estudiantes y docentes:', loadError);
+        setError('No se pudieron cargar los estudiantes y docentes.');
       }
     };
     
@@ -94,8 +112,10 @@ const ImprovementPlanForm = () => {
             attempts_count: planData.attempts_count || 0,
             activity_status: planData.activity_status || 'pending',
             completed: planData.completed === 1,
-            email_sent: planData.email_sent === 1
+            email_sent: planData.email_sent === 1,
+            physical_delivery_required: planData.physical_delivery_required === 1
           });
+          setHasPublishedPdf(Boolean(planData.plan_pdf_path));
           
           // Cargar indicadores para este estudiante
           if (planData.student_id && planData.grade && planData.phase) {
@@ -113,6 +133,8 @@ const ImprovementPlanForm = () => {
     
     if (user.role === 'docente') {
       fetchTeacherData();
+    } else if (['admin', 'administrador', 'super_administrador'].includes(user.role)) {
+      fetchAdministratorData();
     }
     
     fetchTemplates();
@@ -192,13 +214,15 @@ const ImprovementPlanForm = () => {
     try {
       if (isEditing) {
         await axiosClient.put(`/improvement-plans/${id}`, formData);
+        if (planPdf) await uploadPlanPdf(id);
         Swal.fire({
           icon: 'success',
           title: 'Plan actualizado',
           text: 'El plan de mejoramiento ha sido actualizado correctamente'
         });
       } else {
-        await axiosClient.post('/improvement-plans', formData);
+        const response = await axiosClient.post('/improvement-plans', formData);
+        if (planPdf) await uploadPlanPdf(response.data.id);
         Swal.fire({
           icon: 'success',
           title: 'Plan creado',
@@ -212,6 +236,14 @@ const ImprovementPlanForm = () => {
       setError('Error al guardar el plan de mejoramiento.');
       setLoading(false);
     }
+  };
+
+  const uploadPlanPdf = async (planId) => {
+    const payload = new FormData();
+    payload.append('file', planPdf);
+    await axiosClient.put(`/improvement-plans/${planId}/plan-pdf`, payload, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
   };
   
   if (initialLoading) {
@@ -254,10 +286,19 @@ const ImprovementPlanForm = () => {
                   <option value="">Seleccionar estudiante</option>
                   {students.map(student => (
                     <option key={student.id} value={student.id}>
-                      {student.name} - {student.grade}° - {student.course_name}
+                      {student.name || student.user_name} - {student.grade}° - {student.course_name}
                     </option>
                   ))}
                 </select>
+                {['admin', 'administrador', 'super_administrador'].includes(user.role) && (
+                  <div className="mt-3">
+                    <label htmlFor="teacher_id" className="form-label">Docente responsable</label>
+                    <select id="teacher_id" name="teacher_id" className="form-select" value={formData.teacher_id} onChange={handleInputChange} required>
+                      <option value="">Seleccionar docente</option>
+                      {teacherOptions.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name} — {teacher.subject}</option>)}
+                    </select>
+                  </div>
+                )}
               </div>
               
               <div className="col-md-6">
@@ -464,6 +505,7 @@ const ImprovementPlanForm = () => {
                   value={formData.file_url}
                   onChange={handleInputChange}
                 />
+                <small className="form-text text-muted">Puedes conservar un enlace externo. Para publicar el PDF en la plataforma, selecciónalo abajo.</small>
               </div>
               
               <div className="col-md-6">
@@ -478,6 +520,34 @@ const ImprovementPlanForm = () => {
                   min="0"
                 />
               </div>
+            </div>
+
+            <div className="mb-3">
+              <label htmlFor="planPdf" className="form-label">PDF del plan para el estudiante</label>
+              <input
+                id="planPdf"
+                type="file"
+                accept="application/pdf,.pdf"
+                className="form-control"
+                onChange={event => setPlanPdf(event.target.files?.[0] || null)}
+              />
+              <small className="form-text text-muted">
+                {planPdf ? `Se publicará: ${planPdf.name}` : hasPublishedPdf ? 'Ya hay un PDF publicado. Selecciona otro para reemplazarlo.' : 'El plan aparecerá como pendiente para el estudiante hasta que publiques un PDF.'}
+              </small>
+            </div>
+
+            <div className="form-check mb-3">
+              <input
+                id="physical_delivery_required"
+                name="physical_delivery_required"
+                type="checkbox"
+                className="form-check-input"
+                checked={Boolean(formData.physical_delivery_required)}
+                onChange={handleInputChange}
+              />
+              <label htmlFor="physical_delivery_required" className="form-check-label">
+                También solicitar entrega física al docente (opcional)
+              </label>
             </div>
 
             <div className="row mb-3">

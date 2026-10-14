@@ -13,6 +13,7 @@ import reportsRoutes from './routes/reportsRoutes.js';
 // Route imports
 import questionRoutes from './routes/questionRoutes.js';
 import questionnaireRoutes from './routes/questionnaireRoutes.js';
+import questionnaireImportRoutes from './routes/questionnaireImportRoutes.js';
 import quizRoutes from './routes/quiz.js';
 import studentRoutes from './routes/studentRoutes.js';
 import evaluationResultsRoutes from './routes/evaluationResults.js';
@@ -106,6 +107,9 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization']
 };
 app.use(cors(corsOptions));
+// La importación masiva puede contener cientos de preguntas; elevamos el
+// límite solo para ese endpoint y conservamos el límite predeterminado en el resto.
+app.use('/api/questionnaire-imports', express.json({ limit: '10mb' }));
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api/subscriptions', subscriptionsRoutes);
@@ -401,6 +405,7 @@ app.post('/api/teachers', verifyToken, async (req, res) => {
 // Registrar el router de estudiantes DESPUÉS de la ruta específica para completar registros
 app.use('/api/students', studentRoutes);
 app.use('/api/questions', questionRoutes);
+app.use('/api/questionnaire-imports', questionnaireImportRoutes);
 app.use('/api/questionnaires', questionnaireRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/teacher-licenses', teacherLicensesRoutes);
@@ -3841,9 +3846,14 @@ app.get('/api/teacher/questions/:userId', verifyToken, async (req, res) => {
         qn.phase
       FROM questions q
       LEFT JOIN questionnaires qn ON q.questionnaire_id = qn.id
-      WHERE qn.created_by = ? OR q.category LIKE ?
+      WHERE (qn.created_by = ? OR q.category LIKE ?)
+        AND (
+          NOT EXISTS (SELECT 1 FROM restricted_questionnaires r WHERE r.questionnaire_id = q.questionnaire_id)
+          OR EXISTS (SELECT 1 FROM restricted_questionnaires r WHERE r.questionnaire_id = q.questionnaire_id AND r.owner_user_id = ?)
+          OR EXISTS (SELECT 1 FROM questionnaire_access_grants g WHERE g.questionnaire_id = q.questionnaire_id AND g.user_id = ? AND g.status = 'active')
+        )
       ORDER BY qn.created_at DESC
-    `, [teacherId, `${subject}_%`]);
+    `, [teacherId, `${subject}_%`, req.user.id, req.user.id]);
 
     res.json(rows);
   } catch (error) {

@@ -8,7 +8,8 @@
 - Si no hay preguntas/cuestionarios asociados a indicadores, la evaluación lo informa y el sistema no inventa indicadores.
 - Las ediciones manuales quedan protegidas frente a actualizaciones posteriores del cálculo de fase.
 - Los resultados de fase y el plan continúan usando las notificaciones de correo que ya tiene el flujo.
-- El estudiante entrega texto y/o un enlace desde el detalle de su plan. El docente puede dejarlo en revisión, pedir correcciones o aprobarlo. La entrega se almacena aparte de los enlaces de recursos del plan.
+- El docente publica primero el PDF del plan y el estudiante entrega obligatoriamente su solución en PDF. Los archivos se sirven mediante rutas autenticadas y cada intento queda en `improvement_plan_submissions`.
+- Los avisos de resultados y nota final registran destinatarios, estado, intentos y fecha en `improvement_email_notifications`; un aviso exitoso no se reenvía al recalcular la misma fase y año académico.
 
 ## Base de datos de pruebas
 
@@ -21,3 +22,14 @@ npm run migrate:phase-improvement-plan-templates
 ```
 
 El script se detiene si la conexión no apunta a `seio_db_pruebas`. La base `seio_db` de producción requiere una revisión y aplicación separada de la migración SQL después de validar en pruebas.
+
+- La entrega física es opcional y se configura por plan. Al publicarse el PDF, SEIO intenta avisar por correo y el dashboard muestra los planes pendientes de asignación o publicación.
+- La promoción final usa definitiva >= 3.0. Entre 3.0 y menos de 3.5 el estudiante aparece promovido y recibe recomendación de refuerzo; la recuperación de fase conserva el umbral 3.5.
+
+Migración de archivos e historial para pruebas:
+
+```powershell
+cd G:\seio\server
+$env:DB_NAME = 'seio_db_pruebas'
+npm run migrate:improvement-plan-files
+```

@@ -4,6 +4,7 @@ import pool from '../config/db.js';
 import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
 import { verifyToken, validateTeacherSubject } from '../middleware/authMiddleware.js';
 import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
+import { hasQuestionnaireAccess, canManageQuestionnaire } from '../utils/questionnaireAccess.js';
 
 const router = express.Router();
 
@@ -155,8 +156,8 @@ router.get('/', verifyToken, async (req, res) => {
       
       if (teacherRows.length > 0) {
         const teacherId = teacherRows[0].id;
-        conditions.push('q.created_by = ?');
-        params.push(teacherId);
+        conditions.push('(q.created_by = ? OR EXISTS (SELECT 1 FROM questionnaire_access_grants qg WHERE qg.questionnaire_id = q.id AND qg.user_id = ? AND qg.status = \'active\'))');
+        params.push(teacherId, userId);
         console.log(`🔒 Filtrando cuestionarios para docente (teacher_id: ${teacherId})`);
       } else {
         // Si el docente no tiene registro en teachers, devolver vacío
@@ -189,6 +190,11 @@ router.get('/', verifyToken, async (req, res) => {
         [studentId, currentAcademicYear]
       );
       const attemptedQuestionnaireIds = attemptedQuestionnaires.map(aq => aq.questionnaire_id);
+      const [grantedQuestionnaires] = await pool.query(
+        `SELECT questionnaire_id FROM questionnaire_access_grants
+         WHERE user_id = ? AND status = 'active'`, [userId]
+      );
+      const grantedQuestionnaireIds = grantedQuestionnaires.map((row) => Number(row.questionnaire_id));
       
       // Obtener los teacher_id de los docentes asignados a este estudiante (filtrados por academic_year)
       const [teacherStudentRows] = await pool.query(
@@ -201,7 +207,7 @@ router.get('/', verifyToken, async (req, res) => {
         : [];
       
       // Si no hay docentes asignados ni cuestionarios intentados, devolver vacío
-      if (teacherIds.length === 0 && attemptedQuestionnaireIds.length === 0) {
+      if (teacherIds.length === 0 && attemptedQuestionnaireIds.length === 0 && grantedQuestionnaireIds.length === 0) {
         console.warn(`⚠️ Estudiante ${studentId} no tiene docentes asignados ni cuestionarios intentados`);
         return res.json([]);
       }
@@ -258,6 +264,12 @@ router.get('/', verifyToken, async (req, res) => {
         }
         params.push(...attemptedQuestionnaireIds);
       }
+
+      if (grantedQuestionnaireIds.length > 0) {
+        if (mainCondition) mainCondition += ` OR q.id IN (${grantedQuestionnaireIds.map(() => '?').join(',')})`;
+        else mainCondition = `q.id IN (${grantedQuestionnaireIds.map(() => '?').join(',')})`;
+        params.push(...grantedQuestionnaireIds);
+      }
       
       if (mainCondition) {
         conditions.push(`(${mainCondition})`);
@@ -272,6 +284,16 @@ router.get('/', verifyToken, async (req, res) => {
       });
     }
     
+    // Los cuestionarios importados como producto requieren autorización explícita.
+    {
+      conditions.push(`(
+        NOT EXISTS (SELECT 1 FROM restricted_questionnaires rq WHERE rq.questionnaire_id = q.id)
+        OR EXISTS (SELECT 1 FROM restricted_questionnaires rq WHERE rq.questionnaire_id = q.id AND rq.owner_user_id = ?)
+        OR EXISTS (SELECT 1 FROM questionnaire_access_grants qg WHERE qg.questionnaire_id = q.id AND qg.user_id = ? AND qg.status = 'active')
+      )`);
+      params.push(userId, userId);
+    }
+
     // Si hay created_by en el query y el usuario no es super_administrador, ignorarlo
     // (ya se filtró arriba por el rol)
     if (created_by && userRole !== 'super_administrador') {
@@ -341,6 +363,10 @@ router.get('/:id', verifyToken, async (req, res) => {
     
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Cuestionario no encontrado' });
+    }
+
+    if (!await hasQuestionnaireAccess(id, req.user)) {
+      return res.status(403).json({ success: false, code: 'QUESTIONNAIRE_ACCESS_REQUIRED', message: 'Este material es privado. Solicita autorización al superadministrador.' });
     }
     
     const questionnaire = rows[0];
@@ -536,6 +562,9 @@ router.put('/:id', verifyToken, async (req, res) => {
     if (oldQuestionnaire.length === 0) {
       return res.status(404).json({ message: 'Cuestionario no encontrado' });
     }
+    if (!await canManageQuestionnaire(id, req.user)) {
+      return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede editar este cuestionario privado.' });
+    }
     
     const oldValues = {
       title: oldQuestionnaire[0].title,
@@ -615,6 +644,9 @@ router.delete('/:id', verifyToken, async (req, res) => {
     if (questionnaire.length === 0) {
       return res.status(404).json({ message: 'Cuestionario no encontrado' });
     }
+    if (!await canManageQuestionnaire(id, req.user)) {
+      return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede eliminar este cuestionario privado.' });
+    }
     
     const deletedQuestionnaireData = {
       title: questionnaire[0].title,
@@ -625,6 +657,10 @@ router.delete('/:id', verifyToken, async (req, res) => {
       course_id: questionnaire[0].course_id,
       description: questionnaire[0].description
     };
+
+    await pool.query('DELETE FROM questionnaire_access_grants WHERE questionnaire_id = ?', [id]);
+    await pool.query('DELETE FROM restricted_questionnaires WHERE questionnaire_id = ?', [id]);
+    await pool.query('DELETE FROM questionnaire_import_batches WHERE published_questionnaire_id = ?', [id]);
     
     // Primero eliminar las preguntas asociadas
     await pool.query('DELETE FROM questions WHERE questionnaire_id = ?', [id]);

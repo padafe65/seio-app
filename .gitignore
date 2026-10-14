@@ -124,6 +124,8 @@ coverage/
 # ===========================================
 # No subir archivos subidos por usuarios
 server/uploads/
+server/private_uploads/
+server/private/questionnaire-assets/
 client/public/uploads/
 
 seio/

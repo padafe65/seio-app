@@ -124,9 +124,14 @@ const QuestionnairesList = () => {
     <div>
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h4 className="mb-0">Gestión de Cuestionarios</h4>
-        <Link to="/cuestionarios/nuevo" className="btn btn-primary d-flex align-items-center">
-          <PlusCircle size={18} className="me-2" /> Nuevo Cuestionario
-        </Link>
+        <div className="d-flex gap-2">
+          <Link to="/cuestionarios/importar" className="btn btn-outline-primary d-flex align-items-center">
+            <List size={18} className="me-2" /> Importar preguntas
+          </Link>
+          <Link to="/cuestionarios/nuevo" className="btn btn-primary d-flex align-items-center">
+            <PlusCircle size={18} className="me-2" /> Nuevo Cuestionario
+          </Link>
+        </div>
       </div>
 
       {user?.role === 'docente' && (

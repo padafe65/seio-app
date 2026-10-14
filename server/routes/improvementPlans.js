@@ -1,13 +1,54 @@
 // routes/improvementPlans.js
 console.log('🔧 Cargando rutas de improvementPlans...');
 import express from 'express';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
+import uploadImprovementPlanPdf from '../middleware/uploadImprovementPlanPdf.js';
 import { processQuestionnaireResults, processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
 import { logRequestAudit } from '../utils/auditLogger.js';
 import { sendImprovementPlanEmail } from '../utils/emailService.js';
 
 const router = express.Router();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const privatePlanFilesRoot = path.resolve(__dirname, '../private_uploads/improvement-plans');
+const pdfUpload = (req, res, next) => uploadImprovementPlanPdf.single('file')(req, res, error => {
+  if (error) return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ message: error.message || 'No se pudo procesar el PDF.' });
+  next();
+});
+
+const normalizeUploadedFilename = value => {
+  const filename = path.basename(String(value || '')).slice(0, 255);
+  if (!/[ÃÂ]/.test(filename)) return filename;
+  const decoded = Buffer.from(filename, 'latin1').toString('utf8');
+  return decoded.includes('\uFFFD') ? filename : decoded;
+};
+
+const storePlanPdf = async file => {
+  if (!file?.buffer || file.buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+    const error = new Error('El archivo seleccionado no parece ser un PDF válido.');
+    error.status = 400;
+    throw error;
+  }
+  await mkdir(privatePlanFilesRoot, { recursive: true });
+  const fileName = `${randomUUID()}.pdf`;
+  await writeFile(path.join(privatePlanFilesRoot, fileName), file.buffer, { flag: 'wx' });
+  return { path: `improvement-plans/${fileName}`, originalName: normalizeUploadedFilename(file.originalname) };
+};
+
+const planFileAbsolutePath = storedPath => {
+  const fileName = path.basename(String(storedPath || ''));
+  if (!fileName || !/^[\w-]+\.pdf$/i.test(fileName)) return null;
+  return path.join(privatePlanFilesRoot, fileName);
+};
+
+const teacherOwnsPlan = async (userId, teacherId) => {
+  const [rows] = await pool.query('SELECT id FROM teachers WHERE id = ? AND user_id = ?', [teacherId, userId]);
+  return rows.length > 0;
+};
 // El router se monta bajo /api; proteger solo sus propios endpoints para no
 // interceptar login, registro ni otros módulos montados en el mismo prefijo.
 router.use((req, res, next) => {
@@ -495,7 +536,11 @@ router.get('/improvement-plans/:id', async (req, res) => {
              ut.name as teacher_name,
              s.grade,
              s.contact_email,
-             c.name as course_name
+             c.name as course_name,
+             (SELECT ips.id FROM improvement_plan_submissions ips
+              WHERE ips.improvement_plan_id = ip.id ORDER BY ips.submitted_at DESC, ips.id DESC LIMIT 1) AS latest_submission_id,
+             (SELECT ips.original_name FROM improvement_plan_submissions ips
+              WHERE ips.improvement_plan_id = ip.id ORDER BY ips.submitted_at DESC, ips.id DESC LIMIT 1) AS latest_submission_file_name
       FROM improvement_plans ip
       JOIN students s ON ip.student_id = s.id
       JOIN teachers t ON ip.teacher_id = t.id
@@ -510,6 +555,8 @@ router.get('/improvement-plans/:id', async (req, res) => {
     }
 
     const plan = plans[0];
+    plan.plan_pdf_original_name = normalizeUploadedFilename(plan.plan_pdf_original_name);
+    plan.latest_submission_file_name = normalizeUploadedFilename(plan.latest_submission_file_name);
     if (req.user?.role === 'estudiante' && Number(plan.student_user_id) !== Number(req.user.id)) {
       return res.status(403).json({ message: 'No tienes acceso a este plan.' });
     }
@@ -521,6 +568,155 @@ router.get('/improvement-plans/:id', async (req, res) => {
   } catch (error) {
     console.error('Error al obtener plan de mejoramiento:', error);
     res.status(500).json({ message: 'Error al obtener plan de mejoramiento' });
+  }
+});
+
+// Descargar el PDF publicado por el docente con autorización sobre el plan.
+router.get('/improvement-plans/:id/plan-pdf', verifyToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ip.plan_pdf_path, ip.plan_pdf_original_name, s.user_id AS student_user_id,
+             t.user_id AS teacher_user_id
+      FROM improvement_plans ip
+      JOIN students s ON s.id = ip.student_id
+      JOIN teachers t ON t.id = ip.teacher_id
+      WHERE ip.id = ?
+    `, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Plan no encontrado.' });
+    const plan = rows[0];
+    const isAdminRole = ['admin', 'administrador', 'super_administrador'].includes(req.user.role);
+    if (!isAdminRole && Number(req.user.id) !== Number(plan.student_user_id) && Number(req.user.id) !== Number(plan.teacher_user_id)) {
+      return res.status(403).json({ message: 'No tienes acceso a este archivo.' });
+    }
+    const absolutePath = planFileAbsolutePath(plan.plan_pdf_path);
+    if (!absolutePath) return res.status(404).json({ message: 'El docente aún no ha publicado el PDF del plan.' });
+    res.download(absolutePath, normalizeUploadedFilename(plan.plan_pdf_original_name) || 'plan-mejoramiento.pdf');
+  } catch (error) {
+    console.error('Error descargando PDF del plan:', error);
+    res.status(500).json({ message: 'No se pudo descargar el PDF del plan.' });
+  }
+});
+
+// Publicar o reemplazar el PDF del plan. El archivo se mantiene fuera de /uploads
+// y solo se entrega mediante la ruta autenticada anterior.
+router.put('/improvement-plans/:id/plan-pdf', verifyToken, isTeacherOrAdmin, pdfUpload, async (req, res) => {
+  let storedFile = null;
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Selecciona un archivo PDF para publicar.' });
+    const [rows] = await pool.query(`
+      SELECT ip.id, ip.plan_pdf_path, t.user_id AS teacher_user_id
+      FROM improvement_plans ip JOIN teachers t ON t.id = ip.teacher_id
+      WHERE ip.id = ?
+    `, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Plan no encontrado.' });
+    if (req.user.role === 'docente' && Number(rows[0].teacher_user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ message: 'Solo el docente asignado puede publicar este PDF.' });
+    }
+    storedFile = await storePlanPdf(req.file);
+    await pool.query(`
+      UPDATE improvement_plans
+      SET plan_pdf_path = ?, plan_pdf_original_name = ?, published_at = NOW()
+      WHERE id = ?
+    `, [storedFile.path, storedFile.originalName, req.params.id]);
+    const oldPath = planFileAbsolutePath(rows[0].plan_pdf_path);
+    if (oldPath) await unlink(oldPath).catch(() => {});
+    let notificationSent = false;
+    try {
+      const [planRows] = await pool.query(`
+        SELECT ip.*, s.contact_email, us.name AS student_name, us.email AS student_email,
+               COALESCE(c.institution, us.institution) AS institution
+        FROM improvement_plans ip
+        JOIN students s ON s.id = ip.student_id
+        JOIN users us ON us.id = s.user_id
+        LEFT JOIN courses c ON c.id = s.course_id
+        WHERE ip.id = ?
+      `, [req.params.id]);
+      const notification = await sendImprovementPlanEmail({
+        name: planRows[0].student_name,
+        email: planRows[0].student_email,
+        contact_email: /universidad|university/i.test(String(planRows[0].institution || '')) ? null : planRows[0].contact_email
+      }, planRows[0]);
+      notificationSent = Boolean(notification.success);
+      if (notificationSent) await pool.query('UPDATE improvement_plans SET email_sent = 1 WHERE id = ?', [req.params.id]);
+    } catch (notificationError) {
+      console.error('PDF publicado, pero falló el aviso por correo:', notificationError);
+    }
+    res.json({ success: true, notificationSent, message: notificationSent
+      ? 'PDF publicado y estudiante notificado por correo.'
+      : 'PDF publicado. No se pudo enviar el correo; el estudiante lo verá en su dashboard.' });
+  } catch (error) {
+    if (storedFile) await unlink(planFileAbsolutePath(storedFile.path)).catch(() => {});
+    console.error('Error publicando PDF del plan:', error);
+    res.status(error.status || 500).json({ message: error.message || 'No se pudo publicar el PDF.' });
+  }
+});
+
+// Subida obligatoria de la solución en PDF por el estudiante asignado.
+router.post('/improvement-plans/:id/submission', verifyToken, pdfUpload, async (req, res) => {
+  let storedFile = null;
+  try {
+    if (req.user?.role !== 'estudiante') return res.status(403).json({ success: false, message: 'Solo el estudiante asignado puede entregar este plan.' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'Adjunta tu trabajo resuelto en formato PDF.' });
+    const [plans] = await pool.query(`
+      SELECT ip.id, ip.submission_status, ip.plan_pdf_path, ip.physical_delivery_required,
+             s.id AS student_id, s.user_id
+      FROM improvement_plans ip JOIN students s ON s.id = ip.student_id
+      WHERE ip.id = ? AND s.user_id = ?
+    `, [req.params.id, req.user.id]);
+    if (!plans.length) return res.status(404).json({ success: false, message: 'No se encontró un plan asignado a tu usuario.' });
+    if (!plans[0].plan_pdf_path) return res.status(409).json({ success: false, message: 'El docente aún no ha publicado el PDF del plan.' });
+    if (plans[0].submission_status === 'approved') return res.status(409).json({ success: false, message: 'Este plan ya fue aprobado.' });
+    if (['submitted', 'under_review'].includes(plans[0].submission_status)) {
+      return res.status(409).json({ success: false, message: 'Tu entrega está en revisión. Espera los comentarios del docente antes de enviar otra versión.' });
+    }
+    const submissionText = String(req.body?.submission_text || '').trim();
+    if (submissionText.length > 20000) return res.status(413).json({ success: false, message: 'La explicación excede el tamaño permitido.' });
+    storedFile = await storePlanPdf(req.file);
+    const [insertResult] = await pool.query(`
+      INSERT INTO improvement_plan_submissions
+        (improvement_plan_id, student_id, file_path, original_name, mime_type, file_size)
+      VALUES (?, ?, ?, ?, 'application/pdf', ?)
+    `, [req.params.id, plans[0].student_id, storedFile.path, storedFile.originalName, req.file.size]);
+    await pool.query(`
+      UPDATE improvement_plans
+      SET submission_text = ?, submission_url = '', submitted_at = NOW(),
+          submission_status = 'submitted', activity_status = 'in_progress', completed = 0,
+          completion_date = NULL, last_activity_date = NOW(), attempts_count = COALESCE(attempts_count, 0) + 1
+      WHERE id = ?
+    `, [submissionText, req.params.id]);
+    res.json({ success: true, submissionId: insertResult.insertId, message: plans[0].physical_delivery_required
+      ? 'Entrega digital registrada. Recuerda entregar también la copia física al docente.'
+      : 'Entrega digital registrada. Tu docente revisará el trabajo.' });
+  } catch (error) {
+    if (storedFile) await unlink(planFileAbsolutePath(storedFile.path)).catch(() => {});
+    console.error('Error registrando entrega del plan:', error);
+    res.status(error.status || 500).json({ success: false, message: error.message || 'No se pudo registrar la entrega. Verifica que la migración de archivos esté aplicada.' });
+  }
+});
+
+router.get('/improvement-plans/:id/submissions/:submissionId/file', verifyToken, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ips.file_path, ips.original_name, s.user_id AS student_user_id,
+             t.user_id AS teacher_user_id
+      FROM improvement_plan_submissions ips
+      JOIN improvement_plans ip ON ip.id = ips.improvement_plan_id
+      JOIN students s ON s.id = ips.student_id
+      JOIN teachers t ON t.id = ip.teacher_id
+      WHERE ip.id = ? AND ips.id = ?
+    `, [req.params.id, req.params.submissionId]);
+    if (!rows.length) return res.status(404).json({ message: 'Archivo de entrega no encontrado.' });
+    const file = rows[0];
+    const isAdminRole = ['admin', 'administrador', 'super_administrador'].includes(req.user.role);
+    if (!isAdminRole && Number(req.user.id) !== Number(file.student_user_id) && Number(req.user.id) !== Number(file.teacher_user_id)) {
+      return res.status(403).json({ message: 'No tienes acceso a esta entrega.' });
+    }
+    const absolutePath = planFileAbsolutePath(file.file_path);
+    if (!absolutePath) return res.status(404).json({ message: 'Archivo no disponible.' });
+    res.download(absolutePath, file.original_name || 'entrega-estudiante.pdf');
+  } catch (error) {
+    console.error('Error descargando entrega del estudiante:', error);
+    res.status(500).json({ message: 'No se pudo descargar la entrega.' });
   }
 });
 
@@ -544,7 +740,8 @@ router.post('/improvement-plans', isTeacherOrAdmin, async (req, res) => {
       teacher_notes,
       student_feedback,
       attempts_count,
-      last_activity_date
+      last_activity_date,
+      physical_delivery_required
     } = req.body;
     
     // Verificar que student_id existe
@@ -557,6 +754,21 @@ router.post('/improvement-plans', isTeacherOrAdmin, async (req, res) => {
     const [teacherCheck] = await pool.query('SELECT * FROM teachers WHERE id = ?', [teacher_id]);
     if (teacherCheck.length === 0) {
       return res.status(400).json({ message: 'El profesor no existe' });
+    }
+    if (req.user.role === 'docente') {
+      if (Number(teacher_id) !== Number(req.user.teacher_id)) {
+        return res.status(403).json({ message: 'Solo puedes crear planes bajo tu perfil docente.' });
+      }
+      const [assignedStudent] = await pool.query(`
+        SELECT s.id FROM students s
+        WHERE s.id = ? AND (
+          EXISTS (SELECT 1 FROM teacher_students ts WHERE ts.student_id = s.id AND ts.teacher_id = ?)
+          OR EXISTS (SELECT 1 FROM courses c WHERE c.id = s.course_id AND (c.teacher_id = ? OR EXISTS (
+            SELECT 1 FROM teacher_courses tc WHERE tc.course_id = c.id AND tc.teacher_id = ?
+          )))
+        )
+      `, [student_id, teacher_id, teacher_id, teacher_id]);
+      if (!assignedStudent.length) return res.status(403).json({ message: 'El estudiante no pertenece a tus cursos asignados.' });
     }
     
     // Obtener año académico actual para filtrar
@@ -605,12 +817,12 @@ router.post('/improvement-plans', isTeacherOrAdmin, async (req, res) => {
        (student_id, teacher_id, title, subject, description, activities, deadline, 
         file_url, failed_achievements, passed_achievements, video_urls, resource_links,
         activity_status, teacher_notes, student_feedback, attempts_count, last_activity_date,
-        completed, email_sent, created_at, academic_year) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW(), ?)`,
+        completed, email_sent, created_at, academic_year, physical_delivery_required)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false, NOW(), ?, ?)`,
       [student_id, teacher_id, title, subject, description, activities, deadline, 
        file_url, failed_achievements, passed_achievements, video_urls, resource_links,
        activity_status || 'pending', teacher_notes, student_feedback, attempts_count || 0, last_activity_date,
-       currentAcademicYear]
+       currentAcademicYear, physical_delivery_required ? 1 : 0]
     );
     await logRequestAudit(req, {
       action: 'CREATE', tableName: 'improvement_plans', recordId: result.insertId,
@@ -673,47 +885,6 @@ router.post('/improvement-plans/:id/send-email', verifyToken, isTeacherOrAdmin, 
   }
 });
 
-router.post('/improvement-plans/:id/submission', verifyToken, async (req, res) => {
-  try {
-    if (req.user?.role !== 'estudiante') return res.status(403).json({ success: false, message: 'Solo el estudiante asignado puede entregar este plan.' });
-    const { submission_text = '', submission_url = '' } = req.body || {};
-    if (String(submission_text).length > 20000 || String(submission_url).length > 2048) {
-      return res.status(413).json({ success: false, message: 'La respuesta o el enlace exceden el tamaño permitido.' });
-    }
-    if (!String(submission_text).trim() && !String(submission_url).trim()) {
-      return res.status(400).json({ success: false, message: 'Escribe tu respuesta o agrega un enlace de entrega.' });
-    }
-    const normalizedSubmissionUrl = String(submission_url).trim();
-    if (normalizedSubmissionUrl) {
-      try {
-        const parsedUrl = new URL(normalizedSubmissionUrl);
-        if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('Protocolo inválido');
-      } catch {
-        return res.status(400).json({ success: false, message: 'El enlace debe ser una URL válida que comience con http o https.' });
-      }
-    }
-    const [plans] = await pool.query(`
-      SELECT ip.id, ip.submission_status
-      FROM improvement_plans ip
-      JOIN students s ON s.id = ip.student_id
-      WHERE ip.id = ? AND s.user_id = ?
-    `, [req.params.id, req.user.id]);
-    if (!plans.length) return res.status(404).json({ success: false, message: 'No se encontró un plan asignado a tu usuario.' });
-    if (plans[0].submission_status === 'approved') return res.status(409).json({ success: false, message: 'Este plan ya fue aprobado.' });
-    await pool.query(`
-      UPDATE improvement_plans
-      SET submission_text = ?, submission_url = ?, submitted_at = NOW(),
-          submission_status = 'submitted', activity_status = 'in_progress', completed = 0,
-          completion_date = NULL, last_activity_date = NOW(), attempts_count = COALESCE(attempts_count, 0) + 1
-      WHERE id = ?
-    `, [String(submission_text).trim(), normalizedSubmissionUrl, req.params.id]);
-    res.json({ success: true, message: 'Entrega registrada. Tu docente revisará el trabajo.' });
-  } catch (error) {
-    console.error('Error registrando entrega del plan:', error);
-    res.status(500).json({ success: false, message: 'No se pudo registrar la entrega. Verifica la migración de entregas de planes.' });
-  }
-});
-
 router.put('/improvement-plans/:id/submission-review', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { status, feedback = '' } = req.body || {};
@@ -736,6 +907,13 @@ router.put('/improvement-plans/:id/submission-review', verifyToken, isTeacherOrA
           completion_date = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END
       WHERE id = ?
     `, [status, String(feedback).trim(), status, status, status, status, req.params.id]);
+    await pool.query(`
+      UPDATE improvement_plan_submissions
+      SET review_status = ?, review_feedback = ?, reviewed_at = NOW()
+      WHERE improvement_plan_id = ?
+      ORDER BY submitted_at DESC, id DESC
+      LIMIT 1
+    `, [status, String(feedback).trim(), req.params.id]);
     res.json({ success: true, message: 'Revisión del plan actualizada.' });
   } catch (error) {
     console.error('Error actualizando revisión de entrega:', error);
@@ -765,13 +943,17 @@ router.put('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
       attempts_count,
       last_activity_date,
       completed,
-      email_sent
+      email_sent,
+      physical_delivery_required
     } = req.body;
     
     // Verificar que el plan existe
     const [planCheck] = await pool.query('SELECT * FROM improvement_plans WHERE id = ?', [id]);
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
+    }
+    if (req.user.role === 'docente' && !await teacherOwnsPlan(req.user.id, planCheck[0].teacher_id)) {
+      return res.status(403).json({ message: 'No puedes editar un plan de otro docente.' });
     }
 
     // Guardar una edición convierte el plan automático en un plan bajo control
@@ -785,12 +967,13 @@ router.put('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
            file_url = ?, failed_achievements = ?, passed_achievements = ?, 
            video_urls = ?, resource_links = ?, activity_status = ?, completion_date = ?,
            teacher_notes = ?, student_feedback = ?, attempts_count = ?, last_activity_date = ?,
-           completed = ?, email_sent = ?
+           completed = ?, email_sent = ?, physical_delivery_required = ?
        WHERE id = ?`,
       [title, subject, description, activities, deadline, file_url, 
        failed_achievements, passed_achievements, video_urls, resource_links,
        activity_status, completion_date, notesForManualPlan, student_feedback,
-       attempts_count, last_activity_date, completed, email_sent, id]
+       attempts_count, last_activity_date, completed, email_sent,
+       physical_delivery_required === undefined ? planCheck[0].physical_delivery_required : (physical_delivery_required ? 1 : 0), id]
     );
     await logRequestAudit(req, {
       action: 'UPDATE', tableName: 'improvement_plans', recordId: Number(id),
@@ -816,6 +999,21 @@ router.delete('/improvement-plans/:id', isTeacherOrAdmin, async (req, res) => {
     if (planCheck.length === 0) {
       return res.status(404).json({ message: 'Plan de mejoramiento no encontrado' });
     }
+
+    if (req.user.role === 'docente' && !await teacherOwnsPlan(req.user.id, planCheck[0].teacher_id)) {
+      return res.status(403).json({ message: 'No puedes eliminar un plan de otro docente.' });
+    }
+
+    const [storedFiles] = await pool.query(`
+      SELECT plan_pdf_path AS file_path FROM improvement_plans WHERE id = ?
+      UNION ALL
+      SELECT file_path FROM improvement_plan_submissions WHERE improvement_plan_id = ?
+    `, [id, id]);
+    await pool.query('DELETE FROM improvement_plan_submissions WHERE improvement_plan_id = ?', [id]);
+    await Promise.all(storedFiles.map(file => {
+      const absolutePath = planFileAbsolutePath(file.file_path);
+      return absolutePath ? unlink(absolutePath).catch(() => {}) : Promise.resolve();
+    }));
     
     // Eliminar el plan
     await pool.query('DELETE FROM improvement_plans WHERE id = ?', [id]);
@@ -925,6 +1123,23 @@ router.get('/improvement-plans/indicators/passed/:studentId/:grade/:phase', asyn
 router.get('/improvement-plans/student-id/:studentId', async (req, res) => {
   try {
     const { studentId } = req.params;
+    if (req.user.role === 'estudiante') {
+      const [ownStudent] = await pool.query('SELECT id FROM students WHERE id = ? AND user_id = ?', [studentId, req.user.id]);
+      if (!ownStudent.length) return res.status(403).json({ message: 'Solo puedes consultar tus propios planes.' });
+    } else if (req.user.role === 'docente') {
+      const [assigned] = await pool.query(`
+        SELECT s.id FROM students s
+        WHERE s.id = ? AND (
+          EXISTS (SELECT 1 FROM teacher_students ts WHERE ts.student_id = s.id AND ts.teacher_id = ?)
+          OR EXISTS (SELECT 1 FROM courses c WHERE c.id = s.course_id AND (c.teacher_id = ? OR EXISTS (
+            SELECT 1 FROM teacher_courses tc WHERE tc.course_id = c.id AND tc.teacher_id = ?
+          )))
+        )
+      `, [studentId, req.user.teacher_id, req.user.teacher_id, req.user.teacher_id]);
+      if (!assigned.length) return res.status(403).json({ message: 'No tienes acceso a los planes de este estudiante.' });
+    } else if (!['admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'No tienes permiso para consultar estos planes.' });
+    }
     
     // Obtener año académico actual para filtrar
     const currentAcademicYear = new Date().getFullYear();

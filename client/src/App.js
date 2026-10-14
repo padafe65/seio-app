@@ -43,6 +43,8 @@ import ResultsList from './pages/results/ResultsList.js';
 import ResultDetail from './pages/results/ResultDetail.js';
 import QuestionnairesList from './pages/questionnaires/QuestionnairesList.js';
 import QuestionnaireForm from './pages/questionnaires/QuestionnaireForm.js';
+import QuestionnaireImportPage from './pages/questionnaires/QuestionnaireImportPage.js';
+import QuestionnaireAccessPage from './pages/questionnaires/QuestionnaireAccessPage.js';
 import TeacherStudentsList from './pages/students/TeacherStudentsList';
 import StudentGrades from './pages/students/StudentGrades';
 import CalificacionesPorFasePage from './pages/CalificacionesPorFasePage';
@@ -516,6 +518,8 @@ function AppContent() {
             
             {/* Rutas para cuestionarios */}
             <Route path="/cuestionarios" element={<QuestionnairesList />} />
+            <Route path="/cuestionarios/importar" element={<QuestionnaireImportPage />} />
+            <Route path="/cuestionarios/acceso/:questionnaireId" element={<QuestionnaireAccessPage />} />
             <Route path="/cuestionarios/nuevo" element={<QuestionnaireForm />} />
             <Route path="/cuestionarios/:id/editar" element={<QuestionnaireForm />} />
             <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
@@ -838,7 +842,10 @@ function AppContent() {
             <Route path="/admin/legal-consents" element={<LegalConsentsPage />} />
             <Route path="/admin/licenses" element={<LicensesManagement />} />
             <Route path="/admin/payments" element={<div>Aquí irá tu componente de Pagos</div>} />
+            <Route path="/cuestionarios" element={<QuestionnairesList />} />
             <Route path="/crear-pregunta" element={<CreateQuestionPage />} />
+            <Route path="/cuestionarios/importar" element={<QuestionnaireImportPage />} />
+            <Route path="/cuestionarios/acceso/:questionnaireId" element={<QuestionnaireAccessPage />} />
             <Route path="/preguntas/:id/editar" element={<EditarPreguntas />} />
             <Route path="/materias-categorias" element={<SubjectCategoryForm />} />
             

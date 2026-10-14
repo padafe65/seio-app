@@ -11,6 +11,9 @@ const ImprovementPage = () => {
   const [error, setError] = useState(null);
   const [indicators, setIndicators] = useState([]);
   const [isPromoted, setIsPromoted] = useState(null);
+  const [needsReinforcement, setNeedsReinforcement] = useState(false);
+  const [phasesNeedingPlan, setPhasesNeedingPlan] = useState([]);
+  const [phasesAwaitingPdf, setPhasesAwaitingPdf] = useState([]);
   const { user } = useAuth();
   const navigate = useNavigate();
   
@@ -42,10 +45,20 @@ const ImprovementPage = () => {
           const gradeRows = Array.isArray(gradesResponse.data) ? gradesResponse.data : [];
           const finalGradeValue = gradeRows.find(row => row.final_grade != null)?.final_grade;
           const finalGrade = finalGradeValue == null ? NaN : Number(finalGradeValue);
+          setNeedsReinforcement(Number.isFinite(finalGrade) && finalGrade >= 3.0 && finalGrade < 3.5);
           const hasAllFourPhases = [1, 2, 3, 4].every(phase =>
             gradeRows.some(row => row[`phase${phase}`] != null && Number.isFinite(Number(row[`phase${phase}`])))
           );
           setIsPromoted(hasAllFourPhases && Number.isFinite(finalGrade) ? finalGrade >= 3.0 : null);
+          const failedPhases = [1, 2, 3, 4].filter(phase =>
+            gradeRows.some(row => row[`phase${phase}`] != null && Number(row[`phase${phase}`]) < 3.5)
+          );
+          const phaseOfPlan = plan => {
+            const match = String(plan.teacher_notes || '').match(/AUTO_PHASE:(\d+)/i) || String(plan.title || '').match(/fase\s+(\d+)/i);
+            return match ? Number(match[1]) : null;
+          };
+          setPhasesNeedingPlan(failedPhases.filter(phase => !plansResponse.data?.some(plan => phaseOfPlan(plan) === phase)));
+          setPhasesAwaitingPdf(failedPhases.filter(phase => plansResponse.data?.some(plan => phaseOfPlan(plan) === phase && !plan.plan_pdf_path)));
         } catch (gradeError) {
           console.error('No se pudo determinar el resultado final del estudiante:', gradeError);
           setIsPromoted(null);
@@ -68,6 +81,20 @@ const ImprovementPage = () => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
     return date.toLocaleDateString('es-CO');
+  };
+
+  const downloadPlanPdf = async plan => {
+    try {
+      const response = await axiosClient.get(`/improvement-plans/${plan.id}/plan-pdf`, { responseType: 'blob' });
+      const objectUrl = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = plan.plan_pdf_original_name || 'plan-mejoramiento.pdf';
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (downloadError) {
+      console.error('No se pudo descargar el PDF del plan:', downloadError);
+    }
   };
 
   const achievedIndicators = indicators.filter(indicator => indicator.achieved === true || Number(indicator.achieved) === 1);
@@ -141,6 +168,11 @@ const ImprovementPage = () => {
                                 >
                                   <Download size={16} className="me-1" /> Descargar
                                 </a>
+                              )}
+                              {plan.plan_pdf_path && (
+                                <button type="button" onClick={() => downloadPlanPdf(plan)} className="btn btn-sm btn-outline-primary">
+                                  <Download size={16} className="me-1" /> PDF del plan
+                                </button>
                               )}
                             </div>
                           </td>
@@ -218,7 +250,22 @@ const ImprovementPage = () => {
 
       {isPromoted === false && (
         <div className="alert alert-info mt-4" role="status">
-          Sigue esforzándote para alcanzar los objetivos de aprendizaje. El docente realizará la entrega del plan de mejoramiento de forma física o a través de correo electrónico en los próximos días. Por favor, está atento a las comunicaciones del docente.
+          Tu definitiva es inferior a 3,0 y no fuiste promovido en la materia. Revisa los planes asignados y comunícate con el docente si falta el plan de alguna fase.
+        </div>
+      )}
+      {isPromoted === true && needsReinforcement && (
+        <div className="alert alert-success mt-4" role="status">
+          Fuiste promovido en la materia con una definitiva entre 3,0 y menos de 3,5. Refuerza los temas vistos durante el período académico y revisa los indicadores que aún tienes pendientes.
+        </div>
+      )}
+      {phasesNeedingPlan.length > 0 && (
+        <div className="alert alert-warning mt-4" role="status">
+          <strong>Solicita tu plan de mejoramiento:</strong> tienes fase(s) {phasesNeedingPlan.join(', ')} con nota inferior a 3,5 y todavía no aparece un plan asignado. Comunícate con el docente de la materia para solicitarlo.
+        </div>
+      )}
+      {phasesAwaitingPdf.length > 0 && (
+        <div className="alert alert-warning mt-4" role="status">
+          El docente ya registró un plan para la(s) fase(s) {phasesAwaitingPdf.join(', ')}, pero todavía no ha publicado el PDF. Comunícate con él para solicitar el material.
         </div>
       )}
       

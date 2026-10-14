@@ -26,7 +26,8 @@ const Profile = () => {
     email: user?.email || '',
     phone: user?.phone || '',
     institution: user?.institution || '',
-    profile_image: user?.profile_image || null
+    profile_image: user?.profile_image || null,
+    created_at: user?.created_at || null
   });
 
   useEffect(() => {
@@ -52,7 +53,8 @@ const Profile = () => {
             email: userData.email || '',
             phone: userData.phone || '',
             institution: userData.institution || '',
-            profile_image: userData.profile_image || null
+            profile_image: userData.profile_image || null,
+            created_at: userData.created_at || user?.created_at || null
           });
         } else if (user) {
           // Fallback: usar datos del contexto
@@ -61,7 +63,8 @@ const Profile = () => {
             email: user?.email || '',
             phone: user?.phone || '',
             institution: user?.institution || '',
-            profile_image: user?.profile_image || null
+            profile_image: user?.profile_image || null,
+            created_at: user?.created_at || null
           });
         }
       } catch (error) {
@@ -73,7 +76,8 @@ const Profile = () => {
             email: user?.email || '',
             phone: user?.phone || '',
             institution: user?.institution || '',
-            profile_image: user?.profile_image || null
+            profile_image: user?.profile_image || null,
+            created_at: user?.created_at || null
           });
         }
       } finally {
@@ -130,7 +134,8 @@ const Profile = () => {
           institution: serverData.institution || profileData.institution,
           profile_image: serverData.profile_image || profileData.profile_image,
           role: serverData.role || user?.role,
-          estado: serverData.estado || user?.estado
+          estado: serverData.estado || user?.estado,
+          created_at: serverData.created_at || profileData.created_at || user?.created_at || null
         };
         
         // Usar el método del contexto para actualizar en toda la app
@@ -142,7 +147,8 @@ const Profile = () => {
           email: updatedUser.email,
           phone: updatedUser.phone,
           institution: updatedUser.institution,
-          profile_image: updatedUser.profile_image
+          profile_image: updatedUser.profile_image,
+          created_at: updatedUser.created_at
         });
         
         setEditMode(false);
@@ -176,7 +182,8 @@ const Profile = () => {
         email: user?.email || profileData.email,
         phone: user?.phone || profileData.phone,
         institution: user?.institution || profileData.institution,
-        profile_image: user?.profile_image || profileData.profile_image
+        profile_image: user?.profile_image || profileData.profile_image,
+        created_at: user?.created_at || profileData.created_at || null
       });
     }
     setEditMode(false);
@@ -382,7 +389,9 @@ const Profile = () => {
                   <div className="col-12">
                     <label className="form-label fw-bold">📅 Fecha de Registro</label>
                     <div className="p-2 bg-light rounded text-muted">
-                      {user?.created_at ? new Date(user.created_at).toLocaleDateString('es-ES') : 'N/A'}
+                      {(profileData.created_at || user?.created_at)
+                        ? new Date(profileData.created_at || user.created_at).toLocaleDateString('es-ES')
+                        : 'N/A'}
                     </div>
                   </div>
                 </div>
