@@ -18,6 +18,7 @@ const Dashboard = () => {
   const [teacherLicenses, setTeacherLicenses] = useState([]);
   const [reportLogoUrl, setReportLogoUrl] = useState('');
   const [teacherId, setTeacherId] = useState(null);
+  const [learningContexts, setLearningContexts] = useState({ school: [], preicfes: [] });
   const [reportBrandName, setReportBrandName] = useState('');
   const [logoFile, setLogoFile] = useState(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -47,6 +48,9 @@ const Dashboard = () => {
 
       if (user && user.role === 'docente') {
         try {
+          axiosClient.get('/prueba-saber/contexts').then((response) => {
+            setLearningContexts(response.data?.data || { school: [], preicfes: [] });
+          }).catch((error) => console.warn('No se pudieron cargar los contextos docentes:', error));
           // 1. Cargamos primero los datos del profesor y sus LICENCIAS
           const teacherDataResponse = await axiosClient.get(`/teachers/by-user/${user.id}`);
           const teacherData = teacherDataResponse.data?.data || teacherDataResponse.data;
@@ -414,6 +418,31 @@ const Dashboard = () => {
             <Link to="/gestionar-sesiones" className="btn btn-secondary d-flex align-items-center gap-2 shadow-sm px-3">
               <Activity size={20} /> Gestionar Sesiones
             </Link>
+          </div>
+        )}
+
+        {user.role === 'docente' && (learningContexts.school.length > 0 || learningContexts.preicfes.length > 0) && (
+          <div className="card shadow-sm mb-4">
+            <div className="card-header bg-white"><h5 className="mb-0 fw-bold">Mis contextos de enseñanza</h5></div>
+            <div className="card-body">
+              <div className="row g-3">
+                {learningContexts.school.length > 0 && <div className="col-md-6">
+                  <div className="border rounded p-3 h-100">
+                    <h6>Institución educativa</h6>
+                    <p className="text-muted small">Cursos regulares de colegio, universidad u otra institución.</p>
+                    <ul className="mb-0">{learningContexts.school.map((course) => <li key={course.course_id}>{course.course_name}{course.grade ? ` · ${course.grade}` : ''}</li>)}</ul>
+                  </div>
+                </div>}
+                {learningContexts.preicfes.length > 0 && <div className="col-md-6">
+                  <div className="border border-warning rounded p-3 h-100">
+                    <h6>Preicfes CRECER</h6>
+                    <p className="text-muted small">Este espacio tiene sus aplicaciones y resultados Saber independientes de las notas por fases.</p>
+                    <ul>{learningContexts.preicfes.map((course) => <li key={course.course_id}>{course.course_name}{course.grade ? ` · ${course.grade}` : ''}</li>)}</ul>
+                    <Link className="btn btn-sm btn-outline-warning" to="/prueba-saber">Gestionar pruebas y grupos</Link>
+                  </div>
+                </div>}
+              </div>
+            </div>
           </div>
         )}
 

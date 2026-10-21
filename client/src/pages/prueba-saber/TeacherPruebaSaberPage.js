@@ -5,6 +5,7 @@ import axiosClient from '../../api/axiosClient';
 import Swal from 'sweetalert2';
 import { Edit, Trash2, Filter, GraduationCap } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import PruebaSaberApplicationManager from './PruebaSaberApplicationManager';
 
 const TeacherPruebaSaberPage = () => {
   const { user } = useAuth();
@@ -90,6 +91,7 @@ const TeacherPruebaSaberPage = () => {
 
   return (
     <div className="container py-4">
+      <PruebaSaberApplicationManager />
       <div className="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center mb-4">
         <h2 className="mb-3 mb-md-0">
           <GraduationCap className="me-2" size={28} />

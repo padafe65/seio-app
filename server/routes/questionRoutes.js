@@ -6,6 +6,7 @@ import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { logRequestAudit } from '../utils/auditLogger.js';
 import { hasQuestionnaireAccess, canManageQuestionnaire } from '../utils/questionnaireAccess.js';
+import { deleteUnusedQuestionnaireAssets } from '../utils/questionnaireImportAssets.js';
 
 const router = express.Router();
 
@@ -297,7 +298,32 @@ router.delete('/questions/:id', verifyToken, isTeacherOrAdmin, async (req, res) 
       return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede eliminar preguntas de este cuestionario privado.' });
     }
 
+    const [applications] = await pool.query('SELECT id, question_ids_json FROM prueba_saber_applications WHERE questionnaire_id = ?', [existingQuestion[0].questionnaire_id]);
+    const affectedApplications = applications.filter((application) => {
+      try { return JSON.parse(application.question_ids_json || '[]').map(Number).includes(Number(id)); }
+      catch { return true; }
+    }).map((application) => application.id);
+    if (affectedApplications.length) {
+      const placeholders = affectedApplications.map(() => '?').join(',');
+      await pool.query(`UPDATE prueba_saber_applications SET status = 'inactive' WHERE id IN (${placeholders})`, affectedApplications);
+    }
+
+    const [importItems] = await pool.query(
+      `SELECT i.id AS item_id, ia.asset_id
+       FROM questionnaire_import_items i
+       LEFT JOIN questionnaire_import_item_assets ia ON ia.item_id = i.id
+       WHERE i.published_question_id = ?`, [id]
+    );
+    const importedItemIds = importItems.map((item) => item.item_id);
+    const importedAssetIds = importItems.map((item) => item.asset_id).filter(Boolean);
+
     await pool.query('DELETE FROM questions WHERE id = ?', [id]);
+    if (importedItemIds.length) {
+      const placeholders = importedItemIds.map(() => '?').join(',');
+      await pool.query(`DELETE FROM questionnaire_import_item_assets WHERE item_id IN (${placeholders})`, importedItemIds);
+      await pool.query(`UPDATE questionnaire_import_items SET published_question_id = NULL WHERE id IN (${placeholders})`, importedItemIds);
+    }
+    await deleteUnusedQuestionnaireAssets(pool, importedAssetIds);
     await logRequestAudit(req, {
       action: 'DELETE', tableName: 'questions', recordId: Number(id),
       description: `Eliminó una pregunta del cuestionario ${existingQuestion[0].questionnaire_id}.`,

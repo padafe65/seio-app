@@ -5,6 +5,7 @@ import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
 import { verifyToken, validateTeacherSubject } from '../middleware/authMiddleware.js';
 import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 import { hasQuestionnaireAccess, canManageQuestionnaire } from '../utils/questionnaireAccess.js';
+import { deleteUnusedQuestionnaireAssets, getAssetsForQuestionnaire } from '../utils/questionnaireImportAssets.js';
 
 const router = express.Router();
 
@@ -647,6 +648,15 @@ router.delete('/:id', verifyToken, async (req, res) => {
     if (!await canManageQuestionnaire(id, req.user)) {
       return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede eliminar este cuestionario privado.' });
     }
+
+    const importedAssetIds = await getAssetsForQuestionnaire(pool, id);
+    const [saberApplications] = await pool.query('SELECT id FROM prueba_saber_applications WHERE questionnaire_id = ?', [id]);
+    if (saberApplications.length) {
+      const applicationIds = saberApplications.map((row) => row.id);
+      const applicationMarks = applicationIds.map(() => '?').join(',');
+      await pool.query(`DELETE FROM prueba_saber_application_attempts WHERE application_id IN (${applicationMarks})`, applicationIds);
+      await pool.query(`DELETE FROM prueba_saber_applications WHERE id IN (${applicationMarks})`, applicationIds);
+    }
     
     const deletedQuestionnaireData = {
       title: questionnaire[0].title,
@@ -667,6 +677,9 @@ router.delete('/:id', verifyToken, async (req, res) => {
     
     // Luego eliminar el cuestionario
     await pool.query('DELETE FROM questionnaires WHERE id = ?', [id]);
+
+    // Keep imported files while any other question or import item still references them.
+    await deleteUnusedQuestionnaireAssets(pool, importedAssetIds);
     
     // 📝 Registrar en auditoría
     await logDelete(

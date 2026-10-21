@@ -204,6 +204,33 @@ const readParagraphs = (documentXml, formats) => [...documentXml.matchAll(/<w:p(
   return { index: index + 1, text, numId, level, format: formats.get(numId) || '', imageIds };
 });
 
+const questionNumbersFromSharedPrompt = (text) => {
+  const match = String(text || '').match(/\bpreguntas?\s+(\d+(?:\s*(?:,\s*|\by\b|\ba(?:\s+la)?\b|\bhasta\b|\bal\b|[-–])\s*\d+)*)/i);
+  if (!match) return [];
+  const tokens = [...match[1].matchAll(/\d+|,|\by\b|\ba(?:\s+la)?\b|\bhasta\b|\bal\b|[-–]/gi)].map((token) => token[0].toLowerCase());
+  const numbers = [];
+  for (let index = 0; index < tokens.length;) {
+    const start = Number(tokens[index]);
+    if (!Number.isFinite(start)) { index += 1; continue; }
+    numbers.push(start);
+    const separator = tokens[index + 1];
+    const end = Number(tokens[index + 2]);
+    if (separator && Number.isFinite(end)) {
+      if (/^(?:a|hasta|al|-|–)/.test(separator)) {
+        const low = Math.min(start, end);
+        const high = Math.max(start, end);
+        for (let number = low + 1; number <= high && number - low <= 100; number += 1) numbers.push(number);
+      } else {
+        numbers.push(end);
+      }
+      index += 3;
+    } else {
+      index += 1;
+    }
+  }
+  return [...new Set(numbers)];
+};
+
 export const extractQuestionsFromDocx = (buffer) => {
   const documentXml = getZipEntry(buffer, 'word/document.xml');
   const numberingXml = getZipEntry(buffer, 'word/numbering.xml');
@@ -241,15 +268,47 @@ export const extractQuestionsFromDocx = (buffer) => {
     throw new Error('No detecté una lista numerada de preguntas. Usa la plantilla Excel/CSV para revisar el formato.');
   }
 
+  // Saber exams often place shared instructions and figures well before the
+  // questions they support. Copy that material to every explicitly named item.
+  const sharedContexts = new Map();
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    const questionNumbers = questionNumbersFromSharedPrompt(paragraph.text);
+    if (!questionNumbers.length) return;
+    const targetPositions = questionNumbers
+      .map((number) => number - 1)
+      .filter((position) => position >= 0 && position < questionIndexes.length);
+    if (!targetPositions.length) return;
+    const firstTargetPosition = Math.min(...targetPositions);
+    const firstTargetIndex = questionIndexes[firstTargetPosition];
+    if (firstTargetIndex <= paragraphIndex) return;
+
+    const sharedParagraphs = paragraphs.slice(paragraphIndex, firstTargetIndex);
+    const sharedText = sharedParagraphs.map((part) => part.text).filter(Boolean).join('\n\n');
+    const imageReferences = sharedParagraphs
+      .filter((part) => part.imageIds.length)
+      .map((part) => ({ paragraph: part.index, relationship_ids: [...new Set(part.imageIds)] }));
+    for (const position of targetPositions) {
+      const existing = sharedContexts.get(position) || { text: [], imageReferences: [] };
+      if (sharedText && !existing.text.includes(sharedText)) existing.text.push(sharedText);
+      existing.imageReferences.push(...imageReferences);
+      sharedContexts.set(position, existing);
+    }
+  });
+
   const items = questionIndexes.map((paragraphIndex, position) => {
     const question = paragraphs[paragraphIndex];
     const nextQuestionIndex = questionIndexes[position + 1] ?? paragraphs.length;
     const following = paragraphs.slice(paragraphIndex + 1, nextQuestionIndex);
     const choices = following.filter((paragraph) => paragraph.format === 'upperLetter' && paragraph.text);
     const relatedParagraphs = paragraphs.slice(Math.max(0, paragraphIndex - 3), nextQuestionIndex);
-    const imageReferences = relatedParagraphs
+    const localImageReferences = relatedParagraphs
       .filter((paragraph) => paragraph.imageIds.length && nearestQuestionIndex(paragraph.index - 1) === paragraphIndex)
-      .map((paragraph) => ({ paragraph: paragraph.index, relationship_ids: paragraph.imageIds }));
+      .map((paragraph) => ({ paragraph: paragraph.index, relationship_ids: [...new Set(paragraph.imageIds)] }));
+    const sharedContext = sharedContexts.get(position) || { text: [], imageReferences: [] };
+    const questionText = [
+      ...sharedContext.text,
+      question.text || '[Enunciado dentro de una figura del original; completar durante la revisión.]'
+    ].filter(Boolean).join('\n\n');
     return {
       position: position + 1,
       source_question_number: position + 1,
@@ -257,13 +316,13 @@ export const extractQuestionsFromDocx = (buffer) => {
       source_location: `Párrafo ${question.index}`,
       // Algunos reactivos tienen el enunciado dentro de una figura de Word.
       // Conservamos la fila en el borrador y pedimos completar el texto al revisar.
-      question_text: question.text || '[Enunciado dentro de una figura del original; completar durante la revisión.]',
+      question_text: questionText,
       option1: choices[0]?.text || '',
       option2: choices[1]?.text || '',
       option3: choices[2]?.text || '',
       option4: choices[3]?.text || '',
       correct_answer: '',
-      image_references: JSON.stringify(imageReferences),
+      image_references: JSON.stringify([...sharedContext.imageReferences, ...localImageReferences]),
       rights_notes: 'Pendiente verificar autoría/licencia y asociar las figuras de Word.'
     };
   });

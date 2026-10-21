@@ -20,6 +20,10 @@ const TeacherCoursesManager = () => {
   const [editSelectedTeacher, setEditSelectedTeacher] = useState('');
   const [editSelectedRole, setEditSelectedRole] = useState('');
   const [teacherInstitutions, setTeacherInstitutions] = useState([]); // Instituciones del docente basadas en sus licencias
+  const [institutionOptions, setInstitutionOptions] = useState([]);
+  const [institutionMode, setInstitutionMode] = useState('existing');
+  const [newCourse, setNewCourse] = useState({ name: '', education_type: 'school', grade: '7', institution: user?.institution || '', institution_city: '', institution_department: '' });
+  const [creatingCourse, setCreatingCourse] = useState(false);
   
   const isSuperAdminOrAdmin = user?.role === 'super_administrador' || user?.role === 'administrador';
   
@@ -32,6 +36,14 @@ const TeacherCoursesManager = () => {
           const tid = response.data.teacherId;
           setTeacherId(tid);
           setSelectedTeacher(tid.toString());
+          axiosClient.get(`/teachers/by-user/${user.id}`).then((profileResponse) => {
+            const profile = profileResponse.data?.data || profileResponse.data;
+            if (profile?.institution) {
+              setInstitutionOptions((current) => current.some((name) => name.toLowerCase() === profile.institution.toLowerCase()) ? current : [...current, profile.institution].sort());
+              setNewCourse((current) => ({ ...current, institution: current.institution || profile.institution }));
+              setInstitutionMode('existing');
+            }
+          }).catch(() => {});
           fetchAssignedCourses(tid);
           // Obtener instituciones del docente basadas en sus licencias
           fetchTeacherInstitutions(tid);
@@ -85,6 +97,16 @@ const TeacherCoursesManager = () => {
         console.error('Error al obtener cursos:', error);
       }
     };
+
+    const fetchInstitutions = async () => {
+      try {
+        const response = await axiosClient.get('/admin/institutions/list');
+        const names = response.data?.data || [];
+        setInstitutionOptions((current) => [...new Set([...current, ...names.filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'es')));
+      } catch (error) {
+        console.error('Error al cargar instituciones:', error);
+      }
+    };
     
     const fetchTeachers = async () => {
       if (isSuperAdminOrAdmin) {
@@ -98,6 +120,7 @@ const TeacherCoursesManager = () => {
     };
     
     fetchCourses();
+    fetchInstitutions();
     fetchTeachers();
     fetchTeacherId();
   }, [user, selectedTeacher, isSuperAdminOrAdmin, teachers.length]);
@@ -212,6 +235,33 @@ const TeacherCoursesManager = () => {
         title: 'Error',
         text: error.response?.data?.message || 'Error al asignar curso'
       });
+    }
+  };
+
+  const handleCreateOwnCourse = async (event) => {
+    event.preventDefault();
+    if (!teacherId) {
+      Swal.fire({ icon: 'warning', title: 'Perfil docente pendiente', text: 'Completa primero tu registro de docente para crear cursos.' });
+      return;
+    }
+    setCreatingCourse(true);
+    try {
+      const createdCourse = await axiosClient.post('/teacher-courses/create-course', newCourse);
+      const createdInstitution = createdCourse.data?.data?.institution;
+      if (createdInstitution) setInstitutionOptions((current) => current.some((name) => name.toLowerCase() === createdInstitution.toLowerCase()) ? current : [...current, createdInstitution].sort((a, b) => a.localeCompare(b, 'es')));
+      setInstitutionMode('existing');
+      const [courseResponse, assignedResponse] = await Promise.all([
+        axiosClient.get('/courses'),
+        axiosClient.get(`/teacher-courses/teacher/${teacherId}`)
+      ]);
+      setCourses(Array.isArray(courseResponse.data) ? courseResponse.data : []);
+      setAssignedCourses(Array.isArray(assignedResponse.data) ? assignedResponse.data : []);
+      setNewCourse((current) => ({ ...current, name: '', institution: createdInstitution || current.institution, institution_city: '', institution_department: '' }));
+      Swal.fire({ icon: 'success', title: 'Curso creado', text: 'El curso quedó creado y asignado a tu perfil docente.' });
+    } catch (error) {
+      Swal.fire({ icon: 'error', title: 'No se pudo crear', text: error.response?.data?.message || 'Revisa los datos e inténtalo de nuevo.' });
+    } finally {
+      setCreatingCourse(false);
     }
   };
   
@@ -386,15 +436,55 @@ const TeacherCoursesManager = () => {
           </div>
         </div>
       )}
+
+      {!isSuperAdminOrAdmin && <div className="card border-success mb-4">
+        <div className="card-header bg-success text-white"><h5 className="mb-0"><PlusCircle size={18} className="me-2" />Crear un curso para mi perfil</h5></div>
+        <div className="card-body">
+          <p className="text-muted">Si todavía no tienes cursos asignados, créalo aquí. Quedará vinculado automáticamente a tu perfil y aparecerá en tus herramientas docentes.</p>
+          <form onSubmit={handleCreateOwnCourse}>
+            <div className="row g-3 align-items-end">
+              <div className="col-md-2"><label className="form-label" htmlFor="new-course-type">Tipo de curso</label>
+                <select id="new-course-type" className="form-select" value={newCourse.education_type} onChange={(event) => setNewCourse({ ...newCourse, education_type: event.target.value, grade: event.target.value === 'school' ? '7' : event.target.value === 'preicfes' ? '11' : '1' })}>
+                  <option value="school">Colegio</option><option value="university">Universidad</option><option value="preicfes">Preicfes</option>
+                </select>
+              </div>
+              <div className="col-md-3"><label className="form-label" htmlFor="new-course-institution-select">Institución / proyecto</label>
+                <select id="new-course-institution-select" className="form-select" required value={institutionMode === 'new' ? '__new__' : newCourse.institution} onChange={(event) => {
+                  if (event.target.value === '__new__') { setInstitutionMode('new'); setNewCourse({ ...newCourse, institution: '' }); }
+                  else { setInstitutionMode('existing'); setNewCourse({ ...newCourse, institution: event.target.value }); }
+                }}>
+                  <option value="">Seleccionar institución</option>
+                  {institutionOptions.map((institution) => <option key={institution} value={institution}>{institution}</option>)}
+                  <option value="__new__">+ Crear una institución o proyecto</option>
+                </select>
+                {institutionMode === 'new' && <input className="form-control mt-2" maxLength="150" placeholder="Escribe el nombre nuevo" value={newCourse.institution} onChange={(event) => setNewCourse({ ...newCourse, institution: event.target.value })} required aria-label="Nombre de la nueva institución o proyecto" />}
+                {institutionMode === 'new' && <div className="d-flex gap-1 mt-2"><input className="form-control form-control-sm" maxLength="100" placeholder="Ciudad (si aplica)" value={newCourse.institution_city} onChange={(event) => setNewCourse({ ...newCourse, institution_city: event.target.value })} /><input className="form-control form-control-sm" maxLength="100" placeholder="Departamento (si aplica)" value={newCourse.institution_department} onChange={(event) => setNewCourse({ ...newCourse, institution_department: event.target.value })} /></div>}
+                <small className="text-muted">Las nuevas instituciones se guardan en el curso y aparecerán en esta lista.</small>
+              </div>
+              <div className="col-md-2"><label className="form-label" htmlFor="new-course-grade">{newCourse.education_type === 'university' ? 'Semestre' : newCourse.education_type === 'preicfes' ? 'Grado Saber' : 'Grado'}</label>
+                <select id="new-course-grade" className="form-select" value={newCourse.grade} onChange={(event) => setNewCourse({ ...newCourse, grade: event.target.value })}>
+                  {Array.from({ length: 12 }, (_, index) => index + 1).map((grade) => <option key={grade} value={grade}>{newCourse.education_type === 'university' ? `Semestre ${grade}` : newCourse.education_type === 'preicfes' ? `Saber ${grade}` : `Grado ${grade}`}</option>)}
+                </select>
+              </div>
+              <div className="col-md-3"><label className="form-label" htmlFor="new-course-name">Nombre del curso</label>
+                <input id="new-course-name" className="form-control" maxLength="120" required placeholder={newCourse.education_type === 'preicfes' ? 'Ej.: Preicfes A' : 'Ej.: Matemáticas 7°'} value={newCourse.name} onChange={(event) => setNewCourse({ ...newCourse, name: event.target.value })} />
+              </div>
+              <div className="col-md-2"><button type="submit" className="btn btn-success w-100" disabled={creatingCourse || !teacherId}>{creatingCourse ? 'Creando…' : 'Crear y asignarme'}</button></div>
+            </div>
+          </form>
+          {newCourse.education_type === 'preicfes' && <small className="text-muted d-block mt-2">Puedes nombrarlo Preicfes A, B u otro nombre. La matrícula de cada estudiante a este curso se gestiona aparte y no reemplaza su colegio.</small>}
+        </div>
+      </div>}
       
       <div className="card mb-4">
-        <div className="card-header bg-primary text-white">
+        <div className={`card-header ${isSuperAdminOrAdmin ? 'bg-primary' : 'bg-secondary'} text-white`}>
           <h5 className="mb-0">
             <PlusCircle size={18} className="me-2" />
-            Asignar Nuevo Curso
+            {isSuperAdminOrAdmin ? 'Asignar curso existente' : 'Vincular otro curso existente'}
           </h5>
         </div>
         <div className="card-body">
+          {!isSuperAdminOrAdmin && <p className="text-muted">Usa esta opción si un administrador ya creó el curso. Para crear uno nuevo con su institución, utiliza el formulario anterior.</p>}
           <div className="row g-3 align-items-end">
             {isSuperAdminOrAdmin && (
               <div className="col-md-4">

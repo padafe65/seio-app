@@ -210,6 +210,33 @@ const UsersManagement = () => {
     }
   };
 
+  const handleActivateTrial = async (userItem) => {
+    const result = await Swal.fire({
+      title: userItem.subscription_id ? 'Sincronizar licencia de acceso' : 'Activar prueba gratuita',
+      text: userItem.subscription_id
+        ? `Se verificará la licencia de acceso de ${userItem.name} usando su suscripción vigente. No se creará otra suscripción.`
+        : `Se activarán 30 días para ${userItem.name}. Si ya tuvo alguna suscripción, no se crearán días de prueba adicionales.`,
+      icon: 'question',
+      ...(userItem.subscription_id ? {} : {
+        input: 'select',
+        inputOptions: { monthly: 'Mensual al finalizar la prueba', annual: 'Anual al finalizar la prueba' },
+        inputValue: 'monthly',
+        inputPlaceholder: 'Selecciona el plan posterior a la prueba'
+      }),
+      showCancelButton: true,
+      confirmButtonText: userItem.subscription_id ? 'Sincronizar acceso' : 'Activar 30 días',
+      cancelButtonText: 'Cancelar'
+    });
+    if (!result.isConfirmed) return;
+    try {
+      const response = await axiosClient.post(`/teachers/${userItem.teacher_id}/trial`, { plan_type: result.value || 'monthly' });
+      await Swal.fire({ icon: response.data.accessReady ? 'success' : 'info', title: 'Acceso docente', text: response.data.message });
+      fetchUsers();
+    } catch (error) {
+      Swal.fire({ icon: 'error', title: 'No se pudo activar', text: error.response?.data?.message || 'Ocurrió un error al activar la prueba.' });
+    }
+  };
+
   const getRoleBadge = (role) => {
     const roleConfig = {
       'super_administrador': { class: 'bg-danger', text: 'Super Admin', icon: <Shield size={14} /> },
@@ -432,6 +459,9 @@ const UsersManagement = () => {
                     <th>Email</th>
                     <th>Teléfono</th>
                     <th>Rol</th>
+                    <th>Perfil docente</th>
+                    <th>Suscripción</th>
+                    <th>Licencia de acceso</th>
                     <th>Estado</th>
                     <th>Fecha de Creación</th>
                     <th>Acciones</th>
@@ -469,6 +499,18 @@ const UsersManagement = () => {
                         )}
                       </td>
                       <td>{getRoleBadge(userItem.role)}</td>
+                      <td>{userItem.role === 'docente'
+                        ? <span>Perfil teachers #{userItem.teacher_id || 'pendiente'} · {userItem.subject || 'Materia sin asignar'}</span>
+                        : <span className="text-muted">—</span>}</td>
+                      <td>{userItem.role !== 'docente' ? <span className="text-muted">—</span> : userItem.subscription_id
+                        ? <span className={`badge ${userItem.subscription_status === 'active' ? 'bg-success' : 'bg-warning text-dark'}`}>
+                            {userItem.subscription_status === 'active' ? 'Activa' : userItem.subscription_status}
+                            {userItem.subscription_end_date ? ` · hasta ${new Date(userItem.subscription_end_date).toLocaleDateString('es-CO')}` : ''}
+                          </span>
+                        : <span className="badge bg-secondary">Sin registro</span>}</td>
+                      <td>{userItem.role !== 'docente' ? <span className="text-muted">—</span> : userItem.teacher_license_status === 'active'
+                        ? <span className="badge bg-success">Activa{userItem.teacher_license_end_date ? ` · hasta ${new Date(userItem.teacher_license_end_date).toLocaleDateString('es-CO')}` : ''}</span>
+                        : <span className="badge bg-secondary">Sin licencia activa</span>}</td>
                       <td>
                         <button
                           className={`btn btn-sm ${isActive(userItem.estado) ? 'btn-success' : 'btn-secondary'}`}
@@ -495,6 +537,11 @@ const UsersManagement = () => {
                               <UserCheck size={16} />
                             </button>
                           )}
+                          {userItem.role === 'docente' && userItem.teacher_id && userItem.teacher_license_status !== 'active' && (
+                            <button className="btn btn-sm btn-outline-success" onClick={() => handleActivateTrial(userItem)} title={userItem.subscription_id ? 'Sincronizar licencia con la suscripción' : 'Activar prueba inicial de 30 días'}>
+                              {userItem.subscription_id ? 'Sincronizar acceso' : 'Activar prueba'}
+                            </button>
+                          )}
                           {/* Administrador no puede editar otros administradores o super_administradores */}
                           {(user.role === 'super_administrador' || (user.role === 'administrador' && userItem.role !== 'administrador' && userItem.role !== 'super_administrador')) && (
                             <Link
@@ -502,7 +549,7 @@ const UsersManagement = () => {
                               className="btn btn-sm btn-outline-primary"
                               title="Editar"
                             >
-                              <Edit size={16} />
+                              <Edit size={16} /><span className="ms-1">Editar</span>
                             </Link>
                           )}
                           {/* Administrador no puede eliminar otros administradores o super_administradores */}
@@ -513,7 +560,7 @@ const UsersManagement = () => {
                               disabled={userItem.id === user.id}
                               title={userItem.id === user.id ? 'No puedes eliminar tu propia cuenta' : 'Eliminar'}
                             >
-                              <Trash2 size={16} />
+                              <Trash2 size={16} /><span className="ms-1">Eliminar</span>
                             </button>
                           )}
                         </div>

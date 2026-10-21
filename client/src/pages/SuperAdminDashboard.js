@@ -149,6 +149,13 @@ const handleAdminPrint = async () => {
         </div>
       </div>
 
+      <div className="card border-warning mb-4">
+        <div className="card-body d-flex align-items-center justify-content-between flex-wrap gap-3">
+          <div><h5 className="mb-1">Pruebas Saber y Preicfes CRECER</h5><p className="text-muted mb-0">Administra bancos, grupos, matrículas y resultados informativos por fuera de las notas académicas.</p></div>
+          <div className="d-flex gap-2 flex-wrap"><Link to="/prueba-saber" className="btn btn-warning">Gestionar Prueba Saber</Link><Link to="/cuestionarios/importar" className="btn btn-outline-warning">Importar preguntas</Link></div>
+        </div>
+      </div>
+
       {/* Tarjetas de estadísticas */}
       <div className="row g-4">
         <div className="col-md-3 col-sm-6">

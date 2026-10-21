@@ -211,7 +211,7 @@ try {
 
             <div className="mb-3">
               <label htmlFor="institution" className="form-label">
-                Institución <span className="text-danger">*</span>
+                Institución <span className="text-muted">(opcional)</span>
               </label>
               <input
                 type="text"
@@ -220,7 +220,6 @@ try {
                 value={teacher.institution}
                 onChange={handleChange}
                 className="form-control"
-                required
                 list="institutions-db-list" // ✨ Esto conecta con el ID de abajo
               />
 
@@ -230,7 +229,7 @@ try {
                 ))}
               </datalist>
               <small className="form-text text-muted">
-                Institución educativa donde trabajas
+                Si trabajas de forma independiente o vendes tus propios cursos, puedes dejar este campo vacío.
               </small>
             </div>
 

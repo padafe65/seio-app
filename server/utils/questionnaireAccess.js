@@ -3,6 +3,7 @@ import pool from '../config/db.js';
 // Ordinary questionnaires keep their existing visibility rules. Imported,
 // licensed products require an explicit grant (or ownership).
 export const hasQuestionnaireAccess = async (questionnaireId, user) => {
+  if (user?.role === 'super_administrador') return true;
   const [restricted] = await pool.query(
     'SELECT owner_user_id FROM restricted_questionnaires WHERE questionnaire_id = ?',
     [questionnaireId]
@@ -18,16 +19,16 @@ export const hasQuestionnaireAccess = async (questionnaireId, user) => {
   return grants.length > 0;
 };
 
-// Los productos privados solo los administra la cuenta propietaria. Las
-// licencias conceden acceso para consultar y responder, nunca para editarlos.
+// El superadministrador conserva control global; las licencias de otros
+// usuarios conceden acceso para consultar y responder, nunca para editarlos.
 export const canManageQuestionnaire = async (questionnaireId, user) => {
+  if (user?.role === 'super_administrador') return true;
   const [restricted] = await pool.query(
     'SELECT owner_user_id FROM restricted_questionnaires WHERE questionnaire_id = ?',
     [questionnaireId]
   );
   if (!restricted.length) return true;
-  return user?.role === 'super_administrador'
-    && Number(restricted[0].owner_user_id) === Number(user.id);
+  return false;
 };
 
 export const requireQuestionnaireAccess = async (req, res, next) => {

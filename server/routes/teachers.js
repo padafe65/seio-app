@@ -7,6 +7,7 @@ import multer from 'multer';
 import pool from '../config/db.js';
 import { verifyToken, isAdmin } from '../middleware/authMiddleware.js';
 import { logRequestAudit } from '../utils/auditLogger.js';
+import { ensureTeacherTrialSubscription } from '../utils/teacherTrialSubscription.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = express.Router();
@@ -250,7 +251,7 @@ router.get('/:id', async (req, res) => {
 // Crear un nuevo profesor
 router.post('/', isAdmin, async (req, res) => {
   try {
-    const { user_id, subject, institution } = req.body;
+    const { user_id, subject, institution, plan_type } = req.body;
     
     // Verificar si el usuario ya es profesor
     const [existingTeacher] = await pool.query(
@@ -259,7 +260,19 @@ router.post('/', isAdmin, async (req, res) => {
     );
     
     if (existingTeacher.length > 0) {
-      return res.status(400).json({ message: 'Este usuario ya está registrado como profesor' });
+      const existing = existingTeacher[0];
+      await pool.query(
+        'UPDATE teachers SET subject = ?, institution = ? WHERE id = ?',
+        [subject || existing.subject, institution || 'Cuenta personal', existing.id]
+      );
+      const trial = await ensureTeacherTrialSubscription(existing.id, plan_type);
+      return res.status(200).json({
+        success: true,
+        message: 'El perfil docente ya existía y fue actualizado.',
+        teacherId: existing.id,
+        trialCreated: trial.created,
+        trialDays: trial.created ? 30 : undefined
+      });
     }
     
     // 1. Verificar si el campo institution existe en la tabla users
@@ -280,8 +293,9 @@ router.post('/', isAdmin, async (req, res) => {
     // 2. Crear el profesor en la tabla teachers
     const [result] = await pool.query(
       'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
-      [user_id, subject, institution]
+      [user_id, subject, institution || 'Cuenta personal']
     );
+    const trial = await ensureTeacherTrialSubscription(result.insertId, plan_type);
     await logRequestAudit(req, {
       action: 'CREATE', tableName: 'teachers', recordId: result.insertId,
       description: `Creó el perfil docente ${result.insertId} para el usuario ${user_id}.`,
@@ -308,7 +322,9 @@ router.post('/', isAdmin, async (req, res) => {
     res.status(201).json({ 
       success: true, 
       message: 'Profesor registrado correctamente',
-      teacherId: result.insertId 
+      teacherId: result.insertId,
+      trialCreated: trial.created,
+      trialDays: trial.created ? 30 : undefined
     });
   } catch (error) {
     console.error('❌ Error al crear profesor:', error);
@@ -456,6 +472,26 @@ router.put('/:id', isAdmin, async (req, res) => {
       message: 'Error al actualizar profesor',
       error: error.message 
     });
+  }
+});
+
+// Reparar un perfil legado sin historial de suscripción. La prueba solo se entrega una vez.
+router.post('/:id/trial', isAdmin, async (req, res) => {
+  try {
+    const result = await ensureTeacherTrialSubscription(req.params.id, req.body?.plan_type);
+    res.json({
+      success: true,
+      trialCreated: result.created,
+      accessReady: result.accessReady,
+      message: result.created
+        ? 'Prueba de 30 días y licencia de acceso activadas.'
+        : result.accessReady
+          ? 'Se sincronizó la licencia de acceso con la suscripción vigente; no se creó otra suscripción.'
+          : 'Este docente tiene una suscripción vencida o inactiva; no se concedieron días nuevos.'
+    });
+  } catch (error) {
+    console.error('Error al activar prueba gratuita del docente:', error);
+    res.status(500).json({ success: false, message: 'No se pudo activar la prueba gratuita.' });
   }
 });
 

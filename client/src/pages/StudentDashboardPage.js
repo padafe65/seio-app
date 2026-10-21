@@ -19,11 +19,19 @@ const StudentDashboardPage = () => {
   const [recentAttempts, setRecentAttempts] = useState([]);
   const [teachers, setTeachers] = useState([]); // Docentes/materias del estudiante
   const [selectedTeacherId, setSelectedTeacherId] = useState(null); // Filtro por docente/materia
+  const [learningContexts, setLearningContexts] = useState({ school: null, preicfes: [] });
+  const [saberApplications, setSaberApplications] = useState([]);
   
   useEffect(() => {
     const fetchData = async () => {
       if (user && user.role === 'estudiante') {
         try {
+          const [contextsResponse, applicationsResponse] = await Promise.allSettled([
+            axiosClient.get('/prueba-saber/contexts'),
+            axiosClient.get('/prueba-saber/applications')
+          ]);
+          if (contextsResponse.status === 'fulfilled') setLearningContexts(contextsResponse.value.data?.data || { school: null, preicfes: [] });
+          if (applicationsResponse.status === 'fulfilled') setSaberApplications(applicationsResponse.value.data?.data || []);
           // Obtener datos del estudiante
           const studentResponse = await axiosClient.get(`/students/by-user/${user.id}`);
           
@@ -150,6 +158,28 @@ const StudentDashboardPage = () => {
     ? recentAttempts.filter(a => a.teacher_id === selectedTeacherId)
     : recentAttempts;
 
+  const institutionName = String(studentData?.institution || studentData?.user_institution || '').trim();
+  const hasInstitutionalContext = studentData?.learning_context === 'preicfes'
+    ? false
+    : Boolean(learningContexts.school || (institutionName && !/^(n\/?a|ninguna|null|sin instituci[oó]n|no asignada|no aplica|particular|pre.?icfes|crecer)$/i.test(institutionName)));
+
+  // Un estudiante independiente usa el mismo rol y panel, con las funciones
+  // escolares ocultas hasta que tenga una vinculación institucional.
+  if (!hasInstitutionalContext) {
+    return <main className="container py-4">
+      <div className="mb-4"><h1 className="h3">Bienvenido, {user.name}</h1><p className="text-muted">Panel de estudiante Preicfes. Aquí verás tus cursos y resultados de Pruebas Saber.</p></div>
+      {learningContexts.preicfes.length === 0
+        ? <div className="card border-warning"><div className="card-body"><h5>Aún no tienes una matrícula Preicfes</h5><p>Si recibiste un código de matrícula, ingrésalo para vincularte al curso y ver las pruebas disponibles.</p><Link to="/student/prueba-saber" className="btn btn-warning">Ingresar código de matrícula</Link></div></div>
+        : <>
+          <div className="card border-warning shadow-sm mb-4"><div className="card-header bg-warning-subtle"><h5 className="mb-0">Mis cursos Preicfes</h5></div><div className="card-body"><div className="row g-3">{learningContexts.preicfes.map((enrollment) => {
+            const courseApplications = saberApplications.filter((application) => Number(application.course_id) === Number(enrollment.course_id));
+            const completed = courseApplications.filter((application) => application.attempt).length;
+            return <div className="col-md-6" key={enrollment.enrollment_id}><div className="border rounded p-3 h-100"><h6>{enrollment.course_name}</h6><div className="text-muted small">{courseApplications.length} pruebas disponibles · {completed} completadas</div>{courseApplications.filter((application) => application.attempt).map((application) => <div key={application.id} className="d-flex justify-content-between mt-2 small"><span>{application.title}</span><strong>{application.attempt.score}/5</strong></div>)}</div></div>;
+          })}</div><Link to="/student/prueba-saber" className="btn btn-warning mt-3">Ver mis pruebas y resultados</Link></div></div>
+        </>}
+    </main>;
+  }
+
   return (
     <div className="container py-4">
       <div className="row mb-4">
@@ -174,6 +204,30 @@ const StudentDashboardPage = () => {
           </p>
         </div>
       </div>
+
+      {learningContexts.preicfes.length > 0 && <div className="card border-warning shadow-sm mb-4">
+        <div className="card-header bg-warning-subtle d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div><h5 className="mb-0">Mis cursos Preicfes</h5><small className="text-muted">Tu matrícula Preicfes se registra aparte de tu institución de origen.</small></div>
+          <Link to="/student/prueba-saber" className="btn btn-warning btn-sm">Ver mis pruebas Saber</Link>
+        </div>
+        <div className="card-body">
+          <div className="row g-3">{learningContexts.preicfes.map((enrollment) => {
+            const courseApplications = saberApplications.filter((application) => Number(application.course_id) === Number(enrollment.course_id));
+            const completed = courseApplications.filter((application) => application.attempt).length;
+            return <div className="col-md-6" key={enrollment.enrollment_id}>
+              <div className="border rounded p-3 h-100">
+                <h6>{enrollment.course_name}</h6>
+                <div className="text-muted small">{courseApplications.length} pruebas disponibles · {completed} completadas</div>
+                {courseApplications.filter((application) => application.attempt).slice(0, 3).map((application) => <div key={application.id} className="d-flex justify-content-between mt-2 small"><span>{application.title}</span><strong>{application.attempt.score}/5</strong></div>)}
+              </div>
+            </div>;
+          })}</div>
+        </div>
+      </div>}
+      {learningContexts.school && <div className="alert alert-light border mb-4">
+        <strong>Institución de origen:</strong> {learningContexts.school.institution || studentData?.institution || studentData?.user_institution || 'registrada en tu perfil'}
+        {learningContexts.school.name ? ` · Curso ${learningContexts.school.name}` : ''}. Tus calificaciones académicas continúan en el panel regular.
+      </div>}
       
       {/* Sección de materias/docentes */}
       {teachers.length > 0 && (

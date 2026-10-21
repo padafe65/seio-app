@@ -6,6 +6,112 @@ import { logRequestAudit } from '../utils/auditLogger.js';
 
 const router = express.Router();
 
+// Permite al docente crear un curso propio y dejarlo asignado en el mismo paso.
+router.post('/create-course', verifyToken, async (req, res) => {
+  if (req.user.role !== 'docente') return res.status(403).json({ message: 'Solo un docente puede crear un curso para sí mismo.' });
+  const { name, grade, education_type, institution, institution_city, institution_department } = req.body || {};
+  const courseName = String(name || '').trim();
+  const gradeNumber = Number(grade);
+  const type = String(education_type || '');
+  if (!courseName || courseName.length > 120 || !Number.isInteger(gradeNumber) || gradeNumber < 1 || gradeNumber > 12 || !['school', 'university', 'preicfes'].includes(type)) {
+    return res.status(400).json({ message: 'Indica el nombre, el nivel y un grado o semestre válido (1 a 12).' });
+  }
+  const persistedCourseName = type === 'preicfes' && !/pre.?icfes/i.test(courseName) ? `Preicfes - ${courseName}` : courseName;
+  const connection = await pool.getConnection();
+  try {
+    const [teachers] = await connection.query('SELECT id, institution FROM teachers WHERE user_id = ? ORDER BY id LIMIT 1', [req.user.id]);
+    if (!teachers.length) return res.status(404).json({ message: 'No se encontró el perfil docente. Completa primero tu registro de docente.' });
+    const teacher = teachers[0];
+    const [courseColumns] = await connection.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'courses'`);
+    const availableColumns = new Set(courseColumns.map((column) => column.COLUMN_NAME));
+    const courseInstitution = String(institution || teacher.institution || '').trim().slice(0, 150) || null;
+    if (!courseInstitution) return res.status(400).json({ message: 'Selecciona una institución o escribe el nombre del proyecto.' });
+    const [institutionTable] = await connection.query(`SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'institutions' LIMIT 1`);
+    let institutionId = null;
+    let institutionColumns = [];
+    if (institutionTable.length && courseInstitution) {
+      const [columns] = await connection.query(`SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'institutions'`);
+      institutionColumns = columns;
+      if (!columns.some((column) => column.COLUMN_NAME === 'name') || !columns.some((column) => column.COLUMN_NAME === 'id')) {
+        return res.status(500).json({ message: 'La tabla de instituciones no tiene los campos id y name esperados.' });
+      }
+      const [existingInstitution] = await connection.query('SELECT id FROM institutions WHERE LOWER(name) = LOWER(?) LIMIT 1', [courseInstitution]);
+      institutionId = existingInstitution[0]?.id || null;
+      if (!institutionId) {
+        const requiredColumns = columns.filter((column) => column.COLUMN_NAME !== 'id' && column.COLUMN_NAME !== 'name'
+          && column.IS_NULLABLE === 'NO' && column.COLUMN_DEFAULT === null && !String(column.EXTRA || '').includes('auto_increment'));
+        const supplied = { created_by: req.user.id, user_id: req.user.id, city: institution_city, department: institution_department };
+        const missingColumns = requiredColumns.filter((column) => supplied[column.COLUMN_NAME] === undefined || supplied[column.COLUMN_NAME] === null || supplied[column.COLUMN_NAME] === '');
+        if (missingColumns.length) return res.status(400).json({ message: `La institución requiere información adicional: ${missingColumns.map((column) => column.COLUMN_NAME).join(', ')}.` });
+      }
+    }
+    const fields = ['name', 'grade'];
+    const values = ['?', '?'];
+    const params = [persistedCourseName, gradeNumber];
+    if (availableColumns.has('education_level')) {
+      fields.push('education_level'); values.push('?');
+      params.push(type === 'university' ? 'professional' : 'school');
+    }
+    if (availableColumns.has('institution') && courseInstitution) {
+      fields.push('institution'); values.push('?'); params.push(courseInstitution);
+    }
+    if (availableColumns.has('institution_id') && institutionId) {
+      fields.push('institution_id'); values.push('?'); params.push(institutionId);
+    }
+    if (availableColumns.has('teacher_id')) {
+      fields.push('teacher_id'); values.push('?'); params.push(teacher.id);
+    }
+    if (availableColumns.has('created_by')) {
+      fields.push('created_by'); values.push('?'); params.push(req.user.id);
+    }
+    await connection.beginTransaction();
+    if (institutionTable.length && courseInstitution && !institutionId) {
+      const insertInstitutionFields = ['name'];
+      const insertInstitutionValues = ['?'];
+      const insertInstitutionParams = [courseInstitution];
+      const supplied = { created_by: req.user.id, user_id: req.user.id, city: institution_city, department: institution_department };
+      for (const column of institutionColumns) {
+        if (!['id', 'name'].includes(column.COLUMN_NAME) && supplied[column.COLUMN_NAME] !== undefined && supplied[column.COLUMN_NAME] !== null && supplied[column.COLUMN_NAME] !== '') {
+          insertInstitutionFields.push(column.COLUMN_NAME); insertInstitutionValues.push('?'); insertInstitutionParams.push(supplied[column.COLUMN_NAME]);
+        }
+      }
+      const [createdInstitution] = await connection.query(`INSERT INTO institutions (${insertInstitutionFields.join(', ')}) VALUES (${insertInstitutionValues.join(', ')})`, insertInstitutionParams);
+      institutionId = createdInstitution.insertId;
+      if (availableColumns.has('institution_id') && institutionId) {
+        fields.push('institution_id'); values.push('?'); params.push(institutionId);
+      }
+    }
+    const [created] = await connection.query(`INSERT INTO courses (${fields.join(', ')}) VALUES (${values.join(', ')})`, params);
+    const [assignmentColumns] = await connection.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'teacher_courses'`);
+    const assignmentFields = new Set(assignmentColumns.map((column) => column.COLUMN_NAME));
+    const assignmentNames = ['teacher_id', 'course_id'];
+    const assignmentValues = ['?', '?'];
+    const assignmentParams = [teacher.id, created.insertId];
+    if (assignmentFields.has('assigned_date')) { assignmentNames.push('assigned_date'); assignmentValues.push('NOW()'); }
+    if (assignmentFields.has('role')) { assignmentNames.push('role'); assignmentValues.push('?'); assignmentParams.push('principal'); }
+    await connection.query(`INSERT INTO teacher_courses (${assignmentNames.join(', ')}) VALUES (${assignmentValues.join(', ')})`, assignmentParams);
+    await connection.commit();
+    try {
+      await logRequestAudit(req, {
+        action: 'CREATE', tableName: 'courses', recordId: created.insertId,
+        description: `El docente creó y se asignó el curso ${persistedCourseName}.`,
+        newValues: { course_id: created.insertId, teacher_id: teacher.id, education_type: type, institution: courseInstitution }
+      });
+    } catch (auditError) { console.warn('No se pudo registrar auditoría de creación de curso:', auditError.message); }
+    res.status(201).json({ success: true, data: { id: created.insertId, name: persistedCourseName, grade: gradeNumber, institution: courseInstitution }, message: 'Curso creado y asignado a tu perfil.' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error al crear curso del docente:', error);
+    res.status(500).json({ message: 'No se pudo crear el curso.' });
+  } finally {
+    connection.release();
+  }
+});
+
 // Obtener todos los cursos asignados a un profesor
 router.get('/teacher/:teacherId', async (req, res) => {
   try {

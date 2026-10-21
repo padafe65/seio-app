@@ -23,6 +23,7 @@ import questionnaireIndicatorsRoutes from './routes/questionnaireIndicators.js';
 import indicatorEvaluationRoutes from './routes/indicatorEvaluation.js';
 import educationalResourcesRoutes from './routes/educationalResources.js';
 import pruebaSaberRoutes from './routes/pruebaSaberRoutes.js';
+import pruebaSaberApplicationRoutes from './routes/pruebaSaberApplicationRoutes.js';
 
 // Middleware imports
 import { verifyToken, isAdmin, isSuperAdmin, isTeacherOrAdmin } from './middleware/authMiddleware.js';
@@ -136,7 +137,8 @@ const authLimiter = rateLimit({
 // Ruta para completar datos de estudiante (debe ir ANTES de studentRoutes)
 app.post('/api/students', verifyToken, async (req, res) => {
   try {
-    const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id } = req.body;
+    const { user_id, name, contact_phone, contact_email, age, grade, course_id, teacher_id, learning_context, preicfes_program } = req.body;
+    const requestedLearningContext = ['institutional', 'preicfes'].includes(learning_context) ? learning_context : null;
 
     const isStaff = ['admin', 'administrador', 'super_administrador', 'docente'].includes(req.user.role);
     const targetUserId = Number(user_id || (req.user.role === 'estudiante' ? req.user.id : 0));
@@ -184,9 +186,19 @@ app.post('/api/students', verifyToken, async (req, res) => {
 
     // Verificar si ya existe un registro de estudiante para este user_id
     const [existingStudent] = await db.query(
-      'SELECT id FROM students WHERE user_id = ?',
+      'SELECT id, learning_context, preicfes_program FROM students WHERE user_id = ?',
       [userId]
     );
+
+    const learningContext = requestedLearningContext || (existingStudent[0]?.learning_context === 'preicfes' ? 'preicfes' : 'institutional');
+    const preicfesProgram = learningContext === 'preicfes'
+      ? String(preicfes_program || existingStudent[0]?.preicfes_program || 'Preicfes independiente').trim().slice(0, 100)
+      : null;
+    if (learningContext === 'preicfes' && !['CRECER', 'Preicfes independiente'].includes(preicfesProgram)) {
+      return res.status(400).json({ message: 'Selecciona un programa Preicfes válido.' });
+    }
+    const profileGrade = learningContext === 'preicfes' ? null : (grade || null);
+    const profileCourseId = learningContext === 'preicfes' ? null : (course_id || null);
 
     let studentId;
 
@@ -221,27 +233,27 @@ app.post('/api/students', verifyToken, async (req, res) => {
       studentId = existingStudent[0].id;
       if (hasInstitution) {
         await db.query(
-          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ?, institution = ? WHERE id = ?',
-          [contact_phone, contact_email, age, grade, course_id, userInstitution, studentId]
+          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ?, institution = ?, learning_context = ?, preicfes_program = ? WHERE id = ?',
+          [contact_phone, contact_email, age, profileGrade, profileCourseId, userInstitution, learningContext, preicfesProgram, studentId]
         );
       } else {
         await db.query(
-          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ? WHERE id = ?',
-          [contact_phone, contact_email, age, grade, course_id, studentId]
+          'UPDATE students SET contact_phone = ?, contact_email = ?, age = ?, grade = ?, course_id = ?, learning_context = ?, preicfes_program = ? WHERE id = ?',
+          [contact_phone, contact_email, age, profileGrade, profileCourseId, learningContext, preicfesProgram, studentId]
         );
       }
     } else {
       // Si no existe, crear nuevo registro
       if (hasInstitution) {
         const [result] = await db.query(
-          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id, institution) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [userId, contact_phone, contact_email, age, grade, course_id, userInstitution]
+          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id, institution, learning_context, preicfes_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [userId, contact_phone, contact_email, age, profileGrade, profileCourseId, userInstitution, learningContext, preicfesProgram]
         );
         studentId = result.insertId;
       } else {
         const [result] = await db.query(
-          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id) VALUES (?, ?, ?, ?, ?, ?)',
-          [userId, contact_phone, contact_email, age, grade, course_id]
+          'INSERT INTO students (user_id, contact_phone, contact_email, age, grade, course_id, learning_context, preicfes_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [userId, contact_phone, contact_email, age, profileGrade, profileCourseId, learningContext, preicfesProgram]
         );
         studentId = result.insertId;
       }
@@ -420,6 +432,7 @@ app.use('/api/indicators', indicatorsRoutes);
 app.use('/api', improvementPlansRoutes);
 app.use('/api/educational-resources', educationalResourcesRoutes);
 app.use('/api/prueba-saber', pruebaSaberRoutes);
+app.use('/api/prueba-saber', pruebaSaberApplicationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/attendance', attendanceRoutes);
 
@@ -1865,7 +1878,7 @@ app.get('/api/students/:id', async (req, res) => {
 
     const [rows] = await db.query(`
       SELECT 
-        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, s.learning_context, s.preicfes_program, ${institutionFields}
         u.name, u.email, u.phone, u.role,
         c.name as course_name
       FROM students s
@@ -1921,7 +1934,7 @@ app.get('/api/students/user/:userId', verifyToken, async (req, res) => {
 
     const [rows] = await db.query(`
       SELECT 
-        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, s.learning_context, s.preicfes_program, ${institutionFields}
         u.name, u.email, u.phone, u.role,
         c.name as course_name,
         (SELECT teacher_id FROM teacher_students WHERE student_id = s.id LIMIT 1) as teacher_id
@@ -2246,7 +2259,7 @@ app.get('/api/students/by-user/:userId', verifyToken, async (req, res) => {
 
     const [rows] = await db.query(`
       SELECT 
-        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, ${institutionFields}
+        s.id, s.user_id, s.contact_phone, s.contact_email, s.age, s.grade, s.course_id, s.learning_context, s.preicfes_program, ${institutionFields}
         u.name, u.email, u.phone, u.role,
         c.name as course_name, c.grade as course_grade,
         g.phase1, g.phase2, g.phase3, g.phase4, g.average

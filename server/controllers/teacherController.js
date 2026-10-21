@@ -1,8 +1,13 @@
 import pool from '../config/db.js';
+import { ensureTeacherTrialSubscription } from '../utils/teacherTrialSubscription.js';
 
 export const createTeacherIfNotExists = async (req, res) => {
   try {
     const { userId } = req.params;
+    const requestedPlan = req.body?.plan_type;
+    if (Number(userId) !== Number(req.user.id) && !['admin', 'administrador', 'super_administrador'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'No tienes permiso para crear el perfil de otro usuario.' });
+    }
     
     if (!userId) {
       return res.status(400).json({
@@ -19,11 +24,13 @@ export const createTeacherIfNotExists = async (req, res) => {
     );
 
     if (existingTeachers && existingTeachers.length > 0) {
+      const trial = await ensureTeacherTrialSubscription(existingTeachers[0].id, requestedPlan);
       console.log(`✅ Profesor ya existe con ID: ${existingTeachers[0].id}`);
       return res.status(200).json({
         success: true,
         message: 'El profesor ya existe',
-        teacher_id: existingTeachers[0].id
+        teacher_id: existingTeachers[0].id,
+        trial_created: trial.created
       });
     }
 
@@ -41,32 +48,16 @@ export const createTeacherIfNotExists = async (req, res) => {
 
     const user = users[0];
 
-    // --- NUEVA LÓGICA DE SUSCRIPCIÓN ---
-    // Definimos 30 días de prueba a partir de hoy
-    const fechaInicio = new Date();
-    const fechaVencimiento = new Date();
-    fechaVencimiento.setDate(fechaInicio.getDate() + 30); 
-    // ----------------------------------
-
     // 1. Crear el registro del profesor
     const [result] = await pool.query(
       'INSERT INTO teachers (user_id, subject, institution) VALUES (?, ?, ?)',
-      [userId, 'Sin asignar', 'Sin asignar']
+      [userId, 'Sin asignar', 'Cuenta personal']
     );
 
     const teacherId = result.insertId;
 
     // 2. Crear suscripción de prueba (30 días)
-    await pool.query(
-      "INSERT INTO subscriptions (teacher_id, plan_type, status, current_period_start, current_period_end) VALUES (?, 'monthly', 'active', ?, ?)",
-      [teacherId, fechaInicio, fechaVencimiento]
-    );
-
-    // 3. Crear registro en teacher_institutions para el Dashboard
-    await pool.query(
-      "INSERT INTO teacher_institutions (teacher_id, institution, license_status, purchased_date, expiration_date) VALUES (?, ?, 'active', ?, ?)",
-      [teacherId, 'Sin asignar', 'active', fechaInicio, fechaVencimiento]
-    );
+    await ensureTeacherTrialSubscription(teacherId, requestedPlan);
 
     console.log(`✅ Profesor creado con ID: ${teacherId} y 30 días de prueba.`);
 

@@ -39,6 +39,9 @@ const CompletarEstudiante = () => {
   // Los campos deben ser requeridos si es admin/teacher quien crea
   // IMPORTANTE: Si está completando un registro existente desde Super Admin, también debe requerirse
   const shouldRequireCourseAndTeacher = isAdminOrTeacher || createdByAdmin || isTeacherRegistration || isCompletingExisting;
+  const initialLearningContext = localStorage.getItem('student_learning_context') === 'preicfes'
+    ? 'preicfes'
+    : 'institutional';
   
   // Debug: Log para verificar la lógica
   console.log('🔍 CompleteStudent - Contexto:', {
@@ -56,6 +59,8 @@ const CompletarEstudiante = () => {
     age: '',
     grade: '',
     course_id: '',
+    learning_context: initialLearningContext,
+    preicfes_program: 'Preicfes independiente',
     user_id: userId,
     teacher_id: '' // Nuevo campo para el profesor
   });
@@ -66,6 +71,8 @@ const CompletarEstudiante = () => {
   const [filteredTeachers, setFilteredTeachers] = useState([]); // Profesores filtrados por curso/grado
   const [userInstitution, setUserInstitution] = useState(null); // Institución del usuario/estudiante
   const [loading, setLoading] = useState(true);
+  const [enrollmentCode, setEnrollmentCode] = useState('');
+  const isPreicfesProfile = student.learning_context === 'preicfes' && !shouldRequireCourseAndTeacher;
   const availableGrades = Object.values(courses.reduce((groups, course) => {
     const grade = String(course.grade ?? '').trim();
     if (!grade) return groups;
@@ -121,6 +128,7 @@ const CompletarEstudiante = () => {
                 setStudent(prev => ({
                   ...prev,
                   ...studentResponse.data,
+                  learning_context: studentResponse.data.learning_context || initialLearningContext,
                   user_id: userId
                 }));
               }
@@ -266,6 +274,11 @@ const CompletarEstudiante = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault(); // Prevenir el comportamiento predeterminado del formulario
+    const isPreicfesRegistration = student.learning_context === 'preicfes' && user?.role === 'estudiante' && !isCompletingExisting;
+    if (isPreicfesRegistration && enrollmentCode && enrollmentCode.length !== 12) {
+      notiMySwal.fire({ icon: 'warning', title: 'Código incompleto', text: 'El código Preicfes debe tener 12 caracteres. También puedes dejarlo vacío y canjearlo desde el panel después.' });
+      return;
+    }
     
     // Validar campos requeridos según el contexto
     if (shouldRequireCourseAndTeacher) {
@@ -277,7 +290,7 @@ const CompletarEstudiante = () => {
         });
         return;
       }
-      if (!student.teacher_id) {
+      if (!student.teacher_id && !isPreicfesRegistration) {
         notiMySwal.fire({
           icon: 'warning',
           title: 'Campo requerido',
@@ -287,7 +300,7 @@ const CompletarEstudiante = () => {
       }
     } else {
       // Si no es requerido pero no se seleccionó profesor, mostrar mensaje informativo
-      if (!student.teacher_id) {
+      if (!student.teacher_id && !isPreicfesRegistration) {
         const result = await notiMySwal.fire({
           icon: 'info',
           title: '¿Continuar sin profesor?',
@@ -326,7 +339,9 @@ const CompletarEstudiante = () => {
       const { teacher_id: selectedTeacherId, ...studentFields } = student;
       const studentData = {
         ...studentFields,
-        course_id: student.course_id || null
+        course_id: isPreicfesRegistration ? null : (student.course_id || null),
+        grade: isPreicfesRegistration ? null : (student.grade || null),
+        learning_context: isPreicfesRegistration ? 'preicfes' : 'institutional'
       };
       
       let studentId;
@@ -341,6 +356,15 @@ const CompletarEstudiante = () => {
         // Crear nuevo estudiante
         const studentResponse = await axios.post(`${API_URL}/api/students`, studentData, config);
         studentId = studentResponse.data.studentId;
+      }
+
+      let codeRedemptionError = '';
+      if (isPreicfesRegistration && enrollmentCode.trim()) {
+        try {
+          await axios.post(`${API_URL}/api/prueba-saber/enrollment-codes/redeem`, { code: enrollmentCode.trim() }, config);
+        } catch (codeError) {
+          codeRedemptionError = codeError.response?.data?.message || 'El perfil quedó creado, pero no se pudo canjear el código. Puedes intentarlo desde Pruebas Saber.';
+        }
       }
       
       // Si se seleccionó un profesor, crear/actualizar la relación en teacher_students
@@ -370,16 +394,19 @@ const CompletarEstudiante = () => {
       localStorage.removeItem('created_by_admin');
       localStorage.removeItem('completing_student_id');
       localStorage.removeItem('completing_user_id');
+      localStorage.removeItem('student_learning_context');
       
       // Mensaje de éxito
-      const successMessage = student.teacher_id 
+      const successMessage = isPreicfesRegistration
+        ? `<i><strong>¡Registro Preicfes completado!</strong><br>${enrollmentCode.trim() && !codeRedemptionError ? 'Tu código vinculó este perfil con su curso.' : 'Tu perfil quedó listo. Puedes canjear el código del curso desde Pruebas Saber cuando lo recibas.'}</i>`
+        : student.teacher_id
         ? `<i><strong>¡Bien hecho!</strong><br>${completingStudentId ? 'Los datos del estudiante han sido actualizados' : 'El registro del estudiante ha sido completado'} con éxito.</i>`
         : `<i><strong>¡Registro completado!</strong><br>${completingStudentId ? 'Los datos del estudiante han sido actualizados' : 'El registro del estudiante ha sido completado'} con éxito.</i><br><p class="text-warning mt-2"><strong>Nota:</strong> No se asignó un profesor. Un docente podrá asignarte desde su panel.</p>`;
       
       notiMySwal.fire({
-        icon: 'success',
+        icon: codeRedemptionError ? 'warning' : 'success',
         title: completingStudentId ? 'Registro actualizado' : 'Registro completo',
-        html: successMessage,
+        html: `${successMessage}${codeRedemptionError ? `<p class="text-warning mt-2">${codeRedemptionError}</p>` : ''}`,
         imageUrl: "img/estudiante.gif",
         imageWidth: 100,
         imageHeight: 100,
@@ -393,6 +420,8 @@ const CompletarEstudiante = () => {
           navigate('/estudiantes');
         } else if (isAdminOrTeacher) {
           navigate('/admin/students');
+        } else if (user?.role === 'estudiante') {
+          navigate('/student/dashboard');
         } else {
           navigate('/');
         }
@@ -478,7 +507,7 @@ const CompletarEstudiante = () => {
                 </div>}
               </div>
               
-              <div className="col-md-6">
+              {!isPreicfesProfile && <div className="col-md-6">
                 <label htmlFor="grade" className="form-label">Grado</label>
                 <select
                   id="grade"
@@ -495,9 +524,20 @@ const CompletarEstudiante = () => {
                     </option>
                   ))}
                 </select>
-              </div>
+              </div>}
             </div>
             
+            {isPreicfesProfile ? <div className="border rounded p-3 mb-3 bg-light">
+              <h5>Perfil Preicfes</h5>
+              <label htmlFor="preicfes_program" className="form-label">Programa o grupo</label>
+              <select id="preicfes_program" name="preicfes_program" className="form-select mb-3" value={student.preicfes_program || 'Preicfes independiente'} onChange={handleChange}>
+                <option value="CRECER">Preicfes CRECER</option>
+                <option value="Preicfes independiente">Preicfes particular / independiente</option>
+              </select>
+              <label htmlFor="preicfes_enrollment_code" className="form-label">Código del curso Preicfes (opcional)</label>
+              <input id="preicfes_enrollment_code" className="form-control text-uppercase" value={enrollmentCode} onChange={(event) => setEnrollmentCode(event.target.value.toUpperCase().replace(/[^A-F0-9]/g, '').slice(0, 12))} placeholder="Código de 12 caracteres" maxLength={12} />
+              <small className="text-muted d-block mt-2">El código te vincula al curso y al docente que lo administra. Si todavía no lo tienes, puedes completar tu perfil y canjearlo después desde Pruebas Saber.</small>
+            </div> : <>
             {/* Curso - Siempre visible, requerido solo si es admin/teacher quien crea */}
             <div className="mb-3">
               <label htmlFor="course_id" className="form-label">
@@ -624,6 +664,7 @@ const CompletarEstudiante = () => {
                       : 'Selecciona tu profesor principal. Si no encuentras tu profesor en la lista, puedes continuar sin seleccionarlo y un docente te asignará después.'}
               </small>
             </div>
+            </>}
             
             <div className="d-grid gap-2">
               <button type="submit" className="btn btn-success">

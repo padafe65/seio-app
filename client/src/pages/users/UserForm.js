@@ -24,6 +24,8 @@ const [formData, setFormData] = useState({
   estado: 1,
   institution: '',
   course_name: '',
+  teacher_subject: '',
+  plan_type: 'monthly',
   grade: '',
   created_by: '' // <-- Centralizado aquí
 });
@@ -96,7 +98,16 @@ const fetchUser = async () => {
 
     // ✨ LÓGICA EXISTENTE: Obtener el curso actual si es docente
     let courseInfo = { name: '', grade: '' };
+    let teacherSubject = '';
+    let teacherInstitution = '';
     if (userData.role === 'docente') {
+      try {
+        const teacherProfile = await axiosClient.get(`/teachers/by-user/${id}`);
+        teacherSubject = teacherProfile.data?.data?.subject || '';
+        teacherInstitution = teacherProfile.data?.data?.institution || '';
+      } catch (e) {
+        console.log('El usuario todavía no tiene perfil docente');
+      }
       try {
         const tIdRes = await axiosClient.get(`/teacher-courses/teacher-id/${id}`);
         const coursesRes = await axiosClient.get(`/teacher-courses/teacher/${tIdRes.data.teacherId}`);
@@ -119,8 +130,12 @@ const fetchUser = async () => {
       password: '', // La contraseña siempre inicia vacía por seguridad
       role: userData.role || '',
       estado: userData.estado !== undefined ? userData.estado : 1,
-      institution: userData.institution || '',
+      institution: userData.role === 'docente'
+        ? (teacherInstitution === 'Cuenta personal' ? '' : teacherInstitution)
+        : (userData.institution || ''),
       course_name: courseInfo.name, 
+      teacher_subject: teacherSubject,
+      plan_type: 'monthly',
       grade: courseInfo.grade,
       // 🛠️ AGREGADO: Guardamos el ID del creador en el estado del formulario
       created_by: userData.created_by || ''
@@ -493,7 +508,20 @@ const fetchUser = async () => {
             {formData.role === 'docente' && (
               <div className="row p-3 mb-3 border rounded bg-light mx-1 shadow-sm">
                 <div className="col-12">
-                  <h6 className="text-primary mb-3">📚 Configuración de Curso (Nuevo Docente)</h6>
+                  <h6 className="text-primary mb-3">📚 Perfil y curso del docente</h6>
+                </div>
+                <div className="col-md-6 mb-3">
+                  <label htmlFor="teacher_subject" className="form-label">Materia del docente <span className="text-danger">*</span></label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    id="teacher_subject"
+                    name="teacher_subject"
+                    value={formData.teacher_subject}
+                    onChange={handleChange}
+                    placeholder="Ej: Matemáticas, Física"
+                    required={formData.role === 'docente' && !id}
+                  />
                 </div>
                 <div className="col-md-6 mb-3">
                   <label htmlFor="course_name" className="form-label">Nombre del Curso <span className="text-danger">*</span></label>
@@ -505,9 +533,17 @@ const fetchUser = async () => {
                     value={formData.course_name}
                     onChange={handleChange}
                     placeholder="Ej: 11A, Física I"
-                    required={formData.role === 'docente'}
+                    required={formData.role === 'docente' && !id}
                   />
                 </div>
+                {!id && <div className="col-md-6 mb-3">
+                  <label htmlFor="plan_type" className="form-label">Plan al terminar la prueba gratuita</label>
+                  <select id="plan_type" name="plan_type" className="form-select" value={formData.plan_type} onChange={handleChange}>
+                    <option value="monthly">Mensual</option>
+                    <option value="annual">Anual</option>
+                  </select>
+                  <small className="form-text text-muted">En ambos casos se activan primero 30 días gratuitos.</small>
+                </div>}
                 <div className="col-md-6 mb-3">
                   <label htmlFor="grade" className="form-label">Grado / Nivel</label>
                   <input

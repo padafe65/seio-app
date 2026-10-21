@@ -14,6 +14,7 @@ const Registro = () => {
   const [user, setUser] = useState({ name: '', phone: '', email: '', password: '' });
   const [profileImage, setProfileImage] = useState(null);
   const [subjectType, setSubjectType] = useState('adult_student');
+  const [studentLearningContext, setStudentLearningContext] = useState('institutional');
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [guardian, setGuardian] = useState({ name: '', relationship: '', email: '' });
   const navigate = useNavigate();
@@ -52,6 +53,7 @@ const Registro = () => {
       const emailNotificationFailed = response.data.notificationStatus !== 'sent';
       establishSession(response.data.token, registeredUser);
       localStorage.setItem('user_id', userId);  // ✅ CORREGIDO: ahora guarda 'user_id' con guión bajo
+      localStorage.setItem('student_learning_context', studentLearningContext);
 
       let profileImageUploadFailed = false;
       if (profileImage instanceof File) {
@@ -144,6 +146,15 @@ const Registro = () => {
         <small className="text-muted d-block mb-2">Usa al menos 8 caracteres para el password que incluya almenos una letra mayuscula y almenos un carácter especial, por ejemplo !, @ o #.</small>
 
         <p className="text-muted mb-3">El registro público crea cuentas de estudiante. Las cuentas docentes son creadas por el superadministrador.</p>
+
+        <div className="mb-3">
+          <label htmlFor="studentLearningContext" className="form-label fw-bold">¿En qué modalidad estudiarás?</label>
+          <select id="studentLearningContext" className="form-select" value={studentLearningContext} onChange={(e) => setStudentLearningContext(e.target.value)}>
+            <option value="institutional">Colegio, universidad o SENA</option>
+            <option value="preicfes">Preicfes (CRECER o particular)</option>
+          </select>
+          <small className="text-muted">Si eliges Preicfes, podrás ingresar el código de tu curso y quedar asociado al curso y docente responsables. Si aún no lo tienes, podrás agregarlo después.</small>
+        </div>
 
         <div className="border rounded p-3 mb-3">
           <label className="form-label fw-bold">¿El estudiante es mayor de 18 años?</label>

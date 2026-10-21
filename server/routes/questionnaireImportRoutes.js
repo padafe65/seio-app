@@ -9,6 +9,7 @@ import pool from '../config/db.js';
 import { verifyToken, isTeacherOrAdmin } from '../middleware/authMiddleware.js';
 import { ensureSubjectCategoryExists } from '../utils/syncSubjectCategories.js';
 import { hasQuestionnaireAccess } from '../utils/questionnaireAccess.js';
+import { deleteUnusedQuestionnaireAssets } from '../utils/questionnaireImportAssets.js';
 import { extractQuestionsFromDocx } from '../utils/docxQuestionExtractor.js';
 
 const router = express.Router();
@@ -27,7 +28,7 @@ const canManageBatch = async (req, batchId) => {
   const isOwner = Number(batch.created_by_user_id) === Number(req.user.id);
   // El endpoint devuelve la clave y notas internas; una licencia de uso del
   // cuestionario nunca concede acceso al lote de revisión.
-  return { batch, allowed: isOwner };
+  return { batch, allowed: isOwner || req.user?.role === 'super_administrador' };
 };
 
 const normalizeItem = (row, index) => {
@@ -69,8 +70,10 @@ router.get('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
       LEFT JOIN teachers t ON t.id = b.teacher_id
     `;
     const params = [];
-    query += ' WHERE b.created_by_user_id = ?';
-    params.push(req.user.id);
+    if (req.user?.role !== 'super_administrador') {
+      query += ' WHERE b.created_by_user_id = ?';
+      params.push(req.user.id);
+    }
     query += ' ORDER BY b.created_at DESC';
     const [rows] = await pool.query(query, params);
     res.json({ success: true, data: rows });
@@ -357,7 +360,15 @@ router.delete('/:batchId', verifyToken, isTeacherOrAdmin, async (req, res) => {
     const { batch, allowed } = await canManageBatch(req, req.params.batchId);
     if (!batch) return res.status(404).json({ success: false, message: 'Borrador no encontrado.' });
     if (!allowed || batch.status !== 'draft') return res.status(403).json({ success: false, message: 'Solo la cuenta propietaria puede eliminar un borrador sin publicar.' });
+    const [assets] = await pool.query(
+      `SELECT DISTINCT a.id
+       FROM questionnaire_import_assets a
+       LEFT JOIN questionnaire_import_item_assets ia ON ia.asset_id = a.id
+       LEFT JOIN questionnaire_import_items i ON i.id = ia.item_id
+       WHERE a.batch_id = ? OR i.batch_id = ?`, [batch.id, batch.id]
+    );
     await pool.query('DELETE FROM questionnaire_import_batches WHERE id = ?', [batch.id]);
+    await deleteUnusedQuestionnaireAssets(pool, assets.map((asset) => asset.id));
     res.json({ success: true });
   } catch (error) {
     console.error('Error eliminando borrador de importación:', error);

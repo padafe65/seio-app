@@ -7,6 +7,7 @@ import { logCreate, logUpdate, logDelete } from '../utils/auditLogger.js';
 import uploadProfileImage from '../middleware/uploadProfileImage.js';
 import { isValidPassword, PASSWORD_REQUIREMENTS } from '../utils/passwordPolicy.js';
 import { notifyLegalConsent } from '../utils/legalConsentNotifications.js';
+import { ensureTeacherTrialSubscription } from '../utils/teacherTrialSubscription.js';
 
 const router = express.Router();
 
@@ -142,14 +143,27 @@ router.get('/users', isAdminOrSuperAdmin, async (req, res) => {
         u.phone, 
         u.role, 
         u.institution,
-        t.id as teacher_id, 
+        t.id as teacher_id,
         t.subject,
+        sub.id as subscription_id,
+        sub.plan_type as subscription_plan_type,
+        sub.status as subscription_status,
+        sub.current_period_end as subscription_end_date,
+        lic.id as teacher_license_id,
+        lic.license_status as teacher_license_status,
+        lic.expiration_date as teacher_license_end_date,
         CASE 
           WHEN u.estado = 'activo' THEN 1 
           ELSE 0 
         END as estado
       FROM users u
       LEFT JOIN teachers t ON u.id = t.user_id
+      LEFT JOIN subscriptions sub ON sub.id = (
+        SELECT s2.id FROM subscriptions s2 WHERE s2.teacher_id = t.id ORDER BY s2.id DESC LIMIT 1
+      )
+      LEFT JOIN teacher_institutions lic ON lic.id = (
+        SELECT ti.id FROM teacher_institutions ti WHERE ti.teacher_id = t.id ORDER BY ti.id DESC LIMIT 1
+      )
       WHERE 1=1 ${roleFilter}
       ORDER BY u.created_at DESC`
     );
@@ -283,7 +297,7 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
   try {
     // 1. Capturar el ID del que está creando (Admin/Docente)
     const creatorId = req.user ? req.user.id : null;
-    const { name, email, phone, password, role, institution, course_name, grade, legalConsent, guardianApprovalConfirmed } = req.body;
+    const { name, email, phone, password, role, institution, course_name, grade, teacher_subject, plan_type, legalConsent, guardianApprovalConfirmed } = req.body;
     const userRole = req.user.role; // Rol del usuario que está creando
     
     // Validar campos requeridos
@@ -403,24 +417,26 @@ router.post('/users', isAdminOrSuperAdmin, async (req, res) => {
     }
     
     // >>> INICIO DE LA AUTOMATIZACIÓN PARA DOCENTES <<<
-    if (role === 'docente' && institution && course_name) {
+    if (role === 'docente' && course_name) {
       try {
+        const teacherInstitution = institution || 'Cuenta personal';
         const [teacherRes] = await pool.query(
           'INSERT INTO teachers (user_id, institution, subject) VALUES (?, ?, ?)',
-          [newUserId, institution, course_name]
+          [newUserId, teacherInstitution, teacher_subject || course_name]
         );
         const newTeacherId = teacherRes.insertId;
+        await ensureTeacherTrialSubscription(newTeacherId, plan_type);
 
         const [existingCourse] = await pool.query(
           "SELECT id FROM courses WHERE name = ? AND institution = ?",
-          [course_name, institution]
+          [course_name, teacherInstitution]
         );
 
         let courseId;
         if (existingCourse.length === 0) {
           const [newCourse] = await pool.query(
             "INSERT INTO courses (name, grade, institution, teacher_id, created_by) VALUES (?, ?, ?, ?, ?)",
-            [course_name, grade || 'N/A', institution, newTeacherId, creatorId || newUserId]
+            [course_name, grade || 'N/A', teacherInstitution, newTeacherId, creatorId || newUserId]
           );
           courseId = newCourse.insertId;
         } else {
@@ -476,7 +492,7 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     const updaterId = req.user.id;
     // ✨ SE AGREGÓ: course_name y grade a la desestructuración del body
     // 🛠️ ADICIÓN: Se extrae created_by del body para permitir su actualización
-    const { name, email, phone, role, estado, password, institution, course_name, grade, created_by } = req.body;
+    const { name, email, phone, role, estado, password, institution, course_name, grade, teacher_subject, plan_type, created_by } = req.body;
     const userRole = req.user.role; // Rol del usuario que está haciendo la actualización
     
     // Verificar que el usuario existe
@@ -661,17 +677,18 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     );
 
     // ✨ AGREGADO: LÓGICA DE ACTUALIZACIÓN/CREACIÓN DE CURSO PARA DOCENTES
-    if ((role === 'docente' || targetUser.role === 'docente') && institution && course_name) {
+    if ((role === 'docente' || (!role && targetUser.role === 'docente')) && institution && course_name) {
       try {
         const [teacherCheck] = await pool.query('SELECT id FROM teachers WHERE user_id = ?', [id]);
         let teacherId;
         if (teacherCheck.length === 0) {
-          const [tRes] = await pool.query('INSERT INTO teachers (user_id, institution, subject) VALUES (?, ?, ?)', [id, institution, course_name]);
+          const [tRes] = await pool.query('INSERT INTO teachers (user_id, institution, subject) VALUES (?, ?, ?)', [id, institution, teacher_subject || course_name]);
           teacherId = tRes.insertId;
         } else {
           teacherId = teacherCheck[0].id;
-          await pool.query('UPDATE teachers SET institution = ? WHERE id = ?', [institution, teacherId]);
+          await pool.query('UPDATE teachers SET institution = ?, subject = COALESCE(?, subject) WHERE id = ?', [institution, teacher_subject || null, teacherId]);
         }
+        await ensureTeacherTrialSubscription(teacherId, plan_type);
 
         const [existingCourse] = await pool.query(
           "SELECT id FROM courses WHERE name = ? AND institution = ?",
@@ -699,6 +716,27 @@ router.put('/users/:id', isAdminOrSuperAdmin, async (req, res) => {
     }
     
     // 📝 Registrar en auditoría
+    if (role === 'docente' || (!role && targetUser.role === 'docente')) {
+      const [teacherRows] = await pool.query('SELECT id, institution, subject FROM teachers WHERE user_id = ? ORDER BY id LIMIT 1', [id]);
+      let teacherId = teacherRows[0]?.id;
+      if (!teacherId && (institution || teacher_subject || course_name)) {
+        const [createdTeacher] = await pool.query(
+          'INSERT INTO teachers (user_id, institution, subject) VALUES (?, ?, ?)',
+          [id, institution || 'Cuenta personal', teacher_subject || course_name || 'Sin asignar']
+        );
+        teacherId = createdTeacher.insertId;
+      } else if (teacherId) {
+        const teacherInstitution = institution === undefined
+          ? teacherRows[0].institution
+          : (String(institution).trim() || 'Cuenta personal');
+        await pool.query(
+          'UPDATE teachers SET institution = ?, subject = ? WHERE id = ?',
+          [teacherInstitution, teacher_subject || teacherRows[0].subject, teacherId]
+        );
+      }
+      if (teacherId) await ensureTeacherTrialSubscription(teacherId, plan_type);
+    }
+
     await logUpdate(
       'users',
       parseInt(id),
@@ -1141,8 +1179,14 @@ router.put('/change-password', verifyToken, async (req, res) => {
 // 🏢 GET: Obtener lista de instituciones únicas para los selectores (combos)
 router.get('/institutions/list', async (req, res) => {
   try {
-    // Traemos los nombres únicos de la tabla de cursos
-    const [rows] = await pool.query('SELECT DISTINCT institution FROM courses WHERE institution IS NOT NULL AND institution != "" ORDER BY institution ASC');
+    // Unifica el catálogo legible en cursos/perfiles y la tabla institucional si existe.
+    let query = `SELECT institution FROM courses WHERE institution IS NOT NULL AND institution != ''
+      UNION SELECT institution FROM users WHERE institution IS NOT NULL AND institution != ''
+      UNION SELECT institution FROM teachers WHERE institution IS NOT NULL AND institution != ''`;
+    const [institutionTable] = await pool.query(`SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'institutions' LIMIT 1`);
+    if (institutionTable.length) query += ` UNION SELECT name AS institution FROM institutions WHERE name IS NOT NULL AND name != ''`;
+    const [rows] = await pool.query(`${query} ORDER BY institution ASC`);
     
     res.json({
       success: true,
