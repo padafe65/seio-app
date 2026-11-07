@@ -133,12 +133,13 @@ router.get('/assets/:assetId', verifyToken, async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM questionnaire_import_assets WHERE id = ?', [req.params.assetId]);
     const asset = rows[0];
     if (!asset) return res.status(404).json({ success: false, message: 'Imagen no encontrada.' });
-    let allowed = Number(asset.owner_user_id) === Number(req.user.id);
+    const isSuperAdmin = req.user?.role === 'super_administrador';
+    let allowed = isSuperAdmin || Number(asset.owner_user_id) === Number(req.user.id);
     if (asset.questionnaire_id) {
-      allowed = await hasQuestionnaireAccess(asset.questionnaire_id, req.user);
+      allowed = isSuperAdmin || await hasQuestionnaireAccess(asset.questionnaire_id, req.user);
     } else if (asset.batch_id) {
       const [batches] = await pool.query('SELECT created_by_user_id FROM questionnaire_import_batches WHERE id = ?', [asset.batch_id]);
-      allowed = batches.length > 0 && Number(batches[0].created_by_user_id) === Number(req.user.id);
+      allowed = isSuperAdmin || (batches.length > 0 && Number(batches[0].created_by_user_id) === Number(req.user.id));
     }
     if (!allowed) return res.status(403).json({ success: false, message: 'No tienes acceso a esta imagen.' });
     const absolutePath = path.resolve(assetDirectory, path.basename(asset.stored_filename));
