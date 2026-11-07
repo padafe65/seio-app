@@ -6,6 +6,7 @@ export default function QuestionFigureSet({ questionId, fallbackSrc, alt = 'Figu
   const [assets, setAssets] = useState(null);
   useEffect(() => {
     let active = true;
+    setAssets(null);
     if (!questionId) return undefined;
     api.get(`/questionnaire-imports/published-question-assets/${questionId}`)
       .then(({ data }) => { if (active) setAssets(data?.data || []); })

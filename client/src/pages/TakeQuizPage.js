@@ -7,6 +7,7 @@ import Swal from 'sweetalert2';
 import 'katex/dist/katex.min.css';
 import MathText from '../components/MathText';
 import QuestionFigureSet from '../components/QuestionFigureSet';
+import { GraduationCap } from 'lucide-react';
 
 const TakeQuizPage = () => {
   const [questionnaires, setQuestionnaires] = useState([]);
@@ -35,15 +36,15 @@ const TakeQuizPage = () => {
   const studentId = user?.id;
   const navigate = useNavigate();
 
-  // FunciÃ³n para detectar si un texto contiene expresiones LaTeX
-  // Verificar si el usuario estÃ¡ autenticado
+  // Función para detectar si un texto contiene expresiones LaTeX.
+  // Verificar si el usuario está autenticado.
   useEffect(() => {
     if (!user) {
       navigate('/');
     }
   }, [user, navigate]);
 
-  // FunciÃ³n para redirigir al dashboard del estudiante
+  // Función para redirigir al panel del estudiante.
   const handleReturnToDashboard = () => {
     navigate('/student/dashboard');
   };
@@ -77,7 +78,7 @@ const TakeQuizPage = () => {
   useEffect(() => {
     if (!user || user.role !== 'estudiante') return;
     
-    // Para estudiantes, el backend obtiene automÃ¡ticamente el studentId del token
+    // Para estudiantes, el backend obtiene automáticamente el studentId del token.
     // No necesitamos pasar studentId en el query string
     axiosClient
       .get('/questionnaires')
@@ -85,7 +86,7 @@ const TakeQuizPage = () => {
         console.log('Cuestionarios cargados:', res.data);
         setQuestionnaires(res.data);
 
-        // Localiza esta parte en TakeQuizPage.js y aÃ±ade el console.log
+        // Registra los identificadores disponibles durante la depuración.
 console.log("ID que tiene el estudiante en la tabla students:", studentData?.id);
 console.log("ID que tiene el estudiante en la tabla users:", user?.id);
         
@@ -105,7 +106,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
         Swal.fire({
           icon: 'error',
           title: 'Error',
-          text: 'No se pudieron cargar las evaluaciones. Por favor, intenta mÃ¡s tarde.',
+          text: 'No se pudieron cargar las evaluaciones. Por favor, intenta más tarde.',
           confirmButtonText: 'Entendido'
         });
       });
@@ -176,14 +177,14 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
           setCurrentQuestionnaire(null);
           Swal.fire({
             icon: 'warning',
-            title: 'LÃ­mite de intentos alcanzado',
-            text: 'Ya has completado los 2 intentos permitidos para esta evaluaciÃ³n.',
+            title: 'Límite de intentos alcanzado',
+            text: 'Ya has completado los 2 intentos permitidos para esta evaluación.',
             confirmButtonText: 'Entendido',
             confirmButtonColor: '#3085d6'
           });
         } else {
           setMaxAttemptsReached(false);
-          setCurrentQuestionIndex(0); // Reiniciar el Ã­ndice de pregunta
+          setCurrentQuestionIndex(0); // Reiniciar el índice de pregunta.
           axiosClient
             .get(`/quiz/questions/${questionnaireId}`)
             .then((res) => {
@@ -251,7 +252,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
     return typeof count === 'number' ? count : parseInt(count) || 0;
   };
   
-  // FunciÃ³n para obtener informaciÃ³n de intentos por fase para un cuestionario especÃ­fico
+  // Función para obtener información de intentos por fase para un cuestionario específico.
   const getIntentosPorFase = (questionnaireId) => {
   // Primero buscar en intentos
   const intentoInfo = intentos.find(i => parseInt(i.questionnaire_id) === parseInt(questionnaireId));
@@ -275,14 +276,14 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
     setAnswers((prev) => ({ ...prev, [questionId]: optionNumber }));
   };
 
-  // FunciÃ³n para ir a la siguiente pregunta
+  // Función para ir a la siguiente pregunta.
   const handleNextQuestion = () => {
     if (currentQuestionIndex < questions.length - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
     }
   };
 
-  // FunciÃ³n para ir a la pregunta anterior
+  // Función para ir a la pregunta anterior.
   const handlePrevQuestion = () => {
     if (currentQuestionIndex > 0) {
       setCurrentQuestionIndex(currentQuestionIndex - 1);
@@ -297,15 +298,15 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
       return;
     }
     
-    // Exigir que responda todas las preguntas que el sistema le mostrÃ³
+    // Exigir que responda todas las preguntas que el sistema le mostró.
     if (!forceSubmit && answeredQuestions < questions.length) {
       alert(`Debes responder todas las preguntas antes de enviar. Te faltan ${questions.length - answeredQuestions}.`);
       return;
     }
   
-    // Evitar mÃºltiples envÃ­os
+    // Evitar múltiples envíos.
     if (submitted) {
-      alert('Ya has enviado tus respuestas. Por favor, regresa al dashboard para realizar otro intento si aÃºn tienes disponibles.');
+      alert('Ya has enviado tus respuestas. Por favor, regresa al panel para realizar otro intento si aún tienes disponibles.');
       return;
     }
   
@@ -322,7 +323,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
       });
       
       setScore(res.data.score);
-      setPhaseAverage(res.data.phaseAverage); // AÃ±adir esta lÃ­nea para recibir el promedio de fase
+      setPhaseAverage(res.data.phaseAverage); // Recibir el promedio de fase.
       setSubmitted(true); // Marcar como enviado
       
       // Actualizar todos los intentos
@@ -354,19 +355,19 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
         setMaxAttemptsReached(true);
       }
       
-      // Mostrar mensaje de Ã©xito con el promedio de fase usando SweetAlert
+      // Mostrar mensaje de éxito con el promedio de fase usando SweetAlert.
       await Swal.fire({
         icon: 'success',
-        title: 'Â¡EvaluaciÃ³n completada!',
-        html: `<p><strong>Tu calificaciÃ³n:</strong> ${res.data.score}</p>
+        title: '¡Evaluación completada!',
+        html: `<p><strong>Tu calificación:</strong> ${res.data.score}</p>
                ${typeof res.data.percentage !== 'undefined' ? `<p><strong>Porcentaje:</strong> ${res.data.percentage}% (${res.data.correctCount}/${res.data.totalQuestions})</p>` : ''}
                ${res.data.phaseAverage ? `<p><strong>Promedio actual de la fase:</strong> ${res.data.phaseAverage}</p>` : ''}
-               <p>La evaluaciÃ³n ha sido registrada correctamente.</p>`,
+               <p>La evaluación ha sido registrada correctamente.</p>`,
         confirmButtonText: 'Volver al Dashboard',
         confirmButtonColor: '#3085d6'
       });
       
-      // Redirigir automÃ¡ticamente al dashboard despuÃ©s de mostrar la alerta
+      // Redirigir automáticamente al panel después de mostrar la alerta.
       navigate('/student/dashboard');
       
     } catch (err) {
@@ -386,7 +387,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
 
   return (
     <div className="p-4">
-      <h2 className="text-xl mb-4">Presentar evaluaciÃ³n: ðŸ‘©â€ðŸ’» {user?.name}</h2>
+      <h2 className="text-xl mb-4">Evaluación del presentador: {user?.name}</h2>
       
       {remainingSeconds !== null && questions.length > 0 && !submitted && (
         <div className="alert alert-warning">
@@ -402,7 +403,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
           onChange={(e) => {
             const phase = e.target.value ? parseInt(e.target.value) : null;
             setSelectedPhase(phase);
-            setQuestionnaireId(''); // Limpiar selecciÃ³n de cuestionario al cambiar fase
+            setQuestionnaireId(''); // Limpiar selección de cuestionario al cambiar de fase.
             setSessionId(null);
             setRemainingSeconds(null);
             
@@ -449,18 +450,18 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
 
                     <p><strong>Materia:</strong> {q.subject || q.category?.split('_')[1] || 'N/A'}</p>
                     <p><strong>Docente:</strong> {q.created_by_name || 'N/A'}</p>
-                    <p><strong>CategorÃ­a:</strong> {q.category || 'N/A'}</p>
+                    <p><strong>Categoría:</strong> {q.category || 'N/A'}</p>
                     <p><strong>Curso:</strong> {q.course_name || 'N/A'}</p>
-                    <p><strong>InstituciÃ³n:</strong> {q.teacher_institution || 'N/A'}</p>
+                    <p><strong>Institución:</strong> {q.teacher_institution || 'N/A'}</p>
                     <p><strong>Fase:</strong> {q.phase || 'No especificada'}</p>
                     
-                    {/* Mostrar informaciÃ³n de intentos por fase */}
+                    {/* Mostrar información de intentos por fase. */}
                     {intentoInfo ? (
                       <div className="mt-2 p-2 bg-gray-100 rounded">
                         <p><strong>Intentos realizados:</strong> {intentoInfo.attempt_number || attemptCount || 0}/2</p>
-                        <p><strong>Ãšltima calificaciÃ³n:</strong> {evaluations.map((e)=>e.phase1) || 'N/A'}</p>
+                        <p><strong>Última calificación:</strong> {evaluations.map((e)=>e.phase1) || 'N/A'}</p>
                         
-                        {/* Mostrar notas por fase segÃºn la fase del cuestionario */}
+                        {/* Mostrar notas por fase según la fase del cuestionario. */}
                         {q.phase === 1 && intentoInfo.phase1 !== null && (
                           <p><strong>Nota Fase 1:</strong> {intentoInfo.phase1}</p>
                         )}
@@ -508,7 +509,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
                               animation: 'walking 0.5s infinite'
                             }}
                           >
-                            ðŸ‘¨â€ðŸŽ“
+                            <GraduationCap aria-hidden="true" size={24} color="#21808D" strokeWidth={2.5} />
                           </div>
                         </div>
                       </div>
@@ -519,12 +520,12 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
                     )}
 
                     {q.question_count === 0 ? (
-                      <p className="text-warning font-semibold mt-2">âš ï¸ Este cuestionario no tiene preguntas disponibles</p>
+                      <p className="text-warning font-semibold mt-2">Atención: este cuestionario no tiene preguntas disponibles.</p>
                     ) : hasTwoAttempts ? (
                       <p className="text-red-500 font-semibold mt-2">Ya alcanzaste los 2 intentos</p>
                     ) : (
                       <button onClick={() => setQuestionnaireId(q.id)} className="btn btn-primary mt-2">
-                        {attemptCount === 1 ? 'Realizar segundo intento' : 'Presentar evaluaciÃ³n'}
+                        {attemptCount === 1 ? 'Realizar segundo intento' : 'Presentar evaluación'}
                       </button>
                     )}
                   </div>
@@ -607,7 +608,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
                   transition: 'left 0.5s ease-in-out',
                   animation: 'walking 0.5s infinite'
                 }}>
-                ðŸ‘¨â€ðŸŽ“
+                <GraduationCap aria-hidden="true" size={24} color="#21808D" strokeWidth={2.5} />
               </div>
             </div>
           </div>
@@ -627,7 +628,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
                   {/* Lado derecho: Imagen */}
                   <div style={{ flex: '1 1 35%', textAlign: 'center' }}>
                     <img
-                      src={"/img/evaluacion.gif"} // AsegÃºrate de que la ruta sea correcta
+                      src={"/img/evaluacion.gif"} // Imagen animada del cuestionario.
                       alt="Imagen cuestionario"
                       className="img-fluid"
                       style={{ maxWidth: '7%', height: 'auto', marginLeft: '75%', animation: 'walking 3s infinite' }}
@@ -649,7 +650,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
                         onChange={() => handleSelectAnswer(questions[currentQuestionIndex].id, n)}
                         className="mt-1 mr-2"
                       />
-                      <span style={{color:'#0060C1'}}>
+                      <span style={{ color: '#0060C1', marginLeft: '0.5rem' }}>
                         <strong>
                           <MathText text={questions[currentQuestionIndex][`option${n}`]} />
                         </strong>
@@ -661,7 +662,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
             </div>
           )}
           
-          {/* Botones de navegaciÃ³n */}
+          {/* Botones de navegación. */}
           <div className="flex justify-between mt-4">
             <div>
               <button 
@@ -675,17 +676,29 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
                 onClick={async () => {
                   const result = await Swal.fire({
                     icon: 'warning',
-                    title: 'Â¿Cancelar evaluaciÃ³n?',
-                    text: 'Si cancelas, no se guardarÃ¡ ningÃºn progreso. Â¿EstÃ¡s seguro?',
+                    title: '¿Cancelar evaluación?',
+                    text: 'Si cancelas, no se guardará ningún progreso. ¿Estás seguro?',
                     showCancelButton: true,
-                    confirmButtonText: 'SÃ­, cancelar',
+                    confirmButtonText: 'Sí, cancelar',
                     cancelButtonText: 'No, continuar',
                     confirmButtonColor: '#d33',
                     cancelButtonColor: '#3085d6'
                   });
                   
                   if (result.isConfirmed) {
-                    // Limpiar estado y volver a selecciÃ³n de cuestionarios
+                    if (sessionId) {
+                      try {
+                        await axiosClient.post(`/quiz/sessions/${sessionId}/cancel`);
+                      } catch (cancelError) {
+                        await Swal.fire({
+                          icon: 'error',
+                          title: 'No se pudo cancelar',
+                          text: cancelError.response?.data?.error || 'No se pudo cerrar el intento actual. Intenta de nuevo.'
+                        });
+                        return;
+                      }
+                    }
+                    // Limpiar el estado y volver a la selección de cuestionarios.
                     setQuestionnaireId('');
                     setQuestions([]);
                     setAnswers({});
@@ -748,7 +761,7 @@ console.log("ID que tiene el estudiante en la tabla users:", user?.id);
         </div>
       )}
 
-      {/* Estilos para la animaciÃ³n del personaje caminando */}
+      {/* Estilos para la animación del personaje caminando. */}
       <style>{`
         @keyframes walking {
           0% { transform: translateX(-50%) translateY(0) rotate(0deg); }

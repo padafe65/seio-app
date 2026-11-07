@@ -321,9 +321,9 @@ router.post('/', verifyToken, isTeacherOrAdmin, async (req, res) => {
   } catch (error) {
     await connection.rollback();
     const validationError = error.message?.startsWith('La pregunta') || error.message?.startsWith('Respuesta correcta');
-    console.error('Error guardando borrador de importaciÃ³n de cuestionario:', error);
+    console.error('Error guardando borrador de importación de cuestionario:', error);
     const message = error.code === 'ER_NO_SUCH_TABLE'
-      ? 'Falta aplicar la migraciÃ³n de revisiÃ³n o de imÃ¡genes en la base de datos.'
+      ? 'Falta aplicar la migración de revisión o de imágenes en la base de datos.'
       : validationError ? error.message : 'No se pudo guardar el borrador. Revisa el error detallado en la terminal del servidor.';
     res.status(validationError ? 400 : 500).json({ success: false, message });
   } finally {

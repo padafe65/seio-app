@@ -381,7 +381,7 @@ router.delete('/:id', verifyToken, isTeacherOrAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const [existing] = await pool.query('SELECT * FROM teacher_courses WHERE id = ?', [id]);
-    if (!existing.length) return res.status(404).json({ message: 'AsignaciÃ³n no encontrada' });
+    if (!existing.length) return res.status(404).json({ message: 'Asignación no encontrada' });
     
     const [result] = await pool.query(
       'DELETE FROM teacher_courses WHERE id = ?',

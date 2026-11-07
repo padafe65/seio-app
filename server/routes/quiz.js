@@ -7,6 +7,15 @@ import { evaluateStudentIndicators } from '../utils/evaluateIndicators.js';
 import { processStudentImprovementPlan } from '../utils/autoImprovementPlans.js';
 import { requireQuestionnaireAccess, hasQuestionnaireAccess } from '../utils/questionnaireAccess.js';
 const router = express.Router();
+
+const getQuestionContentKey = (question) => [
+  question.question_text,
+  question.option1,
+  question.option2,
+  question.option3,
+  question.option4
+].map((value) => String(value || '').normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()).join('\u0000');
+
 // Nueva API: finalizar evaluación
 router.post('/finish', verifyToken, requireQuestionnaireAccess, quizController.finishQuiz);
 // Nueva API: iniciar o reanudar sesión
@@ -14,6 +23,25 @@ router.post('/start', verifyToken, requireQuestionnaireAccess, quizController.st
 
 // Nueva API: guardar progreso
 router.post('/save-progress', verifyToken, requireQuestionnaireAccess, quizController.saveProgress);
+
+// Cancel an active attempt without consuming one of the student's two attempts.
+router.post('/sessions/:sessionId/cancel', verifyToken, async (req, res) => {
+  try {
+    const [studentRows] = await pool.query('SELECT id FROM students WHERE user_id = ?', [req.user.id]);
+    if (studentRows.length === 0) return res.status(404).json({ error: 'Perfil de estudiante no encontrado.' });
+
+    const [result] = await pool.query(
+      `UPDATE quiz_sessions SET status = 'abandoned'
+       WHERE id = ? AND student_id = ? AND status = 'in_progress'`,
+      [req.params.sessionId, studentRows[0].id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'No se encontró una sesión activa para cancelar.' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error al cancelar la sesión del cuestionario:', error);
+    res.status(500).json({ error: 'No se pudo cancelar la sesión.' });
+  }
+});
 
 router.post('/submit', verifyToken, async (req, res) => {
   const { student_id, questionnaire_id, answers, session_id } = req.body;
@@ -455,10 +483,17 @@ router.get('/attempts/all/:student_id', async (req, res) => {
 
     // Conteo de sesiones expiradas por cuestionario (misma lógica que GET /questions para límite de 2)
     const [expiredRows] = await pool.query(
-      `SELECT questionnaire_id, COUNT(*) as expired_count 
-       FROM quiz_sessions 
-       WHERE student_id = ? AND academic_year = ? AND status = 'expired' 
-       GROUP BY questionnaire_id`,
+      `SELECT qs.questionnaire_id, COUNT(*) as expired_count
+       FROM quiz_sessions qs
+       WHERE qs.student_id = ? AND qs.academic_year = ? AND qs.status = 'expired'
+         AND NOT EXISTS (
+           SELECT 1 FROM quiz_attempts qa
+           WHERE qa.student_id = qs.student_id
+             AND qa.questionnaire_id = qs.questionnaire_id
+             AND qa.attempt_number = qs.attempt_number
+             AND (qa.academic_year = qs.academic_year OR qa.academic_year IS NULL)
+         )
+       GROUP BY qs.questionnaire_id`,
       [realStudentId, currentAcademicYear]
     );
     const expiredByQ = new Map(expiredRows.map((r) => [r.questionnaire_id, Number(r.expired_count) || 0]));
@@ -514,8 +549,15 @@ router.get('/attempts/:student_id/:questionnaire_id', async (req, res) => {
     const completedCount = rows.length;
 
     const [expiredRows] = await pool.query(
-      `SELECT COUNT(*) AS count FROM quiz_sessions 
-       WHERE student_id = ? AND questionnaire_id = ? AND academic_year = ? AND status = 'expired'`,
+      `SELECT COUNT(*) AS count FROM quiz_sessions qs
+       WHERE qs.student_id = ? AND qs.questionnaire_id = ? AND qs.academic_year = ? AND qs.status = 'expired'
+         AND NOT EXISTS (
+           SELECT 1 FROM quiz_attempts qa
+           WHERE qa.student_id = qs.student_id
+             AND qa.questionnaire_id = qs.questionnaire_id
+             AND qa.attempt_number = qs.attempt_number
+             AND (qa.academic_year = qs.academic_year OR qa.academic_year IS NULL)
+         )`,
       [realStudentId, questionnaire_id, currentAcademicYear]
     );
     const expiredCount = Number(expiredRows?.[0]?.count) || 0;
@@ -607,9 +649,8 @@ router.get('/questions/:id', verifyToken, requireQuestionnaireAccess, async (req
     const realStudentId = studentRows[0].id;
     const currentAcademicYear = new Date().getFullYear();
 
-    // Contar intentos registrados y sesiones terminales sin intento asociado.
-    // Las sesiones enviadas/expiradas heredadas también consumen su número de intento,
-    // aunque no tengan una fila correspondiente en quiz_attempts.
+    // Solo las sesiones expiradas sin intento asociado consumen una oportunidad.
+    // Las sesiones enviadas sin fila en quiz_attempts no son intentos calificados.
     const [attemptRows] = await pool.query(
       `SELECT COUNT(*) AS count FROM quiz_attempts 
        WHERE student_id = ? AND questionnaire_id = ? AND (academic_year = ? OR academic_year IS NULL)`,
@@ -621,7 +662,7 @@ router.get('/questions/:id', verifyToken, requireQuestionnaireAccess, async (req
       `SELECT COUNT(*) AS count
        FROM quiz_sessions qs
        WHERE qs.student_id = ? AND qs.questionnaire_id = ? AND qs.academic_year = ?
-         AND qs.status IN ('expired', 'submitted', 'finished')
+         AND qs.status = 'expired'
          AND NOT EXISTS (
            SELECT 1 FROM quiz_attempts qa
            WHERE qa.student_id = qs.student_id
@@ -664,9 +705,21 @@ router.get('/questions/:id', verifyToken, requireQuestionnaireAccess, async (req
 
     // Si no hay sesión, crearla con preguntas fijas
     if (!session) {
-      // Obtener IDs de preguntas
-      const [questionIdRows] = await pool.query('SELECT id FROM questions WHERE questionnaire_id = ?', [questionnaireId]);
-      const allIds = questionIdRows.map((r) => r.id);
+      // Eliminar enunciados duplicados antes de sortear para no repetir una pregunta
+      // dentro de la misma sesión aunque existan registros duplicados en el banco.
+      const [questionRows] = await pool.query(
+        'SELECT id, question_text, option1, option2, option3, option4 FROM questions WHERE questionnaire_id = ? ORDER BY id',
+        [questionnaireId]
+      );
+      const seenQuestions = new Set();
+      const allIds = questionRows
+        .filter((question) => {
+          const contentKey = getQuestionContentKey(question);
+          if (seenQuestions.has(contentKey)) return false;
+          seenQuestions.add(contentKey);
+          return true;
+        })
+        .map((question) => question.id);
       if (allIds.length === 0) {
         return res.status(404).json({ error: 'Cuestionario sin preguntas.' });
       }
@@ -700,6 +753,36 @@ router.get('/questions/:id', verifyToken, requireQuestionnaireAccess, async (req
         // Dos recargas simultáneas pueden intentar crear la misma sesión. Reutilizar
         // la que ganó la carrera si todavía está activa para este intento.
         if (insertError.code !== 'ER_DUP_ENTRY') throw insertError;
+        console.warn('Duplicate quiz session insert; resolving existing row', {
+          studentId: realStudentId,
+          questionnaireId,
+          attemptNumber,
+          message: insertError.sqlMessage
+        });
+        // Some deployments enforce one row per attempt. Reuse a terminal session
+        // without a quiz_attempt row so it cannot block the same attempt number.
+        const [terminalRows] = await pool.query(
+          `SELECT id, status FROM quiz_sessions
+           WHERE student_id = ? AND questionnaire_id = ? AND academic_year = ?
+             AND attempt_number = ? AND status <> 'in_progress'
+           ORDER BY started_at DESC LIMIT 1`,
+          [realStudentId, questionnaireId, currentAcademicYear, attemptNumber]
+        );
+        if (terminalRows.length > 0) {
+          insertedSessionId = terminalRows[0].id;
+          if (terminalRows[0].status !== 'in_progress') {
+            await pool.query(
+              `UPDATE quiz_sessions
+               SET status = 'in_progress', started_at = NOW(),
+                   expires_at = ${timeLimit ? 'DATE_ADD(NOW(), INTERVAL ? MINUTE)' : 'NULL'},
+                   question_ids_json = ?, answers_json = NULL
+               WHERE id = ? AND student_id = ? AND status <> 'in_progress'`,
+              timeLimit
+                ? [timeLimit, JSON.stringify(selectedIds), insertedSessionId, realStudentId]
+                : [JSON.stringify(selectedIds), insertedSessionId, realStudentId]
+            );
+          }
+        }
       }
 
       // Recuperar la sesión con remaining_seconds calculado en MySQL
@@ -743,7 +826,24 @@ router.get('/questions/:id', verifyToken, requireQuestionnaireAccess, async (req
 
     // Reordenar según sessionQuestionIds
     const questionById = new Map(questions.map((q) => [q.id, q]));
-    const finalQuestions = sessionQuestionIds.map((id) => questionById.get(id)).filter(Boolean);
+    const questionsInSession = sessionQuestionIds.map((id) => questionById.get(id)).filter(Boolean);
+    const seenQuestions = new Set();
+    const finalQuestions = questionsInSession.filter((question) => {
+      const contentKey = getQuestionContentKey(question);
+      if (seenQuestions.has(contentKey)) return false;
+      seenQuestions.add(contentKey);
+      return true;
+    });
+
+    // Older active sessions may contain duplicate records with the same prompt
+    // and choices. Persist the cleaned set so grading uses the displayed questions.
+    if (finalQuestions.length !== questionsInSession.length) {
+      sessionQuestionIds = finalQuestions.map((question) => question.id);
+      await pool.query(
+        'UPDATE quiz_sessions SET question_ids_json = ? WHERE id = ? AND student_id = ? AND status = \'in_progress\'',
+        [JSON.stringify(sessionQuestionIds), session.id, realStudentId]
+      );
+    }
 
     const totalAvailableQuestions = finalQuestions.length;
     const effectiveQuestionsToAnswer = totalAvailableQuestions;
